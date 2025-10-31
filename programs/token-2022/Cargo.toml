@@ -27,6 +27,7 @@ bytemuck = "1.14"
 solana-program = "1.18"
 mpl-bubblegum = "1.4"
 spl-noop = "0.2"
+solana-security-txt = "1"
 
 [profile.release]
 opt-level = "z"     # Optimize for size

@@ -70,6 +70,18 @@ use crate::state::FeeSplit;
 
 declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
+#[cfg(not(feature = "no-entrypoint"))]
+use solana_security_txt::security_txt;
+#[cfg(not(feature = "no-entrypoint"))]
+security_txt! {
+    name: "Verifiable Distribution Protocol (Token-2022)",
+    project_url: "https://github.com/twzrd-sol/attention-oracle-program",
+    contacts: "email:ccm@twzrd.xyz",
+    policy: "https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md",
+    preferred_languages: "en",
+    source_code: "https://github.com/twzrd-sol/attention-oracle-program"
+}
+
 #[program]
 pub mod token_2022 {
     use super::*;
