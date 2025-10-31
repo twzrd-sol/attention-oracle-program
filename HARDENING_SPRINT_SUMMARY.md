@@ -56,7 +56,7 @@ The **Verifiable Distribution Protocol** (token-2022 Merkle claim system) has be
 **Transaction Signature:** `4vXXRos8eUZW1nECn5LeL2tAcJsvP6LqUiie5ougRf19KkucaG2hEgVk3Cs7B6LE1DFcv2weaehsNaTeefYGQgRn`
 
 **Test Data Used:**
-- Claim ID: `twitch:stableronaldo:alice`
+- Claim ID: `channel:stableronaldo:alice`
 - Amount: 10,000 tokens
 - Proof nodes: 3
 - Fee: 1% (100 basis points)
