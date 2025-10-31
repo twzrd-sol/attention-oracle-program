@@ -1,8 +1,14 @@
-# Attention Oracle — Open Core (Token‑2022 Program)
+# Verifiable Distribution Protocol (Token‑2022)
 
-Brand‑neutral, production‑grade Anchor program implementing Token‑2022 claim
-verification and a transfer‑hook entrypoint. No secrets or third‑party API keys
-in this repository.
+On‑chain Merkle claim verification and Token‑2022 integration (Anchor).
+
+A general‑purpose, production‑grade Anchor program for settling off‑chain,
+verifiable events on‑chain. The protocol provides a secure and gas‑efficient
+mechanism for token distribution via Merkle proofs, with first‑class support
+for the Token‑2022 standard.
+
+This repository contains the brand‑neutral, open‑core on‑chain program. No
+secrets or third‑party API keys are included.
 
 ## Requirements
 - Rust 1.76+ and Cargo
@@ -14,8 +20,9 @@ in this repository.
 - Program ID: `declare_id!` uses a placeholder; replace with your own when deploying.
 
 ## Contents
-- `programs/token-2022/` — Anchor program and modules (claims, governance,
-  ring‑buffer state). Module names and crate name are brand‑neutral.
+- `programs/token-2022/` — The complete, hardened Anchor program, including
+  modules for claims, governance, and the ring‑buffer state. Module names and
+  crate name are brand‑neutral.
 
 ## Security & Secrets
 - No `.env` or provider URLs with query parameters are committed.

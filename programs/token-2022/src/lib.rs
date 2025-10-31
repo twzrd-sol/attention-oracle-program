@@ -62,9 +62,7 @@ use crate::instructions::admin::{
 };
 use crate::instructions::channel::{ClaimChannel, SetChannelMerkleRoot};
 use crate::instructions::claim::{Claim, ClaimOpen};
-use crate::instructions::cleanup::{
-    CloseEpochState, ForceCloseEpochStateLegacy, ForceCloseEpochStateOpen,
-};
+use crate::instructions::cleanup::CloseEpochState;
 use crate::instructions::cnft_verify::CnftReceiptProof;
 use crate::instructions::governance::{UpdateFeeConfig, UpdateFeeConfigOpen};
 use crate::instructions::initialize_mint::{InitializeMint, InitializeMintOpen};
@@ -228,22 +226,7 @@ pub mod token_2022 {
         instructions::cleanup::close_epoch_state(ctx, epoch, streamer_key)
     }
 
-    pub fn force_close_epoch_state_legacy(
-        ctx: Context<ForceCloseEpochStateLegacy>,
-        epoch: u64,
-        streamer_key: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup::force_close_epoch_state_legacy(ctx, epoch, streamer_key)
-    }
-
-    pub fn force_close_epoch_state_open(
-        ctx: Context<ForceCloseEpochStateOpen>,
-        epoch: u64,
-        streamer_key: Pubkey,
-        mint: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup::force_close_epoch_state_open(ctx, epoch, streamer_key, mint)
-    }
+    
 
     pub fn initialize_channel(ctx: Context<InitializeChannel>, streamer_key: Pubkey) -> Result<()> {
         instructions::merkle_ring::initialize_channel(ctx, streamer_key)
