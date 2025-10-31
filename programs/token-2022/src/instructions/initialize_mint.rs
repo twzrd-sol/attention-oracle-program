@@ -5,7 +5,7 @@ use crate::{
 };
 use anchor_lang::prelude::*;
 use anchor_spl::token_2022::spl_token_2022::{
-    extension::{transfer_fee::TransferFeeConfig, StateWithExtensions},
+    extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions},
     state::Mint as RawMint,
 };
 use anchor_spl::token_interface::Mint as SplMint;
@@ -157,7 +157,8 @@ pub fn handler_open(
 }
 
 fn assert_transfer_fee_extension(mint: &InterfaceAccount<SplMint>) -> Result<()> {
-    let data = mint.to_account_info().try_borrow_data()?;
+    let account_info = mint.to_account_info();
+    let data = account_info.try_borrow_data()?;
     let state = StateWithExtensions::<RawMint>::unpack(&data)
         .map_err(|_| error!(ProtocolError::InvalidMint))?;
     require!(
