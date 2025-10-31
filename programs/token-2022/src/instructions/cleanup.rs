@@ -37,7 +37,10 @@ pub fn close_epoch_state(
 ) -> Result<()> {
     // Safety: only allow closing when all claims are completed
     let es = &ctx.accounts.epoch_state;
-    require!(all_claims_completed(es), ProtocolError::EpochNotFullyClaimed);
+    require!(
+        all_claims_completed(es),
+        ProtocolError::EpochNotFullyClaimed
+    );
     // Account will be closed automatically by Anchor's `close = admin` constraint
     // This recovers the rent to the admin account
     msg!(
@@ -79,7 +82,10 @@ pub fn close_epoch_state_open(
     _streamer_key: Pubkey,
 ) -> Result<()> {
     let es = &ctx.accounts.epoch_state;
-    require!(all_claims_completed(es), ProtocolError::EpochNotFullyClaimed);
+    require!(
+        all_claims_completed(es),
+        ProtocolError::EpochNotFullyClaimed
+    );
     msg!(
         "Closed epoch_state_open for epoch {} streamer {}",
         _epoch,
@@ -135,7 +141,11 @@ pub fn force_close_epoch_state_legacy(
 ) -> Result<()> {
     let emergency =
         Pubkey::from_str(EMERGENCY_ADMIN_STR).map_err(|_| error!(ProtocolError::Unauthorized))?;
-    require_keys_eq!(ctx.accounts.admin.key(), emergency, ProtocolError::Unauthorized);
+    require_keys_eq!(
+        ctx.accounts.admin.key(),
+        emergency,
+        ProtocolError::Unauthorized
+    );
     // Timelock to reduce risk of premature close
     let now = Clock::get()?.unix_timestamp;
     require!(
@@ -153,7 +163,11 @@ pub fn force_close_epoch_state_open(
 ) -> Result<()> {
     let emergency =
         Pubkey::from_str(EMERGENCY_ADMIN_STR).map_err(|_| error!(ProtocolError::Unauthorized))?;
-    require_keys_eq!(ctx.accounts.admin.key(), emergency, ProtocolError::Unauthorized);
+    require_keys_eq!(
+        ctx.accounts.admin.key(),
+        emergency,
+        ProtocolError::Unauthorized
+    );
     let now = Clock::get()?.unix_timestamp;
     require!(
         now - ctx.accounts.epoch_state.timestamp >= crate::constants::EPOCH_FORCE_CLOSE_GRACE_SECS,

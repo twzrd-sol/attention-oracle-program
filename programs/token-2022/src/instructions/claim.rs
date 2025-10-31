@@ -6,11 +6,13 @@ use anchor_spl::{
 use solana_program::keccak;
 
 use crate::{
-    constants::PROTOCOL_SEED,
+    constants::{MAX_ID_BYTES, PROTOCOL_SEED},
     errors::ProtocolError,
     instructions::cnft_verify::CnftReceiptProof,
     state::{EpochState, ProtocolState},
 };
+
+const MAX_PROOF_NODES: usize = 20;
 
 #[derive(Accounts)]
 pub struct Claim<'info> {
@@ -52,10 +54,6 @@ pub struct Claim<'info> {
     )]
     pub claimer_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// Optional: ORACLE cNFT receipt (if provided, verifies L1 participation)
-    /// CHECK: Optional account, validated in instruction if present
-    pub twzrd_receipt: Option<UncheckedAccount<'info>>,
-
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -63,7 +61,6 @@ pub struct Claim<'info> {
 
 pub fn claim(
     ctx: Context<Claim>,
-    _streamer_index: u8,
     index: u32,
     amount: u64,
     id: String,
@@ -74,11 +71,15 @@ pub fn claim(
     // Basic guards
     require!(!epoch.closed, ProtocolError::EpochClosed);
     // Index must be strictly within published claim_count
-    require!(index < epoch.claim_count as u32, ProtocolError::InvalidIndex);
+    require!(
+        index < epoch.claim_count as u32,
+        ProtocolError::InvalidIndex
+    );
     require!(
         epoch.mint == ctx.accounts.mint.key(),
         ProtocolError::InvalidMint
     );
+    require!(id.len() <= MAX_ID_BYTES, ProtocolError::InvalidInputLength);
 
     // Validate epoch_state PDA seeds to prevent spoofing
     let expected = Pubkey::find_program_address(
@@ -90,12 +91,23 @@ pub fn claim(
         ctx.program_id,
     )
     .0;
-    require_keys_eq!(expected, ctx.accounts.epoch_state.key(), ProtocolError::InvalidEpochState);
+    require_keys_eq!(
+        expected,
+        ctx.accounts.epoch_state.key(),
+        ProtocolError::InvalidEpochState
+    );
 
-    // Check bitmap not already claimed
+    // Check proof depth and bitmap
+    require!(
+        proof.len() <= MAX_PROOF_NODES,
+        ProtocolError::InvalidProofLength
+    );
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
-    require!(byte_i < epoch.claimed_bitmap.len(), ProtocolError::InvalidIndex);
+    require!(
+        byte_i < epoch.claimed_bitmap.len(),
+        ProtocolError::InvalidIndex
+    );
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
         ProtocolError::AlreadyClaimed
@@ -111,6 +123,11 @@ pub fn claim(
     // Transfer CCM from treasury PDA to claimer (use transfer_checked for Token-2022)
     let seeds: &[&[u8]] = &[PROTOCOL_SEED, &[ctx.accounts.protocol_state.bump]];
     let signer = &[seeds];
+
+    require!(
+        ctx.accounts.treasury_ata.amount >= amount,
+        ProtocolError::InvalidAmount
+    );
 
     token_interface::transfer_checked(
         CpiContext::new_with_signer(
@@ -129,7 +146,10 @@ pub fn claim(
 
     // Mark claimed and bump totals
     epoch.claimed_bitmap[byte_i] |= bit;
-    epoch.total_claimed = epoch.total_claimed.saturating_add(amount);
+    epoch.total_claimed = epoch
+        .total_claimed
+        .checked_add(amount)
+        .ok_or(ProtocolError::InvalidAmount)?;
 
     Ok(())
 }
@@ -170,18 +190,6 @@ pub struct ClaimOpen<'info> {
     )]
     pub claimer_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// Optional: ORACLE epoch state (for cNFT verification)
-    /// CHECK: Optional account, validated in instruction if receipt required
-    pub twzrd_epoch_state: Option<UncheckedAccount<'info>>,
-
-    /// Optional: Bubblegum tree (for cNFT verification)
-    /// CHECK: Optional account, validated in instruction if receipt required
-    pub merkle_tree: Option<UncheckedAccount<'info>>,
-
-    /// Optional: SPL Account Compression program (for cNFT verification)
-    /// CHECK: Optional account, validated in instruction if receipt required
-    pub compression_program: Option<UncheckedAccount<'info>>,
-
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -189,7 +197,6 @@ pub struct ClaimOpen<'info> {
 
 pub fn claim_open(
     ctx: Context<ClaimOpen>,
-    _streamer_index: u8,
     index: u32,
     amount: u64,
     id: String,
@@ -201,11 +208,15 @@ pub fn claim_open(
 ) -> Result<()> {
     let epoch = &mut ctx.accounts.epoch_state;
     require!(!epoch.closed, ProtocolError::EpochClosed);
-    require!(index < epoch.claim_count as u32, ProtocolError::InvalidIndex);
+    require!(
+        index < epoch.claim_count as u32,
+        ProtocolError::InvalidIndex
+    );
     require!(
         epoch.mint == ctx.accounts.mint.key(),
         ProtocolError::InvalidMint
     );
+    require!(id.len() <= MAX_ID_BYTES, ProtocolError::InvalidInputLength);
 
     // Step 1: If receipt required, verify ORACLE L1 participation
     if ctx.accounts.protocol_state.require_receipt {
@@ -243,12 +254,23 @@ pub fn claim_open(
         ctx.program_id,
     )
     .0;
-    require_keys_eq!(expected, ctx.accounts.epoch_state.key(), ProtocolError::InvalidEpochState);
+    require_keys_eq!(
+        expected,
+        ctx.accounts.epoch_state.key(),
+        ProtocolError::InvalidEpochState
+    );
 
     // Step 2: Verify merkle proof for CCM claim
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
-    require!(byte_i < epoch.claimed_bitmap.len(), ProtocolError::InvalidIndex);
+    require!(
+        byte_i < epoch.claimed_bitmap.len(),
+        ProtocolError::InvalidIndex
+    );
+    require!(
+        proof.len() <= MAX_PROOF_NODES,
+        ProtocolError::InvalidProofLength
+    );
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
         ProtocolError::AlreadyClaimed
@@ -268,6 +290,11 @@ pub fn claim_open(
     ];
     let signer = &[seeds];
 
+    require!(
+        ctx.accounts.treasury_ata.amount >= amount,
+        ProtocolError::InvalidAmount
+    );
+
     token_interface::transfer_checked(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
@@ -285,7 +312,10 @@ pub fn claim_open(
 
     // Step 4: Mark claimed
     epoch.claimed_bitmap[byte_i] |= bit;
-    epoch.total_claimed = epoch.total_claimed.saturating_add(amount);
+    epoch.total_claimed = epoch
+        .total_claimed
+        .checked_add(amount)
+        .ok_or(ProtocolError::InvalidAmount)?;
     Ok(())
 }
 
