@@ -74,4 +74,7 @@ pub enum ProtocolError {
 
     #[msg("Epoch must be strictly increasing for this slot")]
     EpochNotIncreasing,
+
+    #[msg("Epoch not yet expired for close")]
+    EpochNotExpired,
 }
