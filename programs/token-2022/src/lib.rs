@@ -33,9 +33,7 @@ pub(crate) use instructions::claim::__client_accounts_claim_open;
 #[allow(unused_imports)]
 pub(crate) use instructions::cleanup::__client_accounts_close_epoch_state;
 #[allow(unused_imports)]
-pub(crate) use instructions::cleanup::__client_accounts_force_close_epoch_state_legacy;
-#[allow(unused_imports)]
-pub(crate) use instructions::cleanup::__client_accounts_force_close_epoch_state_open;
+pub(crate) use instructions::cleanup::__client_accounts_close_epoch_state_open;
 #[allow(unused_imports)]
 pub(crate) use instructions::governance::__client_accounts_update_fee_config;
 #[allow(unused_imports)]
@@ -62,7 +60,7 @@ use crate::instructions::admin::{
 };
 use crate::instructions::channel::{ClaimChannel, SetChannelMerkleRoot};
 use crate::instructions::claim::{Claim, ClaimOpen};
-use crate::instructions::cleanup::CloseEpochState;
+use crate::instructions::cleanup::{CloseEpochState, CloseEpochStateOpen};
 use crate::instructions::cnft_verify::CnftReceiptProof;
 use crate::instructions::governance::{UpdateFeeConfig, UpdateFeeConfigOpen};
 use crate::instructions::initialize_mint::{InitializeMint, InitializeMintOpen};
@@ -70,7 +68,7 @@ use crate::instructions::merkle::{SetMerkleRoot, SetMerkleRootOpen};
 use crate::instructions::merkle_ring::{ClaimWithRing, InitializeChannel, SetMerkleRootRing};
 use crate::state::FeeSplit;
 
-declare_id!("11111111111111111111111111111111");
+declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
 #[program]
 pub mod token_2022 {
@@ -226,7 +224,15 @@ pub mod token_2022 {
         instructions::cleanup::close_epoch_state(ctx, epoch, streamer_key)
     }
 
-    
+    pub fn close_epoch_state_open(
+        ctx: Context<CloseEpochStateOpen>,
+        epoch: u64,
+        streamer_key: Pubkey,
+    ) -> Result<()> {
+        instructions::cleanup::close_epoch_state_open(ctx, epoch, streamer_key)
+    }
+
+
 
     pub fn initialize_channel(ctx: Context<InitializeChannel>, streamer_key: Pubkey) -> Result<()> {
         instructions::merkle_ring::initialize_channel(ctx, streamer_key)

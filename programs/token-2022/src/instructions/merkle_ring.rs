@@ -133,7 +133,7 @@ pub fn set_merkle_root_ring(
 
 /// Claim tokens using ring buffer state
 #[derive(Accounts)]
-#[instruction(epoch: u64, index: u32, amount: u64, proof: Vec<[u8; 32]>, streamer_key: Pubkey)]
+#[instruction(epoch: u64, index: u32, amount: u64, proof: Vec<[u8; 32]>, id: String, streamer_key: Pubkey)]
 pub struct ClaimWithRing<'info> {
     #[account(mut)]
     pub claimer: Signer<'info>,
