@@ -15,7 +15,7 @@ in this repository.
 
 ## Contents
 - `programs/token-2022/` — Anchor program and modules (claims, governance,
-  ring‑buffer state, points). Module names and crate name are brand‑neutral.
+  ring‑buffer state). Module names and crate name are brand‑neutral.
 
 ## Security & Secrets
 - No `.env` or provider URLs with query parameters are committed.

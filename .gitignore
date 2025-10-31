@@ -1,45 +1,21 @@
-# General
-node_modules/
-dist/
+# Build artifacts
+target/
+**/target/
+
+# OS / temp
 .DS_Store
 
-# Environment
+# Env/config
 .env
 .env.*
-*.env
-**/.env
-**/.env.*
 
-# Build artifacts
-**/target/
-**/dist/
-**/.cache/
+# Keys and sensitive material
+keys/
+**/id_ed25519*
+**/*keypair*.json
 
-# Logs & Data
-logs/
-**/*.log
-**/*.ndjson
-**/*.db
-**/*.sqlite
-
-# Keys & Wallets
-*.pem
-*.key
-*.p12
-*.pfx
-*.der
-id_*
-*keypair.json
-**/*keypair.json
-**/wallet*.json
-**/id.json
-**/.ssh/**
-
-# Archives & backups
-*.tar
-*.tgz
-*.zip
-*.gz
-*.bak
-*.backup
-*.old
+# Logs / data
+*.log
+*.db
+*.sqlite
+*.ndjson

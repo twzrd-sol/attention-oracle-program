@@ -28,7 +28,7 @@ pub struct ProtocolState {
     /// Emergency pause flag
     pub paused: bool,
 
-    /// Require Layer-1 cNFT receipt for claims (default: false)
+    /// Require an external receipt for claims (default: false)
     /// Toggle via set_policy instruction for circuit breaker pattern
     pub require_receipt: bool,
 
@@ -58,9 +58,6 @@ pub struct FeeConfig {
     /// Maximum fee amount
     pub max_fee: u64,
 
-    /// Drip threshold (volume triggers)
-    pub drip_threshold: u64,
-
     /// Bump seed
     pub bump: u8,
 }
@@ -69,7 +66,6 @@ impl FeeConfig {
     pub const LEN: usize = 8 + // discriminator
         2 +    // basis_points
         8 +    // max_fee
-        8 +    // drip_threshold
         1; // bump
 }
 
@@ -98,109 +94,9 @@ impl FeeSplit {
     }
 }
 
-/// Volume tracking for hook triggers
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct VolumeStats {
-    /// Total volume all-time
-    pub total_volume: u128,
+//
 
-    /// Volume in current hour
-    pub hourly_volume: u64,
-
-    /// Volume in current day
-    pub daily_volume: u64,
-
-    /// Last hourly reset timestamp
-    pub last_hour_reset: i64,
-
-    /// Last daily reset timestamp
-    pub last_day_reset: i64,
-
-    /// Total transfer count
-    pub transfer_count: u64,
-}
-
-impl VolumeStats {
-    pub const LEN: usize = 16 + 8 + 8 + 8 + 8 + 8;
-
-    pub fn update(&mut self, amount: u64, current_time: i64) {
-        // Reset hourly if needed
-        if current_time - self.last_hour_reset > 3600 {
-            self.hourly_volume = 0;
-            self.last_hour_reset = current_time;
-        }
-
-        // Reset daily if needed
-        if current_time - self.last_day_reset > 86400 {
-            self.daily_volume = 0;
-            self.last_day_reset = current_time;
-        }
-
-        // Update volumes
-        self.total_volume = self.total_volume.saturating_add(amount as u128);
-        self.hourly_volume = self.hourly_volume.saturating_add(amount);
-        self.daily_volume = self.daily_volume.saturating_add(amount);
-        self.transfer_count = self.transfer_count.saturating_add(1);
-    }
-}
-
-/// Liquidity engine state
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct LiquidityState {
-    /// Current drip tier (0-3)
-    pub current_tier: u8,
-
-    /// Total CCM claimed across all epochs
-    pub total_claimed: u64,
-
-    /// Total CCM dripped to LP
-    pub total_dripped: u64,
-
-    /// Raydium pool address
-    pub pool_address: Pubkey,
-
-    /// Last drip timestamp
-    pub last_drip: i64,
-
-    /// Tier 1 completed
-    pub tier_1_complete: bool,
-
-    /// Tier 2 completed
-    pub tier_2_complete: bool,
-
-    /// Tier 3 completed
-    pub tier_3_complete: bool,
-}
-
-impl LiquidityState {
-    pub const LEN: usize = 1 + 8 + 8 + 32 + 8 + 1 + 1 + 1;
-
-    pub fn should_drip(&self, total_claimed: u64) -> Option<u8> {
-        use crate::constants::*;
-
-        if !self.tier_1_complete && total_claimed >= DRIP_TIER_1_THRESHOLD {
-            return Some(1);
-        }
-        if !self.tier_2_complete && total_claimed >= DRIP_TIER_2_THRESHOLD {
-            return Some(2);
-        }
-        if !self.tier_3_complete && total_claimed >= DRIP_TIER_3_THRESHOLD {
-            return Some(3);
-        }
-        None
-    }
-}
-
-/// Liquidity engine PDA account (wraps LiquidityState + bump)
-#[account]
-pub struct LiquidityEngine {
-    pub state: LiquidityState,
-    pub bump: u8,
-}
-
-impl LiquidityEngine {
-    pub const LEN: usize = 8 /* disc */ + LiquidityState::LEN + 1;
-}
+//
 
 /// Epoch state for merkle claims (unchanged from v2)
 #[account]
@@ -236,36 +132,7 @@ impl EpochState {
     }
 }
 
-/// Passport registry entry (oracle snapshot for viewer reputation)
-#[account]
-pub struct PassportRegistry {
-    pub owner: Pubkey,
-    pub user_hash: [u8; 32],
-    pub tier: u8,
-    pub score: u64,
-    pub epoch_count: u32,
-    pub weighted_presence: u64,
-    pub badges: u32,
-    pub tree: Pubkey,
-    pub leaf_hash: Option<[u8; 32]>,
-    pub updated_at: i64,
-    pub bump: u8,
-}
-
-impl PassportRegistry {
-    pub const LEN: usize = 8 + // discriminator
-        32 + // owner
-        32 + // user_hash
-        1 +  // tier
-        8 +  // score
-        4 +  // epoch_count
-        8 +  // weighted_presence
-        4 +  // badges
-        32 + // tree
-        1 + 32 + // Option<[u8;32]> tag + value
-        8 +  // updated_at
-        1; // bump
-}
+//
 
 /// Per-channel ring buffer state (stores recent epoch merkle roots)
 /// Uses zero_copy to avoid stack overflow (1.7KB struct)

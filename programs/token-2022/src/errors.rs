@@ -20,24 +20,6 @@ pub enum ProtocolError {
     #[msg("Protocol is paused")]
     ProtocolPaused,
 
-    #[msg("Drip threshold not met")]
-    DripThresholdNotMet,
-
-    #[msg("Drip already executed for this tier")]
-    DripAlreadyExecuted,
-
-    #[msg("Invalid drip tier")]
-    InvalidDripTier,
-
-    #[msg("Insufficient treasury balance")]
-    InsufficientTreasuryBalance,
-
-    #[msg("Pool not initialized")]
-    PoolNotInitialized,
-
-    #[msg("Volume too low for operation")]
-    VolumeTooLow,
-
     #[msg("Already claimed")]
     AlreadyClaimed,
 
@@ -53,9 +35,6 @@ pub enum ProtocolError {
     #[msg("Invalid amount")]
     InvalidAmount,
 
-    #[msg("Insufficient points for gated action")]
-    InsufficientPoints,
-
     #[msg("Invalid input length")]
     InvalidInputLength,
 
@@ -65,7 +44,7 @@ pub enum ProtocolError {
     #[msg("Invalid mint")]
     InvalidMint,
 
-    #[msg("Layer-1 receipt required for this claim")]
+    #[msg("Receipt required for this claim")]
     ReceiptRequired,
 
     #[msg("Invalid channel state PDA")]
@@ -76,9 +55,6 @@ pub enum ProtocolError {
 
     #[msg("Requested epoch slot is not available")]
     SlotMismatch,
-
-    #[msg("Missing required bubblegum accounts for cNFT minting")]
-    MissingBubblegumAccounts,
 
     #[msg("Invalid streamer key")]
     InvalidStreamer,

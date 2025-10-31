@@ -1,8 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::keccak;
 
-/// Verify cNFT receipt from ORACLE L1
-/// Production implementation would integrate with mpl-bubblegum
+/// Verify external receipt proof
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct CnftReceiptProof {
     /// Leaf owner (must match claimer)
@@ -17,7 +16,7 @@ pub struct CnftReceiptProof {
     pub metadata_hash: [u8; 32],
 }
 
-/// Verify cNFT receipt ownership and metadata
+/// Verify receipt ownership and metadata
 pub fn verify_cnft_receipt(
     receipt_proof: &CnftReceiptProof,
     claimer: &Pubkey,
@@ -36,21 +35,16 @@ pub fn verify_cnft_receipt(
         ProtocolError::InvalidProof
     );
 
-    msg!(
-        "cNFT verified: owner={}, channel={}, epoch={}",
-        claimer,
-        expected_channel,
-        expected_epoch
-    );
+    msg!("Receipt verified: owner={} channel={} epoch={}", claimer, expected_channel, expected_epoch);
 
     Ok(())
 }
 
-/// Compute metadata hash for cNFT verification
-/// Hash = keccak256("twzrd:" || channel || ":" || epoch)
+/// Compute metadata hash for receipt verification
+/// Hash = keccak256("rcpt:" || channel || ":" || epoch)
 fn compute_metadata_hash(channel: &str, epoch: u64) -> [u8; 32] {
     let mut preimage = Vec::new();
-    preimage.extend_from_slice(b"twzrd:");
+    preimage.extend_from_slice(b"rcpt:");
     preimage.extend_from_slice(channel.as_bytes());
     preimage.extend_from_slice(b":");
     preimage.extend_from_slice(&epoch.to_le_bytes());
@@ -58,8 +52,7 @@ fn compute_metadata_hash(channel: &str, epoch: u64) -> [u8; 32] {
     keccak::hash(&preimage).to_bytes()
 }
 
-/// Verify merkle proof (used for Bubblegum tree verification)
-/// This is a simplified version - production should use mpl-bubblegum CPI
+/// Verify merkle proof (generic verification)
 pub fn verify_merkle_proof(leaf: &[u8; 32], proof: &[[u8; 32]], root: &[u8; 32]) -> bool {
     let mut current = *leaf;
 
