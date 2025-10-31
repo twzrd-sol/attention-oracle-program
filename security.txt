@@ -1,0 +1,7 @@
+Contact: mailto:ccm@twzrd.xyz
+Policy: https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md
+Preferred-Languages: en
+Acknowledgments: https://github.com/twzrd-sol/attention-oracle-program#acknowledgments
+Hiring: no
+# Expires 6 months from now
+Expires: 2026-04-30T23:59:59Z
