@@ -66,6 +66,8 @@ pub fn claim(
     id: String,
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
+    // Get epoch_state key before mutable borrow
+    let epoch_state_key = ctx.accounts.epoch_state.key();
     let epoch = &mut ctx.accounts.epoch_state;
 
     // Basic guards
@@ -93,7 +95,7 @@ pub fn claim(
     .0;
     require_keys_eq!(
         expected,
-        ctx.accounts.epoch_state.key(),
+        epoch_state_key,
         ProtocolError::InvalidEpochState
     );
 
@@ -206,6 +208,8 @@ pub fn claim_open(
     twzrd_epoch: Option<u64>,
     receipt_proof: Option<CnftReceiptProof>,
 ) -> Result<()> {
+    // Get epoch_state key before mutable borrow
+    let epoch_state_key = ctx.accounts.epoch_state.key();
     let epoch = &mut ctx.accounts.epoch_state;
     require!(!epoch.closed, ProtocolError::EpochClosed);
     require!(
@@ -256,7 +260,7 @@ pub fn claim_open(
     .0;
     require_keys_eq!(
         expected,
-        ctx.accounts.epoch_state.key(),
+        epoch_state_key,
         ProtocolError::InvalidEpochState
     );
 
@@ -321,8 +325,8 @@ pub fn claim_open(
 
 pub fn compute_leaf(claimer: &Pubkey, index: u32, amount: u64, id: &str) -> [u8; 32] {
     // Note: Off-chain must mirror this exact hashing scheme
-    let mut idx = index.to_le_bytes();
-    let mut amt = amount.to_le_bytes();
+    let idx = index.to_le_bytes();
+    let amt = amount.to_le_bytes();
     let id_bytes = id.as_bytes();
     keccak::hashv(&[claimer.as_ref(), &idx, &amt, id_bytes]).to_bytes()
 }
