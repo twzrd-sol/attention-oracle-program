@@ -22,3 +22,7 @@ keys/
 
 # Local validator state
 test-ledger/
+CLS_DEPLOYMENT_CHECKLIST.md
+PRESENTATION_DECK.md
+HARDENING_SPRINT_SUMMARY.md
+scripts/claim-demo.ts
