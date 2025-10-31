@@ -19,3 +19,6 @@ keys/
 *.db
 *.sqlite
 *.ndjson
+
+# Local validator state
+test-ledger/
