@@ -93,7 +93,7 @@ pub fn verify_proof(proof: &[[u8; 32]], leaf: [u8; 32], root: [u8; 32]) -> bool 
 - ✅ Double-claim guard (AlreadyClaimed error)
 - ✅ Manual transaction construction (no Anchor IDL needed)
 
-Transaction Signature: `4vXXRos8eUZW1nECn5LeL2tAcJsvP6LqUiie5ougRf19KkucaG2hEgVk3Cs7B6LE1DFcv2weaehsNaTeefYGQgRn`
+Local Transaction Signature: `4vXXRos8eUZW1nECn5LeL2tAcJsvP6LqUiie5ougRf19KkucaG2hEgVk3Cs7B6LE1DFcv2weaehsNaTeefYGQgRn`
 
 ---
 
