@@ -3,7 +3,7 @@ seeds = true
 skip-lint = false
 
 [programs.localnet]
-token_2022 = "11111111111111111111111111111111"
+token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 
 [registry]
 url = "https://api.apr.dev"

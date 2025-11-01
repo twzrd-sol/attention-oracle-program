@@ -15,9 +15,15 @@ secrets or third‑party API keys are included.
 - Anchor CLI 0.30+
 - Solana toolchain (for local work)
 
+## Deployment
+
+**Mainnet v1:** `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
+
+This is the production deployment on Solana mainnet. The program has been verified and is live.
+
 ## Build
 - Localnet/devnet: `anchor build`
-- Program ID: `declare_id!` uses a placeholder; replace with your own when deploying.
+- For mainnet deployment: Use the program ID above or deploy your own instance.
 
 ## Contents
 - `programs/token-2022/` — The complete, hardened Anchor program, including

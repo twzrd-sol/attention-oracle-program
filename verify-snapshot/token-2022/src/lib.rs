@@ -68,7 +68,7 @@ use crate::instructions::merkle::{SetMerkleRoot, SetMerkleRootOpen};
 use crate::instructions::merkle_ring::{ClaimWithRing, InitializeChannel, SetMerkleRootRing};
 use crate::state::FeeSplit;
 
-declare_id!("8nARXLyQJVmb2h1KBudwyCQHSQVeha64YNgizMuzVris");
+declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
 #[cfg(not(feature = "no-entrypoint"))]
 use solana_security_txt::security_txt;
