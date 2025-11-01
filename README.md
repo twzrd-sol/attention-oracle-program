@@ -19,7 +19,18 @@ secrets or third‑party API keys are included.
 
 **Mainnet v1:** `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
 
-This is the production deployment on Solana mainnet. The program has been verified and is live.
+This is the production deployment on Solana mainnet. The program is live and verifiable on-chain:
+
+- **Verification Method:** otter-verify (solana-verify CLI)
+- **Verification Commit:** `e17a156490e7847645830b2de4fde7f326eecf1c`
+- **Deployed Slot:** 376962961
+- **Verification PDA:** `5335zbC2hFqEG8RvXuMzaMDPCsuw1w3Wvdq2KwnCYdoo`
+
+To verify the build yourself:
+```bash
+solana-verify get-program-pda --program-id GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop \
+  --url https://api.mainnet-beta.solana.com
+```
 
 ## Build
 - Localnet/devnet: `anchor build`
