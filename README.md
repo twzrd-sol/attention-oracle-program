@@ -143,7 +143,7 @@ pub fn update_price_feed(ctx: Context<UpdatePriceFeed>) -> Result<()> {
 ## 📊 Performance & Security
 
 - **Gas Optimization**: Ring buffer uses 1 bit per claim (256 claims = 32 bytes vs 8KB+ for PDAs)
-- **Time-lock Protection**: 7-day grace period, no emergency admin overrides
+- **Time-lock Protection**: 7-day grace period, no privileged admin overrides
 - **Double-claim Prevention**: Bitmap guards ensure each proof works exactly once
 - **Cryptographic Security**: Leaf binding prevents proof reuse across wallets
 
