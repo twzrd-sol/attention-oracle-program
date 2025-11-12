@@ -10,6 +10,7 @@
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
     "@switchboard-xyz/sbv2-lite": "^0.2.4",
+    "pg": "^8.12.0",
     "next": "16.0.1",
     "react": "19.2.0",
     "react-dom": "19.2.0"
