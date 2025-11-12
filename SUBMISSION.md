@@ -60,3 +60,5 @@ anchor build
 License: Apache-2.0 OR MIT (dual-license)
 
 Contact: dev@twzrd.xyz (Telegram: @twzrd_xyz)
+
+Security Note: Verify links and domains before clicking. This submission will never ask for seed phrases or private keys. Program ID for verification: `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`.

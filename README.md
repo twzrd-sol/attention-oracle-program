@@ -217,6 +217,17 @@ You may use this project under the terms of either license at your option.
 - [x402 Documentation](https://docs.x402.org)
 - Contact: dev@twzrd.xyz (Telegram: @twzrd_xyz)
 
+## 🔒 Security Notes (Link Hygiene)
+
+- Always verify domains before clicking. This repo links only to:
+  - github.com/twzrd-sol/attention-oracle-program
+  - solscan.io (for the public Program ID)
+  - docs.x402.org (protocol docs)
+- We never ask for seed phrases or private keys. The demo does not require wallet connections.
+- Verify on-chain references by copying the Program ID exactly: `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`.
+- Avoid shortened URLs; review commands before running.
+- If you see a suspicious link or request, report it: dev@twzrd.xyz (Telegram: @twzrd_xyz).
+
 ---
 
 **Don't trust. Verify. And get paid for it.**
