@@ -102,42 +102,27 @@ if (!verifyX402Payment(request)) {
 // Return attention data after payment...
 ```
 
-### Switchboard Oracle Integration (new)
+### Switchboard Oracle Integration (V2 aggregators)
 
-We integrate Switchboard price feeds using the lightweight `@switchboard-xyz/sbv2-lite` decoder.
+**API Layer (implemented):** Price feeds via `@switchboard-xyz/sbv2-lite` decoder
+- Endpoint: `/api/switchboard/price` — returns the latest decoded value if fresh, otherwise `{ ok: false }`
+- Included in `/api/get-attention-score` as `oracle_context` when available
 
-- Endpoint: `/api/switchboard/price` — returns the latest price for a configured aggregator
-- Used in `/api/get-attention-score` as `oracle_context` for dynamic pricing/validation
-
-Config via environment variables (optional):
-
-```
-# Defaults target devnet SOL/USD feed from Switchboard docs
-SB_CLUSTER=devnet            # or mainnet-beta
-SB_FEED=GvDMxPzN1sCj7L26YDK2HnMRXEQmQ2aemov8YBtPS7vR
-SB_MAX_STALENESS_SEC=300
-# Optional: custom RPC
-# SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-```
-
-Test:
-
-```
-curl http://localhost:3000/api/switchboard/price
-# => { ok: true, source: 'switchboard', price:  '...', cluster: 'devnet', feed: 'GvDMxPz...' }
-```
-
-### Switchboard Oracle Integration
-
-Dynamic pricing via Switchboard USDC/SOL price feeds:
+**On‑Chain Layer (optional extension):** If desired, the program can persist external pricing or use it for policy. This repository does not include on‑chain Switchboard handlers; the snippet below is illustrative only.
 ```rust
+// Example extension only (not implemented in this repo)
 pub fn update_price_feed(ctx: Context<UpdatePriceFeed>) -> Result<()> {
-    // Read Switchboard oracle price
     let usdc_sol_price = decode_switchboard_price(&price_feed);
-
-    // Update x402 payment pricing dynamically
-    channel_state.usdc_sol_price = usdc_sol_price;
+    // persist or validate against policy
+    Ok(())
 }
+```
+
+**Configuration** (optional environment variables)
+```bash
+SB_CLUSTER=devnet  # or mainnet-beta (default: devnet)
+SB_FEED=GvDMxPzN1sCj7L26YDK2HnMRXEQmQ2aemov8YBtPS7vR
+SB_MAX_STALENESS_SEC=300   # if the feed is older than this, ok will be false
 ```
 
 ## 📊 Performance & Security
@@ -148,6 +133,8 @@ pub fn update_price_feed(ctx: Context<UpdatePriceFeed>) -> Result<()> {
 - **Cryptographic Security**: Leaf binding prevents proof reuse across wallets
 
 ## 🚀 Quick Start
+
+**No environment variables required.** The demo works out of the box. Optional: Set `SB_CLUSTER=devnet` for Switchboard integration.
 
 ### Run the x402 API Demo
 
@@ -161,6 +148,11 @@ npm run dev
 
 # Visit http://localhost:3000
 ```
+
+**What you'll see:**
+1. Interactive demo page with creator input field
+2. "Try Without Payment" → Returns HTTP 402 Payment Required
+3. "Pay with x402" → Simulates payment and returns data with Merkle roots
 
 ### Verify a Payment (trustless agent helper)
 
