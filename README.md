@@ -162,6 +162,18 @@ npm run dev
 # Visit http://localhost:3000
 ```
 
+### Verify a Payment (trustless agent helper)
+
+Optionally verify an x402 payment via Solana RPC:
+
+```
+export X402_RECIPIENT=<your_wallet_pubkey>
+export X402_MIN_LAMPORTS=1000
+
+# After sending a SOL transfer, verify by signature
+curl "http://localhost:3000/api/verify-payment?tx=<SIG>"
+```
+
 ### Test the Payment Flow
 
 1. Enter any creator name
