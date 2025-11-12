@@ -143,23 +143,18 @@ curl -H "Authorization: Bearer x402-token" localhost:3000/api/...
 
 ---
 
-## Slide 9: The Market Opportunity
-# **Every Oracle Needs This**
+## Slide 9: Applicable Use Cases
+# **Where This Applies**
 
 ```
 Gaming Achievements    ─┐
 Content Engagement     ─┤
-Governance Voting      ─┼──► All need x402 payment rails
+Governance Voting      ─┼──► Verifiable claims + x402 payments
 Reputation Systems     ─┤
 Prediction Markets     ─┘
 ```
 
-**x402 Growth:**
-- 10,000% growth in one month
-- 500,000 weekly transactions
-- $806M ecosystem market cap
-
-**We're the infrastructure layer for all of them.**
+First‑principles, not forecasts: verifiable data paths with autonomous payments.
 
 ---
 
