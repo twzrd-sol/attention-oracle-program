@@ -215,6 +215,7 @@ You may use this project under the terms of either license at your option.
 - [GitHub Repository](https://github.com/twzrd-sol/attention-oracle-program)
 - [On-chain Program](https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop)
 - [x402 Documentation](https://docs.x402.org)
+- Contact: dev@twzrd.xyz (Telegram: @twzrd_xyz)
 
 ---
 

@@ -58,3 +58,5 @@ anchor build
 *Building infrastructure for the measurement layer of crypto.*
 
 License: Apache-2.0 OR MIT (dual-license)
+
+Contact: dev@twzrd.xyz (Telegram: @twzrd_xyz)
