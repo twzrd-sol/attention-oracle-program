@@ -85,4 +85,4 @@ pub fn close_epoch_state_open(
     Ok(())
 }
 
-// emergency and legacy force-close paths removed for v1
+// unsafe and legacy force-close paths removed for v1
