@@ -89,7 +89,7 @@ export default function Home() {
               type="text"
               value={creator}
               onChange={(e) => setCreator(e.target.value)}
-              placeholder="Enter creator name (e.g., kai_cenat)"
+              placeholder="Enter creator name"
               className="w-full p-3 rounded bg-gray-700 text-white border border-gray-600 focus:border-purple-500 focus:outline-none"
             />
           </div>

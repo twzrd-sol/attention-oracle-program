@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 // Mock x402 payment verification
 async function verifyX402Payment(request: NextRequest): Promise<boolean> {
   // In production, this would verify the x402 payment proof
-  // For hackathon demo, we simulate the payment verification
+  // For demonstration, we simulate the payment verification
   const x402Header = request.headers.get('x-402-payment');
   const authHeader = request.headers.get('authorization');
 
@@ -75,13 +75,13 @@ export async function GET(request: NextRequest) {
       amount: '0.001 SOL',
       transaction_id: 'mock_tx_' + Date.now()
     },
-    _note: 'This is mock data for hackathon demonstration. Production oracle connects to Twitch IRC.'
+    _note: 'This is mock data for demonstration purposes.'
   };
 
   return NextResponse.json(responseData, {
     headers: {
       'X-Powered-By': 'Attention Oracle x402',
-      'X-Oracle-Version': 'v2.0-hackathon'
+      'X-Oracle-Version': 'v2.0'
     }
   });
 }

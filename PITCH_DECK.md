@@ -7,23 +7,24 @@
 ### The First x402-Powered Oracle for the Creator Economy
 **Verifiable Distribution Protocol with Autonomous Payment Rails**
 
-*Hackathon Submission - Best x402 API Integration Track*
+*Building Sustainable Oracle Economics with x402*
 
 ---
 
 ## Slide 2: The Problem
 # **Oracles Have No Business Model**
 
-```
-Current State:
-┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-│  Off-chain  │      │    Free     │      │    Oracle   │
-│    Data     │ ───► │     API     │ ───► │   Dies      │
-│ Collection  │      │  (No Revenue)│      │(Unsustainable)│
-└─────────────┘      └─────────────┘      └─────────────┘
-```
+**Current Reality:**
+- Web3 oracles provide data for free
+- They survive on grants and subsidies
+- No sustainable revenue model
 
-**Result:** Every oracle relies on grants or subsidies. None are profitable.
+**Meanwhile (per a16z research):**
+- 50% of internet traffic = bots scraping for free
+- 37% of top sites now block AI crawlers
+- Content creators get $0 from data scraping
+
+**The Opportunity:** What if oracles could charge AI agents for data access?
 
 ---
 
@@ -42,7 +43,19 @@ HTTP 402 (Dormant since 1997) + Solana (400ms, $0.00025) = x402 Protocol
 
 ---
 
-## Slide 4: Our Innovation
+## Slide 4: The Vision (Backed by Research)
+# **Compensating Content Creators**
+
+Recent research from a16z Crypto describes the need for webcrawlers that compensate creators:
+
+> *"AI bots could pay for the right to collect data... every webcrawler agent would have some crypto, and engage in an onchain negotiation via x402."*
+> — a16z Crypto Research (2025)
+
+**Our Implementation:** We're building infrastructure for this future - starting with a proof-of-concept for creator engagement data.
+
+---
+
+## Slide 5: Our Innovation
 # **Paid Data + Merkle Proofs = The Future**
 
 ```
@@ -64,67 +77,73 @@ Off-chain Oracle ──────────┼──────────
 
 ---
 
-## Slide 5: How It Works
-# **The Complete Flow**
+## Slide 6: First Principles Flow
+# **How The Internet Should Work**
 
-1. **Oracle aggregates** Twitch engagement (off-chain)
-2. **Commits Merkle root** to Solana (on-chain)
-3. **AI agents request data** via API
-4. **x402 requires payment** (402 status + invoice)
-5. **Agent pays $0.001 USDC** on Solana
-6. **Data delivered** with proof of payment
-7. **Viewers claim tokens** with Merkle proofs
+**For Bots/Agents:**
+1. Request data → **402 Payment Required**
+2. Pay $0.001 USDC on Solana (400ms)
+3. Receive data + Merkle proof
+4. Oracle earns revenue (sustainable)
 
-**All verifiable. All profitable. All autonomous.**
+**For Humans:**
+1. Prove humanity (World ID or similar)
+2. Access content for free
+3. Claim tokens with Merkle proof
+4. Get paid for their attention
+
+**Result:** Bots pay. Humans get paid. Creators compensated. Internet saved.
 
 ---
 
-## Slide 6: Technical Achievement
-# **Production-Ready on Mainnet**
+## Slide 7: Technical Implementation
+# **What We've Built**
 
-**On-chain Program:** `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
+**On-chain Program (Deployed):** `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
 
 ```rust
-// Gas-optimized ring buffer (9.5KB for unlimited claims)
+// Gas-optimized ring buffer design
 pub struct ChannelState {
     pub slots: [ChannelSlot; 9], // Ring buffer
     pub bitmap: [u8; 1024],      // 8192 claim slots
 }
 
-// Cryptographic verification
+// Merkle proof verification
 verify_merkle_proof(proof, leaf, root) && !is_claimed(bitmap, index)
 ```
 
-**Results:**
-- ✅ 1000x cheaper than per-address PDAs
-- ✅ Supports 8192 concurrent claims
-- ✅ Token-2022 with transfer fees
+**Technical Achievements:**
+- ✅ On-chain verification program deployed
+- ✅ x402 payment gateway (mock demo ready)
+- ✅ Ring buffer design (1000x cheaper than PDAs)
+- 🔄 Full oracle integration (in development)
 
 ---
 
-## Slide 7: Live Demo
-# **Try It Now**
+## Slide 8: Proof of Concept Demo
+# **Try the x402 Flow**
 
 ```bash
-# Without payment
-curl https://api.attention-oracle.xyz/get-attention-score?creator=kai_cenat
+# Without payment - Returns 402 error
+curl localhost:3000/api/get-attention-score?creator=example_user
 
 > 402 Payment Required
 > X-402-Price: 0.001 USDC
-> X-402-Recipient: GnGz...
 
-# With x402 payment
-curl -H "X-402-Payment: tx_proof" https://api.attention-oracle.xyz/...
+# With payment header - Returns mock data
+curl -H "Authorization: Bearer x402-token" localhost:3000/api/...
 
 > 200 OK
 > {"attention_score": 9435, "merkle_root": "0x7f9a...", "participants": 5132}
 ```
 
-**Working demo at:** `hackathon-submission/x402-api-server`
+**Demo available:** `cd x402-api-server && npm run dev`
+
+*Note: This is a proof-of-concept demonstrating the x402 payment flow with mock data.*
 
 ---
 
-## Slide 8: The Market Opportunity
+## Slide 9: The Market Opportunity
 # **Every Oracle Needs This**
 
 ```
@@ -144,22 +163,22 @@ Prediction Markets     ─┘
 
 ---
 
-## Slide 9: Why We Win
-# **Not Just Another Integration**
+## Slide 10: Why This Matters
+# **Building the Blueprint**
 
-| Criteria | Status |
+| What We Have | Status |
 |----------|---------|
-| **Real Utility** | ✅ Solves oracle sustainability |
-| **Already Live** | ✅ Mainnet deployment working |
-| **Technical Innovation** | ✅ Ring buffer + Merkle proofs |
-| **Agent-First** | ✅ Built for autonomous payments |
-| **Scalable Business** | ✅ Profitable from day one |
+| **Problem Identified** | ✅ Oracles need revenue models |
+| **Solution Designed** | ✅ x402 payment gates for data |
+| **Core Tech Built** | ✅ On-chain verification program |
+| **Demo Working** | ✅ x402 flow with mock data |
+| **Vision Clear** | ✅ Template for all Web3 oracles |
 
-**This is the blueprint for Web3 oracle economics.**
+**This project:** A proof-of-concept for sustainable oracle economics.
 
 ---
 
-## Slide 10: The Vision
+## Slide 11: The Vision
 # **Infrastructure for the Agent Economy**
 
 ```
@@ -176,8 +195,8 @@ Future:          Standard for internet measurements
 
 ---
 
-## Slide 11: Call to Action
-# **Join the Revolution**
+## Slide 12: Call to Action
+# **Build With Us**
 
 ### 🚀 **Try the Demo**
 `cd x402-api-server && npm run dev`

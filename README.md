@@ -1,6 +1,6 @@
 # Attention Oracle: Verifiable Distribution Protocol with x402 Payment Integration
 
-## 🏆 Hackathon Submission - Best x402 API Integration Track
+## 🚀 Overview
 
 A production-grade Solana program implementing Token-2022 claim verification with Merkle proofs, integrated with x402 payment-gated API access for AI agents.
 
@@ -126,7 +126,7 @@ npm run dev
 
 ### Test the Payment Flow
 
-1. Enter any creator name (e.g., "kai_cenat")
+1. Enter any creator name
 2. Click "Try Without Payment" → Receives 402 error
 3. Click "Pay with x402" → Simulates payment
 4. Data is returned with mock attention scores
@@ -138,9 +138,6 @@ cd programs/attention-oracle
 anchor build
 ```
 
-## 🎥 Demo Video
-
-[View Demo Video](#) - Shows full x402 payment flow and on-chain claiming
 
 ## 🌟 Why This Matters
 
@@ -166,4 +163,4 @@ MIT - Public good infrastructure
 
 ---
 
-**Built for the x402 Hackathon** | Don't trust, verify.
+**Don't trust. Verify. And get paid for it.**

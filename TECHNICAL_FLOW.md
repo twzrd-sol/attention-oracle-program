@@ -58,7 +58,7 @@ pub fn publish_merkle_root(
 
 #### 1. The Request (Agent → API)
 ```bash
-GET /api/get-attention-score?creator=kai_cenat
+GET /api/get-attention-score?creator=example_user
 ```
 AI agent wants attention data for a creator.
 
@@ -95,7 +95,7 @@ const tx = await connection.sendTransaction({
 
 #### 4. The Proof (Agent → API)
 ```bash
-GET /api/get-attention-score?creator=kai_cenat
+GET /api/get-attention-score?creator=example_user
 Header: X-402-Payment: 5xKb9...transaction_signature
 ```
 Agent retries with payment proof.
@@ -122,7 +122,7 @@ HTTP/1.1 200 OK
 {
   "status": "success",
   "data": {
-    "creator": "kai_cenat",
+    "creator": "example_user",
     "attention_score": 9435,
     "merkle_root": "0x7f9a8b2c...",
     "epoch": 489697,
