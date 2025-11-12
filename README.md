@@ -22,27 +22,27 @@ Off-chain measurement → Centralized database → Manual distribution → Trust
 
 ```
 ┌─────────────────────┐
-│  Off-chain Collector│ ← Off-chain data aggregation
-│                      │   Measures engagement
-└──────────┬──────────┘
+│      Off-Chain      │
+│    Data Collector   │ ← Off-chain data aggregation  
+└──────────┬──────────┘   Measures engagement
            │ Merkle Root
            ↓
 ┌─────────────────────┐
-│  x402-Gated API     │ ← Payment required for access
-│  /get-attention-    │   AI agents pay to query
+│    x402-Gated API   │ ← Payment required for access
+│   /get-attention-   │   AI agents pay to query
 │       score         │
 └──────────┬──────────┘
            │ Commitment
            ↓
 ┌─────────────────────┐
-│   Solana Program    │ ← On-chain verification
-│   (Token-2022)      │   Cryptographic proofs
+│    Solana Program   │ ← On-chain verification
+│    (Token-2022)     │   Cryptographic proofs
 └──────────┬──────────┘
            │ Claims
            ↓
 ┌─────────────────────┐
 │      Viewers        │ ← Token distribution
-│   Claim Rewards     │   Verifiable & trustless
+│    Claim Rewards    │   Verifiable & trustless
 └─────────────────────┘
 ```
 
