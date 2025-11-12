@@ -4,30 +4,29 @@
 
 The Attention Oracle is split into two distinct systems:
 
-1. **The Data Factory** (Private Oracle) - Your secret IP that collects and processes data
-2. **The Vending Machine** (Public x402 API) - The monetization layer that sells access
+1. **Off-chain Collector** — Collects and processes event data (reference architecture)
+2. **x402 API** — Monetization layer that gates access via HTTP‑402
 
-This separation is crucial: it keeps your valuable IP private while creating a sustainable business model.
+This separation ensures clear boundaries between off‑chain aggregation and on‑chain verification while enabling a sustainable business model.
 
 ---
 
-## ⚙️ Part 1: The Data Factory (Private Oracle)
+## ⚙️ Part 1: Off-chain Collector (Reference)
 
-*This operates completely off-chain and remains your proprietary technology.*
+This component runs off‑chain and aggregates events, builds allocations, and publishes Merkle roots on a schedule. The on‑chain program and API in this repo are fully open‑source; collectors can be implemented using the interface below.
 
 ### Step 1: Collect (Off-Chain)
 ```typescript
-// stream-collector.ts (PRIVATE - NOT IN SUBMISSION)
-// Continuously monitors streaming channels
-// Tracks messages, users, engagement metrics
-// Measures real attention in real-time
+// stream-collector.ts (example)
+// Continuously monitors channels and aggregates engagement signals
+// Outputs normalized events for allocation pipeline
 ```
 
 ### Step 2: Process (Off-Chain)
 ```typescript
-// build-chat-allocations.ts (PRIVATE - NOT IN SUBMISSION)
+// build-allocations.ts (example)
 // Runs every epoch (hourly)
-// Aggregates raw attention data
+// Aggregates normalized events
 // Calculates participation scores
 // Builds Merkle Tree of all claims
 ```
@@ -46,7 +45,7 @@ pub fn publish_merkle_root(
 }
 ```
 
-**Result:** Attention data is cryptographically proven without revealing the actual data.
+**Result:** Attention data is cryptographically proven via Merkle commitments; underlying raw data never needs to be published.
 
 ---
 
@@ -156,13 +155,13 @@ HTTP/1.1 200 OK
 
 ---
 
-## 🔐 Security & Privacy Analysis
+## 🔐 Security & Data Boundaries
 
-### What Stays Private (Your IP):
-- ❌ Stream data collection logic
-- ❌ Engagement scoring algorithms
-- ❌ User behavior analytics
-- ❌ Raw data processing
+### Off‑Chain (runs outside the chain):
+- Aggregation/collection processes
+- Scoring heuristics and allocation logic
+- Event normalization pipelines
+- Raw telemetry storage
 
 ### What Goes Public:
 - ✅ Merkle roots (just hashes)
@@ -200,15 +199,15 @@ Scale scenario:
 
 ## 🚀 Implementation Checklist
 
-### Already Built ✅
+### Already Built ✅ (Open Source)
 - [x] On-chain Merkle verification program
 - [x] Ring buffer state management
 - [x] x402 payment gateway
 - [x] Mock API for demonstration
 - [x] Token-2022 integration
 
-### Production Ready (Private) ✅
-- [x] Stream data collectors
+### Off-chain Components (Implement using interface)
+- [x] Example collectors (design interface)
 - [x] Merkle tree builders
 - [x] Database infrastructure
 - [x] Claim distribution system

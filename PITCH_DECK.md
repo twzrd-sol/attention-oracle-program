@@ -51,7 +51,7 @@ Recent research from a16z Crypto describes the need for webcrawlers that compens
 > *"AI bots could pay for the right to collect data... every webcrawler agent would have some crypto, and engage in an onchain negotiation via x402."*
 > — a16z Crypto Research (2025)
 
-**Our Implementation:** We're building infrastructure for this future - starting with a proof-of-concept for creator engagement data.
+**Our Implementation:** Open-source infrastructure for this future — starting with a proof‑of‑concept for engagement data.
 
 ---
 
