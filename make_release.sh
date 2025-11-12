@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Create a clean investor/judge-friendly archive of the submission
+# Create a clean distribution archive of the submission
 # Excludes VCS history, build outputs, caches, and local artifacts.
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -28,4 +28,3 @@ zip -rq "$OUT" . \
   -x "*.key"
 
 echo "Done. Archive at: $OUT"
-
