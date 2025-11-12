@@ -34,3 +34,19 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Bonus: X Boost Claim (optional)
+
+If you connect X (PKCE flow) and follow @twzrd_xyz, you can call the `/api/claim/xboost` endpoint (POST with JSON `{ "wallet": "<base58 address>" }`).
+The server rate-limits boosts to 1 claim per wallet per 24 hours. With `BOOST_TREASURY_SECRET`, it sends `BOOST_LAMPORTS` (default 100k) from that treasury keypair. Without the secret, it logs a queue entry for manual fulfillment. Keep keys server-side; client never touches secrets.
+
+Required environment variables:
+
+```
+X_CLIENT_ID
+X_CLIENT_SECRET
+X_REDIRECT_URI=http://localhost:3000/api/auth/x/callback
+TARGET_X_ID=1883951442932985856
+DATABASE_URL=postgresql://...
+BOOST_TREASURY_SECRET=<base58 secret key>
+BOOST_LAMPORTS=100000
+```

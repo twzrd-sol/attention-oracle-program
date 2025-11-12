@@ -1,13 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Pool } from 'pg';
-
-function getPool() {
-  const conn = process.env.DATABASE_URL;
-  if (!conn) return null;
-  const sslEnv = process.env.DB_SSL_INSECURE === '1' ? { rejectUnauthorized: false } : undefined;
-  const ssl = process.env.PGSSL_DISABLE === '1' ? false : (sslEnv || { rejectUnauthorized: false });
-  return new Pool({ connectionString: conn, ssl });
-}
+import { getPool } from '@/lib/db';
 
 export async function GET() {
   const pool = getPool();
@@ -53,4 +45,3 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: e?.message || String(e) }, { status: 200 });
   }
 }
-
