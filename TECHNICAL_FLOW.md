@@ -66,14 +66,14 @@ AI agent wants attention data for a creator.
 HTTP/1.1 402 Payment Required
 X-402-Payment-Required: true
 X-402-Price: 0.001
-X-402-Currency: USDC
+X-402-Currency: SOL
 X-402-Recipient: GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 
 {
   "error": "Payment Required",
   "payment_instructions": {
     "method": "x402",
-    "price": "0.001 USDC",
+    "price": "0.001 SOL",
     "recipient": "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
   }
 }
@@ -84,12 +84,12 @@ Note: For dynamic pricing/validation, the API can read a Switchboard price feed 
 
 #### 3. The Payment (Agent → Solana)
 ```typescript
-// Agent builds and sends transaction (USDC, 6 decimals)
+// Agent builds and sends transaction (SOL)
 const tx = await connection.sendTransaction({
     from: agent_wallet,
     to: "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop",
-    amount: 0.001 * 1_000_000, // 1000 micro-USDC
-    token: "USDC"
+    amount: 0.001 * LAMPORTS_PER_SOL,
+    token: "SOL"
 });
 // Confirmed in ~400ms on Solana
 ```
@@ -110,7 +110,7 @@ async function verifyPayment(txSignature: string) {
     // Verify payment details
     if (tx.recipient === OUR_WALLET &&
         tx.amount >= 0.001 &&
-        tx.token === "USDC") {
+        tx.token === "SOL") {
         return true;
     }
     return false;

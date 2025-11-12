@@ -264,7 +264,7 @@ Off-chain Oracle ──────────┼──────────
                 <li>Commits Merkle root to Solana (on-chain)</li>
                 <li>AI agents request data via API</li>
                 <li>x402 requires payment (402 status + invoice)</li>
-                <li>Agent pays $0.001 USDC on Solana</li>
+                <li>Agent pays $0.001 SOL on Solana</li>
                 <li>Data delivered with proof of payment</li>
                 <li>Viewers claim tokens with Merkle proofs</li>
             </ol>
@@ -305,7 +305,7 @@ verify_merkle_proof(proof, leaf, root) && !is_claimed(bitmap, index)
 curl https://api.attention-oracle.xyz/get-attention-score?creator=example_user
 
 > 402 Payment Required
-> X-402-Price: 0.001 USDC
+> X-402-Price: 0.001 SOL
 > X-402-Recipient: GnGz...
 
 # With x402 payment
@@ -316,7 +316,7 @@ curl -H "X-402-Payment: tx_proof" https://api.attention-oracle.xyz/...
                 </pre>
             </div>
             <p><strong>Working demo at:</strong> <code>x402-api-server</code></p>
-            <p style="opacity: 0.9; margin-top: 0.5rem;">Includes Switchboard price feed context (SOL/USD) for dynamic pricing.</p>
+            <p style="opacity: 0.9; margin-top: 0.5rem;">Includes Switchboard price feed context when fresh.</p>
         </div>
 
         <!-- Slide 8: Use Cases -->
