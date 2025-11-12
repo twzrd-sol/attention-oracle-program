@@ -62,7 +62,7 @@ Recent research from a16z Crypto describes the need for webcrawlers that compens
                     x402 Payment Required
                            │
 Off-chain Oracle ──────────┼──────────► AI Agents
-(Twitch Data)              │            (Pay $0.001)
+(Stream Data)              │            (Pay $0.001)
                            │
                            ▼
                     On-chain Program
@@ -182,7 +182,7 @@ Prediction Markets     ─┘
 # **Infrastructure for the Agent Economy**
 
 ```
-Today:           One oracle for Twitch data
+Today:           One oracle for streaming data
 Tomorrow:        Template for all oracles
 Future:          Standard for internet measurements
 ```
@@ -213,6 +213,6 @@ Future:          Standard for internet measurements
 ---
 
 ## Appendix: One-Liner
-> "We built the first x402-powered oracle that lets AI agents pay micropayments to access verified Twitch engagement data. Oracle providers finally have a business model, while viewers can claim tokens through cryptographic proofs. It's the measurement layer of the creator economy, powered by x402."
+> "We built the first x402-powered oracle that lets AI agents pay micropayments to access verified streaming engagement data. Oracle providers finally have a business model, while viewers can claim tokens through cryptographic proofs. It's the measurement layer of the creator economy, powered by x402."
 
 ---

@@ -17,8 +17,8 @@ This separation is crucial: it keeps your valuable IP private while creating a s
 
 ### Step 1: Collect (Off-Chain)
 ```typescript
-// twitch-irc-collector.ts (PRIVATE - NOT IN SUBMISSION)
-// Continuously monitors Twitch chat channels
+// stream-collector.ts (PRIVATE - NOT IN SUBMISSION)
+// Continuously monitors streaming channels
 // Tracks messages, users, engagement metrics
 // Measures real attention in real-time
 ```
@@ -156,7 +156,7 @@ HTTP/1.1 200 OK
 ## 🔐 Security & Privacy Analysis
 
 ### What Stays Private (Your IP):
-- ❌ Twitch IRC collection logic
+- ❌ Stream data collection logic
 - ❌ Engagement scoring algorithms
 - ❌ User behavior analytics
 - ❌ Raw data processing
@@ -205,7 +205,7 @@ Scale scenario:
 - [x] Token-2022 integration
 
 ### Production Ready (Private) ✅
-- [x] Twitch IRC collectors
+- [x] Stream data collectors
 - [x] Merkle tree builders
 - [x] Database infrastructure
 - [x] Claim distribution system
@@ -222,7 +222,7 @@ Scale scenario:
 
 The Attention Oracle demonstrates the perfect x402 use case:
 
-1. **High-value data** (Twitch engagement metrics)
+1. **High-value data** (Streaming engagement metrics)
 2. **Micropayment-appropriate** ($0.001 is reasonable for this data)
 3. **Agent-friendly** (No human interaction needed)
 4. **Verifiable** (Merkle proofs ensure trustlessness)

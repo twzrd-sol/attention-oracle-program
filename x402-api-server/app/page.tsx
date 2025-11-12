@@ -73,7 +73,7 @@ export default function Home() {
         <div className="bg-gray-800 rounded-lg p-6 mb-8">
           <h2 className="text-2xl font-semibold mb-4">How it Works</h2>
           <ol className="list-decimal list-inside space-y-2 text-gray-300">
-            <li>Off-chain oracle aggregates Twitch engagement data</li>
+            <li>Off-chain oracle aggregates streaming engagement data</li>
             <li>Merkle root is committed on-chain (Solana)</li>
             <li>AI agents access data via x402-protected API</li>
             <li>Viewers claim tokens with cryptographic proofs</li>

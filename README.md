@@ -22,7 +22,7 @@ Off-chain measurement → Centralized database → Manual distribution → Trust
 
 ```
 ┌─────────────────────┐
-│   Twitch Oracle     │ ← Off-chain data aggregation
+│  Stream Oracle      │ ← Off-chain data aggregation
 │   (Private IP)      │   Measures engagement
 └──────────┬──────────┘
            │ Merkle Root
