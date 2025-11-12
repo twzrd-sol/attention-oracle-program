@@ -56,3 +56,5 @@ anchor build
 ---
 
 *Building infrastructure for the measurement layer of crypto.*
+
+License: Apache-2.0 OR MIT (dual-license)

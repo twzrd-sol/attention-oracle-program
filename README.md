@@ -212,7 +212,11 @@ This is infrastructure for the **measurement layer of crypto** - enabling:
 
 ## 📝 License
 
-MIT - Public good infrastructure
+Dual-licensed under either of:
+- Apache License, Version 2.0
+- MIT License
+
+You may use this project under the terms of either license at your option.
 
 ## 🔗 Links
 
