@@ -78,7 +78,7 @@ use solana_security_txt::security_txt;
 security_txt! {
     name: "Verifiable Distribution Protocol (Token-2022)",
     project_url: "https://github.com/twzrd-sol/attention-oracle-program",
-    contacts: "email:ccm@twzrd.xyz",
+    contacts: "email:dev@twzrd.xyz, telegram:@twzrd_xyz",
     policy: "https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md",
     preferred_languages: "en",
     source_code: "https://github.com/twzrd-sol/attention-oracle-program"
