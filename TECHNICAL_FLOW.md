@@ -81,6 +81,8 @@ X-402-Recipient: GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 ```
 Server returns 402 with payment invoice.
 
+Note: For dynamic pricing/validation, the API can read a Switchboard price feed (e.g., SOL/USD) and surface it as `oracle_context` in responses.
+
 #### 3. The Payment (Agent → Solana)
 ```typescript
 // Agent builds and sends transaction (USDC, 6 decimals)
@@ -127,7 +129,8 @@ HTTP/1.1 200 OK
     "merkle_root": "0x7f9a8b2c...",
     "epoch": 489697,
     "participants": 5132,
-    "distribution_available": true
+    "distribution_available": true,
+    "oracle_context": { "source": "switchboard", "cluster": "devnet", "feed": "GvDMxPz...", "sol_usd": 183.42 }
   },
   "payment": {
     "verified": true,

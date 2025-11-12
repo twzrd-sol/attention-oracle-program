@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { fetchSwitchboardPrice } from '@/lib/switchboard';
 
 // Mock x402 payment verification
 async function verifyX402Payment(request: NextRequest): Promise<boolean> {
@@ -30,6 +31,8 @@ export async function GET(request: NextRequest) {
 
   if (!paymentVerified) {
     // Return 402 Payment Required with x402 payment instructions
+    // Optionally include Switchboard price context for clients
+    const sb = await fetchSwitchboardPrice().catch(() => null);
     return NextResponse.json(
       {
         error: 'Payment Required',
@@ -39,7 +42,10 @@ export async function GET(request: NextRequest) {
           price: '0.001 USDC',
           recipient: 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop',
           description: 'Access to attention score data'
-        }
+        },
+        oracle_context: sb?.ok
+          ? { source: 'switchboard', cluster: sb.cluster, feed: sb.feed, sol_usd: sb.price }
+          : undefined
       },
       {
         status: 402,
@@ -58,6 +64,7 @@ export async function GET(request: NextRequest) {
   const timestamp = Math.floor(Date.now() / 1000);
 
   // Mock response that simulates real oracle data
+  const sb = await fetchSwitchboardPrice().catch(() => null);
   const responseData = {
     status: 'success',
     data: {
@@ -67,7 +74,10 @@ export async function GET(request: NextRequest) {
       epoch: Math.floor(timestamp / 3600), // Hour-based epochs
       merkle_root: '0x' + Buffer.from('mock_merkle_root_' + timestamp).toString('hex'),
       total_participants: Math.floor(Math.random() * 5000) + 100,
-      distribution_available: true
+      distribution_available: true,
+      oracle_context: sb?.ok
+        ? { source: 'switchboard', cluster: sb.cluster, feed: sb.feed, sol_usd: sb.price }
+        : undefined
     },
     payment: {
       verified: true,

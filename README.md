@@ -102,6 +102,31 @@ if (!verifyX402Payment(request)) {
 // Return attention data after payment...
 ```
 
+### Switchboard Oracle Integration (new)
+
+We integrate Switchboard price feeds using the lightweight `@switchboard-xyz/sbv2-lite` decoder.
+
+- Endpoint: `/api/switchboard/price` — returns the latest price for a configured aggregator
+- Used in `/api/get-attention-score` as `oracle_context` for dynamic pricing/validation
+
+Config via environment variables (optional):
+
+```
+# Defaults target devnet SOL/USD feed from Switchboard docs
+SB_CLUSTER=devnet            # or mainnet-beta
+SB_FEED=GvDMxPzN1sCj7L26YDK2HnMRXEQmQ2aemov8YBtPS7vR
+SB_MAX_STALENESS_SEC=300
+# Optional: custom RPC
+# SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+```
+
+Test:
+
+```
+curl http://localhost:3000/api/switchboard/price
+# => { ok: true, source: 'switchboard', price:  '...', cluster: 'devnet', feed: 'GvDMxPz...' }
+```
+
 ### Switchboard Oracle Integration
 
 Dynamic pricing via Switchboard USDC/SOL price feeds:
