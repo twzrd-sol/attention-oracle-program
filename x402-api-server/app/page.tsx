@@ -82,7 +82,8 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white p-8">
       <main className="max-w-4xl mx-auto">
-        <div className="bg-gray-800 rounded-lg p-6 mb-8">
+        {/* System Snapshot */}
+        <div className="bg-gray-800 rounded-lg p-6 mb-8 shadow">        
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-2xl font-semibold">System Snapshot</h2>
             <button onClick={fetchSnapshot} className="px-3 py-1 text-sm bg-gray-700 rounded hover:bg-gray-600">Refresh</button>
@@ -119,6 +120,10 @@ export default function Home() {
                 <div className="text-gray-400">Missing Usernames</div>
                 <div className="text-white font-semibold">{snapshot.participants?.sp_null || '—'}</div>
               </div>
+              <div className="bg-gray-900/60 p-3 rounded col-span-2">
+                <div className="text-gray-400">Latest Epoch</div>
+                <div className="text-white font-semibold">{snapshot.sealed?.latest_epoch || '—'}</div>
+              </div>
             </div>
           )}
         </div>
@@ -140,7 +145,8 @@ export default function Home() {
           </ol>
         </div>
 
-        <div className="bg-gray-800 rounded-lg p-6 mb-6">
+        {/* x402 Demo */}
+        <div className="bg-gray-800 rounded-lg p-6 mb-6 shadow">
           <h3 className="text-xl font-semibold mb-4">Try the API</h3>
 
           <div className="mb-4">
@@ -190,13 +196,34 @@ export default function Home() {
           </div>
         )}
 
-        <div className="mt-12 pt-8 border-t border-gray-700">
-          <h3 className="text-lg font-semibold mb-2">Program Details</h3>
-          <div className="text-sm text-gray-400 space-y-1">
-            <p>On-chain Program: <code className="bg-gray-700 px-2 py-1 rounded">GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop</code></p>
-            <p>Network: Solana Mainnet</p>
-            <p>Token Standard: Token-2022 with Transfer Fees</p>
-            <p>GitHub: <a href="https://github.com/twzrd-sol/attention-oracle-program" className="text-purple-400 hover:underline">twzrd-sol/attention-oracle-program</a></p>
+        {/* API Quickstart & Program Details */}
+        <div className="mt-12 grid md:grid-cols-2 gap-6">
+          <div className="bg-gray-800 rounded-lg p-6 shadow">
+            <h3 className="text-lg font-semibold mb-2">API Quickstart (curl)</h3>
+            <pre className="bg-gray-900 p-4 rounded overflow-x-auto text-sm text-gray-200">
+{`# 1) 402 challenge
+curl -s "http://localhost:3000/api/get-attention-score?creator=example_user" | jq
+
+# 2) Simulate payment
+curl -s -H "Authorization: Bearer x402-mock-payment-token" \\
+     -H "X-402-Payment: mock-proof" \\
+     "http://localhost:3000/api/get-attention-score?creator=example_user" | jq
+
+# 3) Switchboard (when fresh)
+curl -s "http://localhost:3000/api/switchboard/price" | jq
+
+# Health
+curl -s "http://localhost:3000/api/healthz" | jq`}
+            </pre>
+          </div>
+          <div className="bg-gray-800 rounded-lg p-6 shadow">
+            <h3 className="text-lg font-semibold mb-2">Program Details</h3>
+            <div className="text-sm text-gray-400 space-y-1">
+              <p>On-chain Program: <code className="bg-gray-700 px-2 py-1 rounded">GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop</code></p>
+              <p>Network: Solana Mainnet</p>
+              <p>Standard: Token-2022 (Transfer Fees)</p>
+              <p>GitHub: <a href="https://github.com/twzrd-sol/attention-oracle-program" className="text-purple-400 hover:underline">twzrd-sol/attention-oracle-program</a></p>
+            </div>
           </div>
         </div>
       </main>
