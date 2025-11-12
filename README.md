@@ -96,7 +96,7 @@ if (!verifyX402Payment(request)) {
     return Response(402, {
         'X-402-Payment-Required': 'true',
         'X-402-Price': '0.001',
-        'X-402-Currency': 'SOL'
+        'X-402-Currency': 'USDC'
     });
 }
 // Return attention data after payment...
