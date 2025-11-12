@@ -7,7 +7,7 @@ A production oracle demonstrating autonomous agent payments via x402. AI agents 
 
 ### Core Architecture
 - **On-Chain Program**: Deployed to Solana mainnet at `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
-- **x402 Gateway**: HTTP 402 payment flow with USDC settlement
+- **x402 Gateway**: HTTP 402 payment flow with SOL settlement (demo)
 - **Switchboard Integration**: Dynamic pricing via permissionless oracle feeds
 - **Token Distribution**: Token-2022 with Merkle proof verification
 
@@ -19,12 +19,12 @@ Gas-optimized storage using 1 bit per claim. Supports 8192 concurrent claims per
 **Autonomous Payment Flow**
 Complete x402 implementation enabling AI agents to:
 - Discover data endpoints via HTTP 402 responses
-- Execute USDC micropayments without human intervention
+- Execute SOL micropayments without human intervention (demo)
 - Verify payment proofs on-chain in 400ms
 - Access verified Merkle roots for data integrity
 
 **Oracle Price Integration**
-Switchboard feeds provide real-time USDC/SOL pricing for dynamic payment conversion. Enables surge pricing during high-demand periods while maintaining predictable agent economics.
+Switchboard feeds provide real-time SOL pricing context for dynamic behavior when available.
 
 ## Repository Structure
 ```

@@ -82,7 +82,7 @@ Off-chain Oracle ──────────┼──────────
 
 **For Bots/Agents:**
 1. Request data → **402 Payment Required**
-2. Pay $0.001 USDC on Solana (400ms)
+2. Pay $0.001 SOL on Solana (400ms)
 3. Receive data + Merkle proof
 4. Oracle earns revenue (sustainable)
 
@@ -128,7 +128,7 @@ verify_merkle_proof(proof, leaf, root) && !is_claimed(bitmap, index)
 curl localhost:3000/api/get-attention-score?creator=example_user
 
 > 402 Payment Required
-> X-402-Price: 0.001 USDC
+> X-402-Price: 0.001 SOL
 
 # With payment header - Returns mock data
 curl -H "Authorization: Bearer x402-token" localhost:3000/api/...
