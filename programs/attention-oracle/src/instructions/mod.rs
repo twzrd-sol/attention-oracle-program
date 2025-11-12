@@ -10,6 +10,7 @@ pub mod hooks;
 pub mod initialize_mint;
 pub mod merkle;
 pub mod merkle_ring;
+pub mod switchboard_price;
 
 // Re-exports (explicit to avoid namespace pollution)
 pub use admin::{
@@ -32,4 +33,7 @@ pub use initialize_mint::{handler, handler_open, InitializeMint, InitializeMintO
 pub use merkle::{set_merkle_root, set_merkle_root_open, SetMerkleRoot, SetMerkleRootOpen};
 pub use merkle_ring::{
     initialize_channel, set_merkle_root_ring, InitializeChannel, SetMerkleRootRing,
+};
+pub use switchboard_price::{
+    update_price_feed, get_x402_price_usdc, UpdatePriceFeed,
 };

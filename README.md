@@ -61,7 +61,7 @@ This creates a sustainable economic model where:
 
 ## 🔧 Technical Implementation
 
-### On-Chain Program (Solana)
+### On-Chain Program (Solana) + Switchboard Oracle Integration
 
 **Ring Buffer Storage Model** (Gas-optimized):
 ```rust
@@ -100,6 +100,19 @@ if (!verifyX402Payment(request)) {
     });
 }
 // Return attention data after payment...
+```
+
+### Switchboard Oracle Integration
+
+Dynamic pricing via Switchboard USDC/SOL price feeds:
+```rust
+pub fn update_price_feed(ctx: Context<UpdatePriceFeed>) -> Result<()> {
+    // Read Switchboard oracle price
+    let usdc_sol_price = decode_switchboard_price(&price_feed);
+
+    // Update x402 payment pricing dynamically
+    channel_state.usdc_sol_price = usdc_sol_price;
+}
 ```
 
 ## 📊 Performance & Security
