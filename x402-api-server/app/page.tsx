@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 
 export default function Home() {
   const [creator, setCreator] = useState('');
@@ -8,6 +8,26 @@ export default function Home() {
   const [response, setResponse] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [paymentSimulated, setPaymentSimulated] = useState(false);
+  const [snapshot, setSnapshot] = useState<any>(null);
+  const [snapshotErr, setSnapshotErr] = useState<string | null>(null);
+
+  const fetchSnapshot = async () => {
+    try {
+      setSnapshotErr(null);
+      const res = await fetch('/api/ops/summary', { cache: 'no-store' });
+      const data = await res.json();
+      setSnapshot(data);
+      if (!data.ok) setSnapshotErr(data.error || 'Snapshot unavailable');
+    } catch (e: any) {
+      setSnapshotErr(e?.message || 'Snapshot error');
+    }
+  };
+
+  // auto-load snapshot on mount
+  React.useEffect(() => {
+    fetchSnapshot();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchAttentionScore = async (withPayment: boolean = false) => {
     setLoading(true);
@@ -62,6 +82,46 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white p-8">
       <main className="max-w-4xl mx-auto">
+        <div className="bg-gray-800 rounded-lg p-6 mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-semibold">System Snapshot</h2>
+            <button onClick={fetchSnapshot} className="px-3 py-1 text-sm bg-gray-700 rounded hover:bg-gray-600">Refresh</button>
+          </div>
+          {!snapshot && !snapshotErr && (
+            <p className="text-gray-400">Loading snapshot…</p>
+          )}
+          {snapshotErr && (
+            <p className="text-red-400">{snapshotErr}</p>
+          )}
+          {snapshot?.ok && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div className="bg-gray-900/60 p-3 rounded">
+                <div className="text-gray-400">Latest Sealed</div>
+                <div className="text-white font-semibold">{snapshot.sealed?.latest_sealed_at_ts || '—'}</div>
+              </div>
+              <div className="bg-gray-900/60 p-3 rounded">
+                <div className="text-gray-400">Sealed (24h)</div>
+                <div className="text-white font-semibold">{snapshot.sealed?.sealed_24h || '—'}</div>
+              </div>
+              <div className="bg-gray-900/60 p-3 rounded">
+                <div className="text-gray-400">Events (1h)</div>
+                <div className="text-white font-semibold">{snapshot.events?.events_last_hour || '—'}</div>
+              </div>
+              <div className="bg-gray-900/60 p-3 rounded">
+                <div className="text-gray-400">Channels (24h)</div>
+                <div className="text-white font-semibold">{snapshot.channels_24h?.channels_24h || '—'}</div>
+              </div>
+              <div className="bg-gray-900/60 p-3 rounded">
+                <div className="text-gray-400">Participants</div>
+                <div className="text-white font-semibold">{snapshot.participants?.sp_total || '—'}</div>
+              </div>
+              <div className="bg-gray-900/60 p-3 rounded">
+                <div className="text-gray-400">Missing Usernames</div>
+                <div className="text-white font-semibold">{snapshot.participants?.sp_null || '—'}</div>
+              </div>
+            </div>
+          )}
+        </div>
         <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
           Attention Oracle x402 Demo
         </h1>

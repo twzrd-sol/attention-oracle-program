@@ -149,6 +149,20 @@ npm run dev
 # Visit http://localhost:3000
 ```
 
+Optional: Live Ops Snapshot (L1/L2)
+
+This demo can show L1/L2 health (sealed epochs, events/hour, channels in last 24h) if a read-only DB URL is available to the server.
+
+Set on the server (not in the browser):
+
+```
+export DATABASE_URL=postgresql://<user>:<pass>@<host>:<port>/<db>?sslmode=require
+# If your DB uses a self-signed CA, you can allow insecure SSL during a demo:
+export DB_SSL_INSECURE=1   # (server-side only)
+```
+
+Then refresh the page to see the System Snapshot panel.
+
 **What you'll see:**
 1. Interactive demo page with creator input field
 2. "Try Without Payment" → Returns HTTP 402 Payment Required
