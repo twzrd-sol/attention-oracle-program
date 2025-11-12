@@ -188,6 +188,15 @@ cd programs/attention-oracle
 anchor build
 ```
 
+### Optional: Minimal JS Client (x402 Dev Tool)
+
+```ts
+import { getAttentionScore } from './clients/js/x402-client';
+
+const data = await getAttentionScore('example_user', { baseUrl: 'http://localhost:3000' });
+console.log(data);
+```
+
 
 ## 🌟 Why This Matters
 
