@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
         message: 'This endpoint requires x402 payment',
         payment_instructions: {
           method: 'x402',
-          price: '0.001 SOL',
+          price: '0.001 USDC',
           recipient: 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop',
           description: 'Access to attention score data'
         }
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
         headers: {
           'X-402-Payment-Required': 'true',
           'X-402-Price': '0.001',
-          'X-402-Currency': 'SOL',
+          'X-402-Currency': 'USDC',
           'X-402-Recipient': 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop'
         }
       }
@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
     payment: {
       verified: true,
       method: 'x402',
-      amount: '0.001 SOL',
+      amount: '0.001 USDC',
       transaction_id: 'mock_tx_' + Date.now()
     },
     _note: 'This is mock data for demonstration purposes.'

@@ -83,14 +83,14 @@ Server returns 402 with payment invoice.
 
 #### 3. The Payment (Agent → Solana)
 ```typescript
-// Agent builds and sends transaction
+// Agent builds and sends transaction (USDC, 6 decimals)
 const tx = await connection.sendTransaction({
     from: agent_wallet,
     to: "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop",
-    amount: 0.001 * LAMPORTS_PER_SOL,
+    amount: 0.001 * 1_000_000, // 1000 micro-USDC
     token: "USDC"
 });
-// Confirmed in 400ms on Solana
+// Confirmed in ~400ms on Solana
 ```
 
 #### 4. The Proof (Agent → API)
