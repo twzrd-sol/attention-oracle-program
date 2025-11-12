@@ -171,10 +171,12 @@ Prediction Markets     ─┘
 | **Problem Identified** | ✅ Oracles need revenue models |
 | **Solution Designed** | ✅ x402 payment gates for data |
 | **Core Tech Built** | ✅ On-chain verification program |
-| **Demo Working** | ✅ x402 flow with mock data |
+| **Demo Working** | ✅ x402 flow with mock data + Switchboard feed |
 | **Vision Clear** | ✅ Template for all Web3 oracles |
 
 **This project:** A proof-of-concept for sustainable oracle economics.
+
+> Note: Uses Switchboard price feeds (via sbv2-lite) to provide an external oracle context for dynamic pricing / validation.
 
 ---
 

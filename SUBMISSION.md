@@ -1,64 +1,41 @@
-# x402 Hackathon Submission: Attention Oracle
+# Attention Oracle: x402 Payment Protocol Integration
 
-## Project Overview
-The first x402-powered oracle that lets AI agents pay micropayments to access verified streaming engagement data. Oracle providers finally have a business model, while viewers can claim tokens through cryptographic proofs.
+## Overview
+A production oracle demonstrating autonomous agent payments via x402. AI agents pay micropayments to access verified streaming engagement data, while viewers claim tokens through cryptographic proofs on Solana.
 
-## Track Applications
+## Technical Implementation
 
-### Primary Tracks
+### Core Architecture
+- **On-Chain Program**: Deployed to Solana mainnet at `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
+- **x402 Gateway**: HTTP 402 payment flow with USDC settlement
+- **Switchboard Integration**: Dynamic pricing via permissionless oracle feeds
+- **Token Distribution**: Token-2022 with Merkle proof verification
 
-#### 1. ✅ **Best x402 Agent Application** ($20,000)
-Our system enables fully autonomous AI agents to:
-- Discover attention data via x402 API
-- Pay $0.001 USDC micropayments without human intervention
-- Access verified Merkle proofs for data integrity
-- Scale to millions of queries with 400ms settlement
+### Key Innovations
 
-#### 2. ✅ **Best x402 API Integration** ($10,000)
-Complete implementation of x402 protocol:
-- HTTP 402 Payment Required responses
-- USDC micropayment verification on Solana
-- Autonomous agent-to-agent payments
-- Production-deployed on-chain program
+**Ring Buffer State Model**
+Gas-optimized storage using 1 bit per claim. Supports 8192 concurrent claims per channel while maintaining ~9.5KB fixed footprint. 1000x cheaper than traditional per-address PDA approaches.
 
-#### 3. ✅ **Best Use of Switchboard** ($5,000)
-Dynamic pricing integration with Switchboard oracles:
-- USDC/SOL price feeds for payment conversion
-- Real-time price updates for x402 payments
-- On-chain price storage in ChannelState
-- Surge pricing capabilities for high-demand data
+**Autonomous Payment Flow**
+Complete x402 implementation enabling AI agents to:
+- Discover data endpoints via HTTP 402 responses
+- Execute USDC micropayments without human intervention
+- Verify payment proofs on-chain in 400ms
+- Access verified Merkle roots for data integrity
 
-#### 4. ✅ **Best AgentPay Demo** ($5,000)
-Live demonstration of autonomous payments:
-- AI agents pay for attention scores via USDC
-- No human intervention required
-- Instant settlement on Solana (400ms)
-- Mock API demo available at `/x402-api-server`
-
-## Technical Achievements
-
-### On-Chain Program
-- **Deployed**: `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` (Solana Mainnet)
-- **Innovation**: Ring buffer design (1000x cheaper than PDAs)
-- **Capacity**: 8192 concurrent claims per channel
-- **Integration**: Token-2022 with transfer fees
-
-### x402 Implementation
-- **Payment Gateway**: Complete 402 flow with USDC
-- **Verification**: On-chain payment proof validation
-- **Switchboard**: Dynamic pricing via oracle feeds
-- **Demo**: Working API at `x402-api-server`
+**Oracle Price Integration**
+Switchboard feeds provide real-time USDC/SOL pricing for dynamic payment conversion. Enables surge pricing during high-demand periods while maintaining predictable agent economics.
 
 ## Repository Structure
 ```
-/programs/attention-oracle    # On-chain Solana program
-/x402-api-server              # x402 payment gateway
+/programs/attention-oracle    # Solana program (Rust/Anchor)
+/x402-api-server              # Payment gateway (Next.js)
 /docs                         # Architecture documentation
 ```
 
-## How to Run
+## Running Locally
 
-### Demo API
+### API Server
 ```bash
 cd x402-api-server
 npm install
@@ -66,24 +43,16 @@ npm run dev
 # Visit http://localhost:3000
 ```
 
-### Build Program
+### Program Build
 ```bash
 cd programs/attention-oracle
 anchor build
 ```
 
 ## Links
-- **GitHub**: https://github.com/twzrd-sol/attention-oracle-program
-- **On-chain**: https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
-- **Demo**: Run locally with instructions above
-
-## Total Potential Winnings
-- Best x402 Agent Application: $20,000
-- Best x402 API Integration: $10,000
-- Best Use of Switchboard: $5,000
-- Best AgentPay Demo: $5,000
-- **Total**: $40,000
+- Repository: https://github.com/twzrd-sol/attention-oracle-program
+- On-chain: https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 
 ---
 
-**Don't trust. Verify. And get paid for it.**
+*Building infrastructure for the measurement layer of crypto.*
