@@ -3,7 +3,7 @@ use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::{
     constants::PROTOCOL_SEED,
-    errors::ProtocolError,
+    errors::MiloError,
     state::{FeeConfig, ProtocolState},
 };
 
@@ -49,7 +49,7 @@ pub struct TransferHook<'info> {
 /// can react to CCM transfers. Future versions may harvest Token-2022 withheld
 /// fees and route them per FeeSplit.
 pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
-    require!(amount > 0, ProtocolError::InvalidAmount);
+    require!(amount > 0, MiloError::InvalidAmount);
 
     // Emit event for indexers / overlays
     let ts = Clock::get()?.unix_timestamp;

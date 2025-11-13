@@ -1,6 +1,6 @@
 use crate::{
     constants::{EPOCH_STATE_SEED, MAX_EPOCH_CLAIMS, PROTOCOL_SEED},
-    errors::ProtocolError,
+    errors::MiloError,
     state::{EpochState, ProtocolState},
 };
 use anchor_lang::prelude::*;
@@ -41,12 +41,12 @@ pub fn set_merkle_root(
 ) -> Result<()> {
     let protocol = &ctx.accounts.protocol_state;
     authorize_publisher(protocol, &ctx.accounts.update_authority.key())?;
-    require!(!protocol.paused, ProtocolError::ProtocolPaused);
+    require!(!protocol.paused, MiloError::ProtocolPaused);
 
-    require!(epoch > 0, ProtocolError::InvalidEpoch);
+    require!(epoch > 0, MiloError::InvalidEpoch);
     require!(
         claim_count <= MAX_EPOCH_CLAIMS,
-        ProtocolError::InvalidInputLength
+        MiloError::InvalidInputLength
     );
 
     let epoch_state = &mut ctx.accounts.epoch_state;
@@ -55,7 +55,7 @@ pub fn set_merkle_root(
     // Prevent re-initialization of an active epoch
     require!(
         epoch_state.timestamp == 0,
-        ProtocolError::EpochAlreadyInitialized
+        MiloError::EpochAlreadyInitialized
     );
 
     // Initialize/overwrite epoch fields
@@ -113,12 +113,12 @@ pub fn set_merkle_root_open(
 ) -> Result<()> {
     let protocol = &ctx.accounts.protocol_state;
     authorize_publisher(protocol, &ctx.accounts.update_authority.key())?;
-    require!(!protocol.paused, ProtocolError::ProtocolPaused);
+    require!(!protocol.paused, MiloError::ProtocolPaused);
 
-    require!(epoch > 0, ProtocolError::InvalidEpoch);
+    require!(epoch > 0, MiloError::InvalidEpoch);
     require!(
         claim_count <= MAX_EPOCH_CLAIMS,
-        ProtocolError::InvalidInputLength
+        MiloError::InvalidInputLength
     );
 
     let epoch_state = &mut ctx.accounts.epoch_state;
@@ -127,7 +127,7 @@ pub fn set_merkle_root_open(
     // Prevent re-initialization of an active epoch
     require!(
         epoch_state.timestamp == 0,
-        ProtocolError::EpochAlreadyInitialized
+        MiloError::EpochAlreadyInitialized
     );
 
     epoch_state.epoch = epoch;
@@ -149,6 +149,6 @@ pub fn set_merkle_root_open(
 fn authorize_publisher(protocol: &ProtocolState, signer: &Pubkey) -> Result<()> {
     let is_admin = *signer == protocol.admin;
     let is_publisher = protocol.publisher != Pubkey::default() && *signer == protocol.publisher;
-    require!(is_admin || is_publisher, ProtocolError::Unauthorized);
+    require!(is_admin || is_publisher, MiloError::Unauthorized);
     Ok(())
 }

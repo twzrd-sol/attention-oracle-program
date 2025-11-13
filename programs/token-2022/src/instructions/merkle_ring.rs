@@ -1,6 +1,6 @@
 use crate::{
     constants::{CHANNEL_MAX_CLAIMS, CHANNEL_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED},
-    errors::ProtocolError,
+    errors::MiloError,
     instructions::claim::{compute_leaf, verify_proof},
     state::{ChannelSlot, ChannelState, ProtocolState},
 };
@@ -89,11 +89,11 @@ pub fn set_merkle_root_ring(
     let protocol = &ctx.accounts.protocol_state;
 
     authorize_publisher(protocol, &ctx.accounts.update_authority.key())?;
-    require!(!protocol.paused, ProtocolError::ProtocolPaused);
-    require!(epoch > 0, ProtocolError::InvalidEpoch);
+    require!(!protocol.paused, MiloError::ProtocolPaused);
+    require!(epoch > 0, MiloError::InvalidEpoch);
     require!(
         claim_count as usize <= CHANNEL_MAX_CLAIMS,
-        ProtocolError::InvalidInputLength
+        MiloError::InvalidInputLength
     );
 
     let channel_state = &mut ctx.accounts.channel_state.load_mut()?;
@@ -101,18 +101,18 @@ pub fn set_merkle_root_ring(
     // Verify channel was initialized
     require!(
         channel_state.version > 0,
-        ProtocolError::ChannelNotInitialized
+        MiloError::ChannelNotInitialized
     );
     require!(
         channel_state.streamer == streamer_key,
-        ProtocolError::InvalidStreamer
+        MiloError::InvalidStreamer
     );
 
     // Update ring buffer slot (modulo 10)
     let slot = channel_state.slot_mut(epoch);
     require!(
         slot.epoch == 0 || epoch > slot.epoch,
-        ProtocolError::EpochNotIncreasing
+        MiloError::EpochNotIncreasing
     );
     slot.reset(epoch, root);
     slot.claim_count = claim_count;
@@ -142,7 +142,7 @@ pub struct ClaimWithRing<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ ProtocolError::ProtocolPaused,
+        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -191,36 +191,36 @@ pub fn claim_with_ring(
     // Verify channel initialized
     require!(
         channel_state.version > 0,
-        ProtocolError::ChannelNotInitialized
+        MiloError::ChannelNotInitialized
     );
     require!(
         channel_state.streamer == streamer_key,
-        ProtocolError::InvalidStreamer
+        MiloError::InvalidStreamer
     );
 
     let slot = channel_state.slot_mut(epoch);
-    require!(slot.epoch == epoch, ProtocolError::InvalidEpoch);
-    require!(id.len() <= MAX_ID_BYTES, ProtocolError::InvalidInputLength);
+    require!(slot.epoch == epoch, MiloError::InvalidEpoch);
+    require!(id.len() <= MAX_ID_BYTES, MiloError::InvalidInputLength);
     ChannelSlot::validate_index(index as usize)?;
-    require!(index < slot.claim_count as u32, ProtocolError::InvalidIndex);
+    require!(index < slot.claim_count as u32, MiloError::InvalidIndex);
     require!(
         proof.len() <= MAX_PROOF_NODES,
-        ProtocolError::InvalidProofLength
+        MiloError::InvalidProofLength
     );
     require!(
         !slot.test_bit(index as usize),
-        ProtocolError::AlreadyClaimed
+        MiloError::AlreadyClaimed
     );
 
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, slot.root),
-        ProtocolError::InvalidProof
+        MiloError::InvalidProof
     );
 
     require!(
         ctx.accounts.treasury_ata.amount >= amount,
-        ProtocolError::InvalidAmount
+        MiloError::InvalidAmount
     );
 
     let signer_seeds: &[&[u8]] = &[
@@ -252,6 +252,6 @@ pub fn claim_with_ring(
 fn authorize_publisher(protocol: &ProtocolState, signer: &Pubkey) -> Result<()> {
     let is_admin = *signer == protocol.admin;
     let is_publisher = protocol.publisher != Pubkey::default() && *signer == protocol.publisher;
-    require!(is_admin || is_publisher, ProtocolError::Unauthorized);
+    require!(is_admin || is_publisher, MiloError::Unauthorized);
     Ok(())
 }

@@ -23,19 +23,24 @@ pub fn verify_cnft_receipt(
     expected_channel: &str,
     expected_epoch: u64,
 ) -> Result<()> {
-    use crate::errors::ProtocolError;
+    use crate::errors::MiloError;
 
     // Step 1: Verify ownership
-    require!(receipt_proof.owner == *claimer, ProtocolError::InvalidProof);
+    require!(receipt_proof.owner == *claimer, MiloError::InvalidProof);
 
     // Step 2: Verify metadata hash matches expected channel/epoch
     let expected_hash = compute_metadata_hash(expected_channel, expected_epoch);
     require!(
         receipt_proof.metadata_hash == expected_hash,
-        ProtocolError::InvalidProof
+        MiloError::InvalidProof
     );
 
-    msg!("Receipt verified: owner={} channel={} epoch={}", claimer, expected_channel, expected_epoch);
+    msg!(
+        "Receipt verified: owner={} channel={} epoch={}",
+        claimer,
+        expected_channel,
+        expected_epoch
+    );
 
     Ok(())
 }

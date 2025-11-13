@@ -5,10 +5,13 @@ pub const PROTOCOL_SEED: &[u8] = b"protocol";
 pub const TREASURY_SEED: &[u8] = b"treasury";
 pub const EPOCH_STATE_SEED: &[u8] = b"epoch_state";
 pub const CHANNEL_STATE_SEED: &[u8] = b"channel_state";
+pub const LIQUIDITY_ENGINE_SEED: &[u8] = b"liquidity_engine";
+pub const PASSPORT_REGISTRY_SEED: &[u8] = b"passport_registry";
+pub const POINTS_STATE_SEED: &[u8] = b"points_state";
 
-pub const CHANNEL_RING_SLOTS: usize = 10;
-pub const CHANNEL_MAX_CLAIMS: usize = 1024;
-pub const CHANNEL_BITMAP_BYTES: usize = (CHANNEL_MAX_CLAIMS + 7) / 8;
+pub const CHANNEL_RING_SLOTS: usize = 9;
+pub const CHANNEL_BITMAP_BYTES: usize = 1024; // v2: 1024 bytes = 8192 bits (was 512 in v1.5, 128 in v1)
+pub const CHANNEL_MAX_CLAIMS: usize = CHANNEL_BITMAP_BYTES * 8; // 8192 claims (8x improvement over v1, supports jasontheween's 5132 participants)
 
 pub const MAX_EPOCH_CLAIMS: u32 = 1_000_000;
 pub const MAX_ID_BYTES: usize = 64;
@@ -23,6 +26,11 @@ pub const MAX_FEE_AMOUNT: u64 = 1_000_000_000_000;
 
 // Epoch force-close grace period (e.g., 7 days)
 pub const EPOCH_FORCE_CLOSE_GRACE_SECS: i64 = 7 * 24 * 60 * 60;
+
+// Liquidity drip thresholds
+pub const DRIP_TIER_1_THRESHOLD: u64 = 10_000_000_000; // 10M tokens
+pub const DRIP_TIER_2_THRESHOLD: u64 = 50_000_000_000; // 50M tokens
+pub const DRIP_TIER_3_THRESHOLD: u64 = 100_000_000_000; // 100M tokens
 
 // Initial admin authority for singleton protocol initialization
 pub const ADMIN_AUTHORITY: Pubkey = Pubkey::new_from_array([

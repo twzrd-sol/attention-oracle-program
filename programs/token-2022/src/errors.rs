@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 #[error_code]
-pub enum ProtocolError {
+pub enum MiloError {
     #[msg("Unauthorized")]
     Unauthorized,
 
@@ -77,4 +77,42 @@ pub enum ProtocolError {
 
     #[msg("Epoch not yet expired for close")]
     EpochNotExpired,
+
+    // Admin/config validation
+    #[msg("Invalid pubkey (cannot be default)")]
+    InvalidPubkey,
+}
+
+    #[msg("Missing Bubblegum accounts")]
+    MissingBubblegumAccounts,
+
+    #[msg("Drip already executed for this tier")]
+    DripAlreadyExecuted,
+
+    #[msg("Invalid drip tier")]
+    InvalidDripTier,
+
+    #[msg("Insufficient points for gated action")]
+    InsufficientPoints,
+
+    #[msg("Drip threshold not met")]
+    DripThresholdNotMet,
+
+    #[msg("Insufficient treasury balance")]
+    InsufficientTreasuryBalance,
+
+    #[msg("Pool not initialized")]
+    PoolNotInitialized,
+
+    #[msg("Volume too low for operation")]
+    VolumeTooLow,
+
+    #[msg("Invalid tier")]
+    InvalidTier,
+
+    #[msg("Invalid user hash")]
+    InvalidUserHash,
+
+    #[msg("Downgrade not allowed")]
+    DowngradeNotAllowed,
 }

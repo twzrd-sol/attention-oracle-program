@@ -1,4 +1,4 @@
-use crate::{constants::PROTOCOL_SEED, errors::ProtocolError, state::ProtocolState};
+use crate::{constants::PROTOCOL_SEED, errors::MiloError, state::ProtocolState};
 use anchor_lang::prelude::*;
 
 /// Update the allowlisted publisher (singleton protocol_state)
@@ -11,14 +11,17 @@ pub struct UpdatePublisher<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
 
 pub fn update_publisher(ctx: Context<UpdatePublisher>, new_publisher: Pubkey) -> Result<()> {
     // Reject accidental zero key
-    require!(new_publisher != Pubkey::default(), ProtocolError::InvalidPubkey);
+    require!(
+        new_publisher != Pubkey::default(),
+        MiloError::InvalidPubkey
+    );
     let state = &mut ctx.accounts.protocol_state;
     state.publisher = new_publisher;
     Ok(())
@@ -34,7 +37,7 @@ pub struct UpdatePublisherOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -44,7 +47,10 @@ pub fn update_publisher_open(
     new_publisher: Pubkey,
 ) -> Result<()> {
     // Reject accidental zero key
-    require!(new_publisher != Pubkey::default(), ProtocolError::InvalidPubkey);
+    require!(
+        new_publisher != Pubkey::default(),
+        MiloError::InvalidPubkey
+    );
     let state = &mut ctx.accounts.protocol_state;
     state.publisher = new_publisher;
     Ok(())
@@ -60,7 +66,7 @@ pub struct SetPolicy<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -81,7 +87,7 @@ pub struct SetPolicyOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -102,7 +108,7 @@ pub struct SetPaused<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -123,7 +129,7 @@ pub struct SetPausedOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -145,14 +151,14 @@ pub struct UpdateAdminOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
 
 pub fn update_admin_open(ctx: Context<UpdateAdminOpen>, new_admin: Pubkey) -> Result<()> {
     // Reject accidental zero key
-    require!(new_admin != Pubkey::default(), ProtocolError::InvalidPubkey);
+    require!(new_admin != Pubkey::default(), MiloError::InvalidPubkey);
     let state = &mut ctx.accounts.protocol_state;
     state.admin = new_admin;
     Ok(())
@@ -168,14 +174,14 @@ pub struct UpdateAdmin<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
 
 pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
     // Reject accidental zero key
-    require!(new_admin != Pubkey::default(), ProtocolError::InvalidPubkey);
+    require!(new_admin != Pubkey::default(), MiloError::InvalidPubkey);
     let state = &mut ctx.accounts.protocol_state;
     state.admin = new_admin;
     Ok(())
@@ -196,7 +202,7 @@ pub struct CloseChannelState<'info> {
     #[account(
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = authority.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = authority.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -219,7 +225,11 @@ pub fn close_channel_state(ctx: Context<CloseChannelState>) -> Result<()> {
 
     msg!("Closing ChannelState account");
     msg!("  Account: {}", ctx.accounts.channel_state.key());
-    msg!("  Rent recovered: {} lamports (~{} SOL)", lamports, lamports as f64 / 1_000_000_000.0);
+    msg!(
+        "  Rent recovered: {} lamports (~{} SOL)",
+        lamports,
+        lamports as f64 / 1_000_000_000.0
+    );
     msg!("  Receiver: {}", ctx.accounts.rent_receiver.key());
 
     // Anchor's close constraint handles:

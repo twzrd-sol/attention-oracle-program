@@ -7,7 +7,7 @@ use solana_program::keccak;
 
 use crate::{
     constants::{MAX_ID_BYTES, PROTOCOL_SEED},
-    errors::ProtocolError,
+    errors::MiloError,
     instructions::cnft_verify::CnftReceiptProof,
     state::{EpochState, ProtocolState},
 };
@@ -24,7 +24,7 @@ pub struct Claim<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ ProtocolError::ProtocolPaused,
+        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -71,17 +71,17 @@ pub fn claim(
     let epoch = &mut ctx.accounts.epoch_state;
 
     // Basic guards
-    require!(!epoch.closed, ProtocolError::EpochClosed);
+    require!(!epoch.closed, MiloError::EpochClosed);
     // Index must be strictly within published claim_count
     require!(
         index < epoch.claim_count as u32,
-        ProtocolError::InvalidIndex
+        MiloError::InvalidIndex
     );
     require!(
         epoch.mint == ctx.accounts.mint.key(),
-        ProtocolError::InvalidMint
+        MiloError::InvalidMint
     );
-    require!(id.len() <= MAX_ID_BYTES, ProtocolError::InvalidInputLength);
+    require!(id.len() <= MAX_ID_BYTES, MiloError::InvalidInputLength);
 
     // Validate epoch_state PDA seeds to prevent spoofing
     let expected = Pubkey::find_program_address(
@@ -93,33 +93,29 @@ pub fn claim(
         ctx.program_id,
     )
     .0;
-    require_keys_eq!(
-        expected,
-        epoch_state_key,
-        ProtocolError::InvalidEpochState
-    );
+    require_keys_eq!(expected, epoch_state_key, MiloError::InvalidEpochState);
 
     // Check proof depth and bitmap
     require!(
         proof.len() <= MAX_PROOF_NODES,
-        ProtocolError::InvalidProofLength
+        MiloError::InvalidProofLength
     );
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
     require!(
         byte_i < epoch.claimed_bitmap.len(),
-        ProtocolError::InvalidIndex
+        MiloError::InvalidIndex
     );
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
-        ProtocolError::AlreadyClaimed
+        MiloError::AlreadyClaimed
     );
 
     // Verify proof against on-chain root
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, epoch.root),
-        ProtocolError::InvalidProof
+        MiloError::InvalidProof
     );
 
     // Transfer CCM from treasury PDA to claimer (use transfer_checked for Token-2022)
@@ -128,7 +124,7 @@ pub fn claim(
 
     require!(
         ctx.accounts.treasury_ata.amount >= amount,
-        ProtocolError::InvalidAmount
+        MiloError::InvalidAmount
     );
 
     token_interface::transfer_checked(
@@ -151,7 +147,7 @@ pub fn claim(
     epoch.total_claimed = epoch
         .total_claimed
         .checked_add(amount)
-        .ok_or(ProtocolError::InvalidAmount)?;
+        .ok_or(MiloError::InvalidAmount)?;
 
     Ok(())
 }
@@ -166,7 +162,7 @@ pub struct ClaimOpen<'info> {
         mut,
         seeds = [crate::constants::PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ ProtocolError::ProtocolPaused,
+        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -211,22 +207,22 @@ pub fn claim_open(
     // Get epoch_state key before mutable borrow
     let epoch_state_key = ctx.accounts.epoch_state.key();
     let epoch = &mut ctx.accounts.epoch_state;
-    require!(!epoch.closed, ProtocolError::EpochClosed);
+    require!(!epoch.closed, MiloError::EpochClosed);
     require!(
         index < epoch.claim_count as u32,
-        ProtocolError::InvalidIndex
+        MiloError::InvalidIndex
     );
     require!(
         epoch.mint == ctx.accounts.mint.key(),
-        ProtocolError::InvalidMint
+        MiloError::InvalidMint
     );
-    require!(id.len() <= MAX_ID_BYTES, ProtocolError::InvalidInputLength);
+    require!(id.len() <= MAX_ID_BYTES, MiloError::InvalidInputLength);
 
     // Step 1: If receipt required, verify ORACLE L1 participation
     if ctx.accounts.protocol_state.require_receipt {
         require!(
             channel.is_some() && twzrd_epoch.is_some() && receipt_proof.is_some(),
-            ProtocolError::ReceiptRequired
+            MiloError::ReceiptRequired
         );
 
         let receipt = receipt_proof.as_ref().unwrap();
@@ -258,32 +254,28 @@ pub fn claim_open(
         ctx.program_id,
     )
     .0;
-    require_keys_eq!(
-        expected,
-        epoch_state_key,
-        ProtocolError::InvalidEpochState
-    );
+    require_keys_eq!(expected, epoch_state_key, MiloError::InvalidEpochState);
 
     // Step 2: Verify merkle proof for CCM claim
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
     require!(
         byte_i < epoch.claimed_bitmap.len(),
-        ProtocolError::InvalidIndex
+        MiloError::InvalidIndex
     );
     require!(
         proof.len() <= MAX_PROOF_NODES,
-        ProtocolError::InvalidProofLength
+        MiloError::InvalidProofLength
     );
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
-        ProtocolError::AlreadyClaimed
+        MiloError::AlreadyClaimed
     );
 
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, epoch.root),
-        ProtocolError::InvalidProof
+        MiloError::InvalidProof
     );
 
     // Step 3: Transfer CCM tokens
@@ -296,7 +288,7 @@ pub fn claim_open(
 
     require!(
         ctx.accounts.treasury_ata.amount >= amount,
-        ProtocolError::InvalidAmount
+        MiloError::InvalidAmount
     );
 
     token_interface::transfer_checked(
@@ -319,12 +311,46 @@ pub fn claim_open(
     epoch.total_claimed = epoch
         .total_claimed
         .checked_add(amount)
-        .ok_or(ProtocolError::InvalidAmount)?;
+        .ok_or(MiloError::InvalidAmount)?;
     Ok(())
 }
 
+/// Simple hex decoder (avoids external hex crate dependency)
+fn decode_hex_32(hex_str: &str) -> Result<[u8; 32]> {
+    let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    require!(hex_str.len() == 64, MiloError::InvalidProof);
+
+    let mut result = [0u8; 32];
+    for i in 0..32 {
+        let byte_str = &hex_str[i * 2..i * 2 + 2];
+        result[i] = u8::from_str_radix(byte_str, 16).map_err(|_| MiloError::InvalidProof)?;
+    }
+    Ok(result)
+}
+
+/// Compute participation leaf to match aggregator's makeParticipationLeaf
+/// Leaf = keccak256(user_hash || channel || epoch)
+/// This matches: apps/gateway/src/lib/participation-merkle.ts:13-28
+pub fn compute_participation_leaf(
+    user_hash_hex: &str,
+    channel: &str,
+    epoch: u64,
+) -> Result<[u8; 32]> {
+    // Parse user_hash from hex string (32 bytes)
+    let user_hash = decode_hex_32(user_hash_hex)?;
+
+    // Encode channel as UTF-8 bytes
+    let channel_bytes = channel.as_bytes();
+
+    // Encode epoch as u64 little-endian
+    let epoch_bytes = epoch.to_le_bytes();
+
+    // keccak256(user_hash || channel || epoch)
+    Ok(keccak::hashv(&[&user_hash, channel_bytes, &epoch_bytes]).to_bytes())
+}
+
+// Legacy function kept for backwards compatibility with other claim types
 pub fn compute_leaf(claimer: &Pubkey, index: u32, amount: u64, id: &str) -> [u8; 32] {
-    // Note: Off-chain must mirror this exact hashing scheme
     let idx = index.to_le_bytes();
     let amt = amount.to_le_bytes();
     let id_bytes = id.as_bytes();

@@ -1,6 +1,6 @@
 use crate::{
     constants::PROTOCOL_SEED,
-    errors::ProtocolError,
+    errors::MiloError,
     state::{FeeConfig, FeeSplit, ProtocolState},
 };
 use anchor_lang::prelude::*;
@@ -15,7 +15,7 @@ pub struct UpdateFeeConfig<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = authority.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = authority.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -37,7 +37,7 @@ pub fn update_fee_config(
 ) -> Result<()> {
     require!(
         new_basis_points <= crate::constants::MAX_FEE_BASIS_POINTS,
-        ProtocolError::InvalidFeeBps
+        MiloError::InvalidFeeBps
     );
 
     // For v1, we store only basis_points and max_fee at init; allow updating basis points.
@@ -58,7 +58,7 @@ pub struct UpdateFeeConfigOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = authority.key() == protocol_state.admin @ ProtocolError::Unauthorized,
+        constraint = authority.key() == protocol_state.admin @ MiloError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -80,7 +80,7 @@ pub fn update_fee_config_open(
 ) -> Result<()> {
     require!(
         new_basis_points <= crate::constants::MAX_FEE_BASIS_POINTS,
-        ProtocolError::InvalidFeeBps
+        MiloError::InvalidFeeBps
     );
 
     let fee_cfg = &mut ctx.accounts.fee_config;

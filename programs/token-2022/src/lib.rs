@@ -7,6 +7,8 @@ pub mod instructions;
 pub mod state;
 
 #[allow(unused_imports)]
+pub(crate) use instructions::admin::__client_accounts_close_channel_state;
+#[allow(unused_imports)]
 pub(crate) use instructions::admin::__client_accounts_set_paused;
 #[allow(unused_imports)]
 pub(crate) use instructions::admin::__client_accounts_set_paused_open;
@@ -22,8 +24,6 @@ pub(crate) use instructions::admin::__client_accounts_update_admin_open;
 pub(crate) use instructions::admin::__client_accounts_update_publisher;
 #[allow(unused_imports)]
 pub(crate) use instructions::admin::__client_accounts_update_publisher_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::admin::__client_accounts_close_channel_state;
 #[allow(unused_imports)]
 pub(crate) use instructions::channel::__client_accounts_claim_channel;
 #[allow(unused_imports)]
@@ -60,14 +60,24 @@ use crate::instructions::admin::{
     CloseChannelState, SetPaused, SetPausedOpen, SetPolicy, SetPolicyOpen, UpdateAdmin,
     UpdateAdminOpen, UpdatePublisher, UpdatePublisherOpen,
 };
-use crate::instructions::channel::{ClaimChannel, SetChannelMerkleRoot};
+use crate::instructions::channel::{ClaimChannel, ClaimChannelWithReceipt, SetChannelMerkleRoot};
 use crate::instructions::claim::{Claim, ClaimOpen};
-use crate::instructions::cleanup::{CloseEpochState, CloseEpochStateOpen};
+use crate::instructions::cleanup::{
+    CloseEpochState, CloseEpochStateOpen, ForceCloseEpochStateLegacy,
+    ForceCloseEpochStateOpen,
+};
 use crate::instructions::cnft_verify::CnftReceiptProof;
 use crate::instructions::governance::{UpdateFeeConfig, UpdateFeeConfigOpen};
+use crate::instructions::hooks::TransferHook;
 use crate::instructions::initialize_mint::{InitializeMint, InitializeMintOpen};
+use crate::instructions::liquidity::TriggerLiquidityDrip;
 use crate::instructions::merkle::{SetMerkleRoot, SetMerkleRootOpen};
 use crate::instructions::merkle_ring::{ClaimWithRing, InitializeChannel, SetMerkleRootRing};
+use crate::instructions::passport::{
+    MintPassportOpen, ReissuePassportOpen, RevokePassportOpen, UpgradePassportOpen,
+    UpgradePassportProved,
+};
+use crate::instructions::points::{ClaimPointsOpen, RequirePoints as RequirePointsGe};
 use crate::state::FeeSplit;
 
 declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
@@ -251,8 +261,6 @@ pub mod token_2022 {
         instructions::cleanup::close_epoch_state_open(ctx, epoch, streamer_key)
     }
 
-
-
     pub fn initialize_channel(ctx: Context<InitializeChannel>, streamer_key: Pubkey) -> Result<()> {
         instructions::merkle_ring::initialize_channel(ctx, streamer_key)
     }
@@ -285,5 +293,123 @@ pub mod token_2022 {
             id,
             streamer_key,
         )
+    }
+
+    // Transfer hook for automatic fee collection
+    pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
+        instructions::hooks::transfer_hook(ctx, amount)
+    }
+
+    // Points system instructions
+    pub fn claim_points_open(
+        ctx: Context<ClaimPointsOpen>,
+        index: u32,
+        amount: u64,
+        id: String,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::points::claim_points_open(ctx, index, amount, id, proof)
+    }
+
+    pub fn require_points_ge(ctx: Context<RequirePointsGe>, min: u64) -> Result<()> {
+        instructions::points::require_points_ge(ctx, min)
+    }
+
+    // Advanced channel claims with receipt
+    pub fn claim_channel_open_with_receipt(
+        ctx: Context<ClaimChannelWithReceipt>,
+        epoch: u64,
+        index: u32,
+        amount: u64,
+        proof: Vec<[u8; 32]>,
+        id: String,
+        streamer_key: Pubkey,
+        receipt_proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::channel::claim_channel_with_receipt(
+            ctx,
+            epoch,
+            index,
+            amount,
+            proof,
+            id,
+            streamer_key,
+            receipt_proof,
+        )
+    }
+
+    // Advanced cleanup instructions
+    pub fn force_close_epoch_state_legacy(
+        ctx: Context<ForceCloseEpochStateLegacy>,
+        epoch: u64,
+        streamer_key: Pubkey,
+    ) -> Result<()> {
+        instructions::cleanup::force_close_epoch_state_legacy(ctx, epoch, streamer_key)
+    }
+
+    pub fn force_close_epoch_state_open(
+        ctx: Context<ForceCloseEpochStateOpen>,
+        epoch: u64,
+        streamer_key: Pubkey,
+        mint: Pubkey,
+    ) -> Result<()> {
+        instructions::cleanup::force_close_epoch_state_open(ctx, epoch, streamer_key, mint)
+    }
+
+
+    // Liquidity management
+    pub fn trigger_liquidity_drip(ctx: Context<TriggerLiquidityDrip>) -> Result<()> {
+        instructions::liquidity::trigger_liquidity_drip(ctx)
+    }
+
+    // Passport/Identity system instructions
+    pub fn mint_passport_open(
+        ctx: Context<MintPassportOpen>,
+        user_hash: [u8; 32],
+        owner: Pubkey,
+        tier: u8,
+        score: u64,
+    ) -> Result<()> {
+        instructions::passport::mint_passport_open(ctx, user_hash, owner, tier, score)
+    }
+
+    pub fn upgrade_passport_open(
+        ctx: Context<UpgradePassportOpen>,
+        user_hash: [u8; 32],
+        new_tier: u8,
+        new_score: u64,
+        epoch_count: u32,
+        weighted_presence: u64,
+        badges: u32,
+        leaf_hash: Option<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::passport::upgrade_passport_open(
+            ctx, user_hash, new_tier, new_score, epoch_count, weighted_presence, badges, leaf_hash
+        )
+    }
+
+    pub fn upgrade_passport_proved(
+        ctx: Context<UpgradePassportProved>,
+        proof: Vec<[u8; 32]>,
+        index: u32,
+        score: u32,
+        tier: u8,
+    ) -> Result<()> {
+        instructions::passport::upgrade_passport_proved(ctx, proof, index, score, tier)
+    }
+
+    pub fn reissue_passport_open(
+        ctx: Context<ReissuePassportOpen>,
+        user_hash: [u8; 32],
+        new_owner: Pubkey,
+    ) -> Result<()> {
+        instructions::passport::reissue_passport_open(ctx, user_hash, new_owner)
+    }
+
+    pub fn revoke_passport_open(
+        ctx: Context<RevokePassportOpen>,
+        user_hash: [u8; 32],
+    ) -> Result<()> {
+        instructions::passport::revoke_passport_open(ctx, user_hash)
     }
 }

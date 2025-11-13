@@ -1,6 +1,6 @@
 use crate::{
     constants::{ADMIN_AUTHORITY, PROTOCOL_SEED},
-    errors::ProtocolError,
+    errors::MiloError,
     state::{FeeConfig, ProtocolState},
 };
 use anchor_lang::prelude::*;
@@ -14,7 +14,7 @@ use anchor_spl::token_interface::Mint as SplMint;
 pub struct InitializeMint<'info> {
     #[account(
         mut,
-        constraint = admin.key() == ADMIN_AUTHORITY @ ProtocolError::Unauthorized
+        constraint = admin.key() == ADMIN_AUTHORITY @ MiloError::Unauthorized
     )]
     pub admin: Signer<'info>,
 
@@ -47,11 +47,11 @@ pub struct InitializeMint<'info> {
 pub fn handler(ctx: Context<InitializeMint>, fee_basis_points: u16, max_fee: u64) -> Result<()> {
     require!(
         fee_basis_points <= crate::constants::MAX_FEE_BASIS_POINTS,
-        ProtocolError::InvalidFeeBps
+        MiloError::InvalidFeeBps
     );
     require!(
         max_fee <= crate::constants::MAX_FEE_AMOUNT,
-        ProtocolError::InvalidAmount
+        MiloError::InvalidAmount
     );
 
     assert_transfer_fee_extension(&ctx.accounts.mint)?;
@@ -59,7 +59,7 @@ pub fn handler(ctx: Context<InitializeMint>, fee_basis_points: u16, max_fee: u64
     let protocol_state = &mut ctx.accounts.protocol_state;
     require!(
         !protocol_state.is_initialized,
-        ProtocolError::AlreadyInitialized
+        MiloError::AlreadyInitialized
     );
 
     protocol_state.is_initialized = true;
@@ -123,11 +123,11 @@ pub fn handler_open(
 ) -> Result<()> {
     require!(
         fee_basis_points <= crate::constants::MAX_FEE_BASIS_POINTS,
-        ProtocolError::InvalidFeeBps
+        MiloError::InvalidFeeBps
     );
     require!(
         max_fee <= crate::constants::MAX_FEE_AMOUNT,
-        ProtocolError::InvalidAmount
+        MiloError::InvalidAmount
     );
 
     assert_transfer_fee_extension(&ctx.accounts.mint)?;
@@ -135,7 +135,7 @@ pub fn handler_open(
     let protocol_state = &mut ctx.accounts.protocol_state;
     require!(
         !protocol_state.is_initialized,
-        ProtocolError::AlreadyInitialized
+        MiloError::AlreadyInitialized
     );
 
     protocol_state.is_initialized = true;
@@ -160,10 +160,10 @@ fn assert_transfer_fee_extension(mint: &InterfaceAccount<SplMint>) -> Result<()>
     let account_info = mint.to_account_info();
     let data = account_info.try_borrow_data()?;
     let state = StateWithExtensions::<RawMint>::unpack(&data)
-        .map_err(|_| error!(ProtocolError::InvalidMint))?;
+        .map_err(|_| error!(MiloError::InvalidMint))?;
     require!(
         state.get_extension::<TransferFeeConfig>().is_ok(),
-        ProtocolError::InvalidMint
+        MiloError::InvalidMint
     );
     Ok(())
 }
