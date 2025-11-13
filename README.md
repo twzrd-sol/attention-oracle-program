@@ -240,7 +240,7 @@ You may use this project under the terms of either license at your option.
 - We never ask for seed phrases or private keys. The demo does not require wallet connections.
 - Verify on-chain references by copying the Program ID exactly: `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`.
 - Avoid shortened URLs; review commands before running.
-- If you see a suspicious link or request, report it: dev@twzrd.xyz (Telegram: @twzrd_xyz).
+- If you see a suspicious link or request, report it: security@twzrd.xyz (Telegram: @twzrd_xyz).
 
 ---
 
