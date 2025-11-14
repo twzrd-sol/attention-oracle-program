@@ -89,13 +89,12 @@ declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
 #[cfg(not(feature = "no-entrypoint"))]
 security_txt! {
-    name: "Attention Oracle — Verifiable Distribution Protocol (Token-2022)",
-    project_url: "https://github.com/twzrd-sol/milo-token",
+    name: "Verifiable Distribution Protocol (Token-2022)",
+    project_url: "https://github.com/twzrd-sol/attention-oracle-program",
     contacts: "email:security.xyz",
-    policy: "https://github.com/twzrd-sol/milo-token/blob/main/SECURITY.md",
+    policy: "https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md",
     preferred_languages: "en",
-    source_code: "https://github.com/twzrd-sol/milo-token",
-    expiry: "2026-06-30"
+    source_code: "https://github.com/twzrd-sol/attention-oracle-program",
 }
 
 #[program]
