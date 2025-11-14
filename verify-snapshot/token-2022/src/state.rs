@@ -25,7 +25,7 @@ pub struct ProtocolState {
     /// CCM mint address
     pub mint: Pubkey,
 
-    /// Emergency pause flag
+    /// Protocol pause flag (circuit breaker)
     pub paused: bool,
 
     /// Require an external receipt for claims (default: false)
@@ -145,6 +145,10 @@ pub struct ChannelState {
     pub streamer: Pubkey,
     pub latest_epoch: u64,
     pub slots: [ChannelSlot; CHANNEL_RING_SLOTS],
+    /// Switchboard price feed: USDC/SOL price (lamports per USDC)
+    pub usdc_sol_price: u64,
+    /// Timestamp of last price update
+    pub price_updated_at: i64,
 }
 
 impl ChannelState {

@@ -77,4 +77,8 @@ pub enum ProtocolError {
 
     #[msg("Epoch not yet expired for close")]
     EpochNotExpired,
+
+    // Admin/config validation
+    #[msg("Invalid pubkey (cannot be default)")]
+    InvalidPubkey,
 }

@@ -23,6 +23,8 @@ pub(crate) use instructions::admin::__client_accounts_update_publisher;
 #[allow(unused_imports)]
 pub(crate) use instructions::admin::__client_accounts_update_publisher_open;
 #[allow(unused_imports)]
+pub(crate) use instructions::admin::__client_accounts_close_channel_state;
+#[allow(unused_imports)]
 pub(crate) use instructions::channel::__client_accounts_claim_channel;
 #[allow(unused_imports)]
 pub(crate) use instructions::channel::__client_accounts_set_channel_merkle_root;
@@ -55,8 +57,8 @@ pub(crate) use instructions::merkle_ring::__client_accounts_set_merkle_root_ring
 
 // Narrow imports for function signatures (no crate-wide re-exports)
 use crate::instructions::admin::{
-    SetPaused, SetPausedOpen, SetPolicy, SetPolicyOpen, UpdateAdmin, UpdateAdminOpen,
-    UpdatePublisher, UpdatePublisherOpen,
+    CloseChannelState, SetPaused, SetPausedOpen, SetPolicy, SetPolicyOpen, UpdateAdmin,
+    UpdateAdminOpen, UpdatePublisher, UpdatePublisherOpen,
 };
 use crate::instructions::channel::{ClaimChannel, SetChannelMerkleRoot};
 use crate::instructions::claim::{Claim, ClaimOpen};
@@ -76,7 +78,7 @@ use solana_security_txt::security_txt;
 security_txt! {
     name: "Verifiable Distribution Protocol (Token-2022)",
     project_url: "https://github.com/twzrd-sol/attention-oracle-program",
-    contacts: "email:ccm@twzrd.xyz",
+    contacts: "email:dev@twzrd.xyz, telegram:@twzrd_xyz",
     policy: "https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md",
     preferred_languages: "en",
     source_code: "https://github.com/twzrd-sol/attention-oracle-program"
@@ -214,6 +216,11 @@ pub mod token_2022 {
 
     pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
         instructions::admin::update_admin(ctx, new_admin)
+    }
+
+    /// Close a ChannelState account and recover rent (admin-only)
+    pub fn close_channel_state(ctx: Context<CloseChannelState>) -> Result<()> {
+        instructions::admin::close_channel_state(ctx)
     }
 
     pub fn claim_channel_open(
