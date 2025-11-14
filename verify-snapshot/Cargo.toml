@@ -1,5 +1,5 @@
 [workspace]
-members = ["../programs/attention-oracle"]
+members = ["token-2022"]
 resolver = "2"
 
 [profile.release]
