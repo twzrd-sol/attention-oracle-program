@@ -92,7 +92,7 @@ pub fn set_policy_open(ctx: Context<SetPolicyOpen>, require_receipt: bool) -> Re
     Ok(())
 }
 
-/// Protocol pause/unpause (singleton protocol_state)
+/// Emergency pause/unpause (singleton protocol_state)
 #[derive(Accounts)]
 pub struct SetPaused<'info> {
     #[account(mut)]
@@ -113,7 +113,7 @@ pub fn set_paused(ctx: Context<SetPaused>, paused: bool) -> Result<()> {
     Ok(())
 }
 
-/// Protocol pause/unpause (open variant keyed by mint)
+/// Emergency pause/unpause (open variant keyed by mint)
 #[derive(Accounts)]
 pub struct SetPausedOpen<'info> {
     #[account(mut)]

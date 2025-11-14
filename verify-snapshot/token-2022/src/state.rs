@@ -25,7 +25,7 @@ pub struct ProtocolState {
     /// CCM mint address
     pub mint: Pubkey,
 
-    /// Protocol pause flag (circuit breaker)
+    /// Emergency pause flag
     pub paused: bool,
 
     /// Require an external receipt for claims (default: false)
