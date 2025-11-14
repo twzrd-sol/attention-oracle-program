@@ -1,6 +1,9 @@
 [workspace]
 members = [
     "programs/token-2022",
+    "bearer/programs/bearer-claims",
+    "bearer/programs/epoch-root-registry",
+    "probe-harness",
 ]
 resolver = "2"
 

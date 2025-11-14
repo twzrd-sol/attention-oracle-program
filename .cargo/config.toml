@@ -1,5 +1,6 @@
-[source.crates-io]
-replace-with = "vendored-sources"
+# NOTE: Disabled vendor source override for dev/tests to allow pulling solana-program-test and friends.
+# [source.crates-io]
+# replace-with = "vendored-sources"
 
-[source.vendored-sources]
-directory = "vendor"
+# [source.vendored-sources]
+# directory = "vendor"

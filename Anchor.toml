@@ -1,19 +1,16 @@
-[features]
-seeds = true
-skip-lint = false
+[toolchain]
 
-[programs.localnet]
-token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+[features]
+
+[programs.devnet]
+token_2022 = "8yBJWQpCAHi1MKUiX9xPf5YqwXV1bat8r4oD85AyFpee"
 
 [registry]
-url = "https://api.apr.dev"
+url = "https://api.dev.solana.com"
 
 [provider]
-cluster = "Localnet"
-wallet = "~/.config/solana/id.json"
+cluster = "Devnet"
+wallet = "/home/twzrd/.config/solana/devnet/token_2022-keypair.json"
 
 [scripts]
-test = "echo 'Add anchor tests if needed'"
-
-[test]
-startup_wait = 10000
+test = "yarn run ts-mocha --require ts-node/register tests/**/*.test.ts"

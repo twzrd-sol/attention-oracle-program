@@ -69,6 +69,12 @@ function discriminator(name: string): Buffer {
 
 const DISC_INITIALIZE_MINT_OPEN = discriminator('initialize_mint_open');
 const DISC_UPDATE_PUBLISHER_OPEN = discriminator('update_publisher_open');
+// Respect global kill-switch for PDA/channel initialization
+if (process.env.PAUSE_PDA_INIT === '1' || process.env.DISABLE_PDA_INIT === '1') {
+  console.error('PDA initialization is paused (PAUSE_PDA_INIT/DISABLE_PDA_INIT). Aborting e2e that would init channels.');
+  process.exit(3);
+}
+
 const DISC_INITIALIZE_CHANNEL = discriminator('initialize_channel');
 const DISC_SET_MERKLE_ROOT_RING = discriminator('set_merkle_root_ring');
 const DISC_CLAIM_WITH_RING = discriminator('claim_with_ring');

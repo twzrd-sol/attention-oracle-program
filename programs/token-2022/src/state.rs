@@ -28,7 +28,7 @@ pub struct ProtocolState {
     /// Emergency pause flag
     pub paused: bool,
 
-    /// Require an external receipt for claims (default: false)
+    /// Require TWZRD Layer-1 cNFT receipt for claims (default: false)
     /// Toggle via set_policy instruction for circuit breaker pattern
     pub require_receipt: bool,
 
@@ -58,6 +58,19 @@ pub struct FeeConfig {
     /// Maximum fee amount
     pub max_fee: u64,
 
+    /// Drip threshold (volume triggers)
+    pub drip_threshold: u64,
+
+    /// Treasury fee basis points (0.05% base)
+    pub treasury_fee_bps: u16,
+
+    /// Creator fee basis points (0.05% base, multiplied by tier)
+    pub creator_fee_bps: u16,
+
+    /// Tier multipliers for creator allocation (array of 6 f64 values)
+    /// Stores as fixed-point u32 (multiplied by 10000 for precision)
+    pub tier_multipliers: [u32; 6],
+
     /// Bump seed
     pub bump: u8,
 }
@@ -66,6 +79,10 @@ impl FeeConfig {
     pub const LEN: usize = 8 + // discriminator
         2 +    // basis_points
         8 +    // max_fee
+        8 +    // drip_threshold
+        2 +    // treasury_fee_bps
+        2 +    // creator_fee_bps
+        (4 * 6) + // tier_multipliers (6 u32s)
         1; // bump
 }
 
@@ -90,121 +107,6 @@ impl FeeSplit {
             self.lp_allocation + self.treasury_allocation + self.burn_allocation == 100,
             MiloError::InvalidFeeSplit
         );
-        Ok(())
-    }
-}
-
-//
-
-//
-
-/// Epoch state for merkle claims (unchanged from v2)
-#[account]
-pub struct EpochState {
-    pub epoch: u64,
-    pub root: [u8; 32],
-    pub claim_count: u32,
-    pub mint: Pubkey,
-    pub streamer: Pubkey,
-    pub treasury: Pubkey,
-    pub timestamp: i64,
-    pub bump: u8,
-    pub total_claimed: u64,
-    pub closed: bool,
-    pub claimed_bitmap: Vec<u8>,
-}
-
-impl EpochState {
-    pub fn space_for(claims: usize) -> usize {
-        8 + // discriminator
-        8 + // epoch
-        32 + // root
-        4 + // claim_count
-        32 + // mint
-        32 + // streamer
-        32 + // treasury
-        8 + // timestamp
-        1 + // bump
-        8 + // total_claimed
-        1 + // closed
-        4 + // vec length
-        ((claims + 7) / 8) // bitmap
-    }
-}
-
-//
-
-/// Per-channel ring buffer state (stores recent epoch merkle roots)
-/// Uses zero_copy to avoid stack overflow (1.7KB struct)
-#[account(zero_copy)]
-#[repr(C, packed)]
-pub struct ChannelState {
-    pub version: u8,
-    pub bump: u8,
-    pub mint: Pubkey,
-    pub streamer: Pubkey,
-    pub latest_epoch: u64,
-    pub slots: [ChannelSlot; CHANNEL_RING_SLOTS],
-}
-
-impl ChannelState {
-    pub const LEN: usize = 8 /* disc */
-        + 1 /* version */
-        + 1 /* bump */
-        + 32 /* mint */
-        + 32 /* streamer */
-        + 8 /* latest_epoch */
-        + (ChannelSlot::LEN * CHANNEL_RING_SLOTS);
-
-    pub fn slot_index(epoch: u64) -> usize {
-        (epoch as usize) % CHANNEL_RING_SLOTS
-    }
-
-    pub fn slot(&self, epoch: u64) -> &ChannelSlot {
-        &self.slots[Self::slot_index(epoch)]
-    }
-
-    pub fn slot_mut(&mut self, epoch: u64) -> &mut ChannelSlot {
-        &mut self.slots[Self::slot_index(epoch)]
-    }
-}
-
-#[zero_copy]
-#[repr(C, packed)]
-pub struct ChannelSlot {
-    pub epoch: u64,
-    pub root: [u8; 32],
-    pub claim_count: u16,
-    pub claimed_bitmap: [u8; CHANNEL_BITMAP_BYTES],
-}
-
-impl ChannelSlot {
-    pub const LEN: usize = 8 /* epoch */
-        + 32 /* root */
-        + 2 /* claim_count */
-        + CHANNEL_BITMAP_BYTES;
-
-    pub fn reset(&mut self, epoch: u64, root: [u8; 32]) {
-        self.epoch = epoch;
-        self.root = root;
-        self.claim_count = 0;
-        self.claimed_bitmap = [0u8; CHANNEL_BITMAP_BYTES];
-    }
-
-    pub fn test_bit(&self, index: usize) -> bool {
-        let byte = index / 8;
-        let bit = index % 8;
-        (self.claimed_bitmap[byte] & (1u8 << bit)) != 0
-    }
-
-    pub fn set_bit(&mut self, index: usize) {
-        let byte = index / 8;
-        let bit = index % 8;
-        self.claimed_bitmap[byte] |= 1u8 << bit;
-    }
-
-    pub fn validate_index(index: usize) -> Result<()> {
-        require!(index < CHANNEL_MAX_CLAIMS, MiloError::InvalidIndex);
         Ok(())
     }
 }
@@ -285,6 +187,21 @@ pub struct LiquidityState {
 
 impl LiquidityState {
     pub const LEN: usize = 1 + 8 + 8 + 32 + 8 + 1 + 1 + 1;
+
+    pub fn should_drip(&self, total_claimed: u64) -> Option<u8> {
+        use crate::constants::*;
+
+        if !self.tier_1_complete && total_claimed >= DRIP_TIER_1_THRESHOLD {
+            return Some(1);
+        }
+        if !self.tier_2_complete && total_claimed >= DRIP_TIER_2_THRESHOLD {
+            return Some(2);
+        }
+        if !self.tier_3_complete && total_claimed >= DRIP_TIER_3_THRESHOLD {
+            return Some(3);
+        }
+        None
+    }
 }
 
 /// Liquidity engine PDA account (wraps LiquidityState + bump)
@@ -298,7 +215,41 @@ impl LiquidityEngine {
     pub const LEN: usize = 8 /* disc */ + LiquidityState::LEN + 1;
 }
 
-/// Passport registry for identity and reputation
+/// Epoch state for merkle claims (unchanged from v2)
+#[account]
+pub struct EpochState {
+    pub epoch: u64,
+    pub root: [u8; 32],
+    pub claim_count: u32,
+    pub mint: Pubkey,
+    pub streamer: Pubkey,
+    pub treasury: Pubkey,
+    pub timestamp: i64,
+    pub bump: u8,
+    pub total_claimed: u64,
+    pub closed: bool,
+    pub claimed_bitmap: Vec<u8>,
+}
+
+impl EpochState {
+    pub fn space_for(claims: usize) -> usize {
+        8 + // discriminator
+        8 + // epoch
+        32 + // root
+        4 + // claim_count
+        32 + // mint
+        32 + // streamer
+        32 + // treasury
+        8 + // timestamp
+        1 + // bump
+        8 + // total_claimed
+        1 + // closed
+        4 + // vec length
+        ((claims + 7) / 8) // bitmap
+    }
+}
+
+/// Passport registry entry (oracle snapshot for viewer reputation)
 #[account]
 pub struct PassportRegistry {
     pub owner: Pubkey,
@@ -329,23 +280,77 @@ impl PassportRegistry {
         1; // bump
 }
 
-/// Points state for gamification
-#[account]
-pub struct PointsState {
-    pub owner: Pubkey,
-    pub points: u64,
-    pub lifetime_points: u64,
-    pub last_claim: i64,
-    pub streak: u32,
+/// Per-channel ring buffer state (stores recent epoch merkle roots)
+/// Uses zero_copy to avoid stack overflow (1.7KB struct)
+#[account(zero_copy)]
+#[repr(C, packed)]
+pub struct ChannelState {
+    pub version: u8,
     pub bump: u8,
+    pub mint: Pubkey,
+    pub streamer: Pubkey,
+    pub latest_epoch: u64,
+    pub slots: [ChannelSlot; CHANNEL_RING_SLOTS],
 }
 
-impl PointsState {
-    pub const LEN: usize = 8 + // discriminator
-        32 + // owner
-        8 +  // points
-        8 +  // lifetime_points
-        8 +  // last_claim
-        4 +  // streak
-        1;   // bump
+impl ChannelState {
+    pub const LEN: usize = 8 /* disc */
+        + 1 /* version */
+        + 1 /* bump */
+        + 32 /* mint */
+        + 32 /* streamer */
+        + 8 /* latest_epoch */
+        + (ChannelSlot::LEN * CHANNEL_RING_SLOTS);
+
+    pub fn slot_index(epoch: u64) -> usize {
+        (epoch as usize) % CHANNEL_RING_SLOTS
+    }
+
+    pub fn slot(&self, epoch: u64) -> &ChannelSlot {
+        &self.slots[Self::slot_index(epoch)]
+    }
+
+    pub fn slot_mut(&mut self, epoch: u64) -> &mut ChannelSlot {
+        &mut self.slots[Self::slot_index(epoch)]
+    }
+}
+
+#[zero_copy]
+#[repr(C, packed)]
+pub struct ChannelSlot {
+    pub epoch: u64,
+    pub root: [u8; 32],
+    pub claim_count: u16,
+    pub claimed_bitmap: [u8; CHANNEL_BITMAP_BYTES],
+}
+
+impl ChannelSlot {
+    pub const LEN: usize = 8 /* epoch */
+        + 32 /* root */
+        + 2 /* claim_count */
+        + CHANNEL_BITMAP_BYTES;
+
+    pub fn reset(&mut self, epoch: u64, root: [u8; 32]) {
+        self.epoch = epoch;
+        self.root = root;
+        self.claim_count = 0;
+        self.claimed_bitmap = [0u8; CHANNEL_BITMAP_BYTES];
+    }
+
+    pub fn test_bit(&self, index: usize) -> bool {
+        let byte = index / 8;
+        let bit = index % 8;
+        (self.claimed_bitmap[byte] & (1u8 << bit)) != 0
+    }
+
+    pub fn set_bit(&mut self, index: usize) {
+        let byte = index / 8;
+        let bit = index % 8;
+        self.claimed_bitmap[byte] |= 1u8 << bit;
+    }
+
+    pub fn validate_index(index: usize) -> Result<()> {
+        require!(index < CHANNEL_MAX_CLAIMS, MiloError::InvalidIndex);
+        Ok(())
+    }
 }

@@ -1,7 +1,6 @@
 use anchor_lang::prelude::*;
 
 use crate::constants::*;
-use crate::errors::MiloError;
 use crate::events::*;
 use crate::state::{PassportRegistry, ProtocolState};
 
@@ -13,7 +12,7 @@ pub struct MintPassportOpen<'info> {
     #[account(
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = protocol_state.admin == admin.key() @ MiloError::Unauthorized
+        constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
     pub protocol_state: Account<'info, ProtocolState>,
     #[account(
@@ -35,14 +34,14 @@ pub struct UpgradePassportOpen<'info> {
     #[account(
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = protocol_state.admin == admin.key() @ MiloError::Unauthorized
+        constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
     pub protocol_state: Account<'info, ProtocolState>,
     #[account(
         mut,
         seeds = [PASSPORT_SEED, user_hash.as_ref()],
         bump = registry.bump,
-        constraint = registry.user_hash == user_hash @ MiloError::InvalidUserHash
+        constraint = registry.user_hash == user_hash @ PassportError::InvalidUserHash
     )]
     pub registry: Account<'info, PassportRegistry>,
     pub system_program: Program<'info, System>,
@@ -56,14 +55,14 @@ pub struct ReissuePassportOpen<'info> {
     #[account(
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = protocol_state.admin == admin.key() @ MiloError::Unauthorized
+        constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
     pub protocol_state: Account<'info, ProtocolState>,
     #[account(
         mut,
         seeds = [PASSPORT_SEED, user_hash.as_ref()],
         bump = registry.bump,
-        constraint = registry.user_hash == user_hash @ MiloError::InvalidUserHash
+        constraint = registry.user_hash == user_hash @ PassportError::InvalidUserHash
     )]
     pub registry: Account<'info, PassportRegistry>,
 }
@@ -76,14 +75,14 @@ pub struct RevokePassportOpen<'info> {
     #[account(
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = protocol_state.admin == admin.key() @ MiloError::Unauthorized
+        constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
     pub protocol_state: Account<'info, ProtocolState>,
     #[account(
         mut,
         seeds = [PASSPORT_SEED, user_hash.as_ref()],
         bump = registry.bump,
-        constraint = registry.user_hash == user_hash @ MiloError::InvalidUserHash
+        constraint = registry.user_hash == user_hash @ PassportError::InvalidUserHash
     )]
     pub registry: Account<'info, PassportRegistry>,
 }
@@ -96,14 +95,14 @@ pub struct UpgradePassportProved<'info> {
     #[account(
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = protocol_state.admin == admin.key() @ MiloError::Unauthorized
+        constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
     pub protocol_state: Account<'info, ProtocolState>,
     #[account(
         mut,
         seeds = [PASSPORT_SEED, user_hash.as_ref()],
         bump = registry.bump,
-        constraint = registry.user_hash == user_hash @ MiloError::InvalidUserHash
+        constraint = registry.user_hash == user_hash @ PassportError::InvalidUserHash
     )]
     pub registry: Account<'info, PassportRegistry>,
     /// CHECK: Bubblegum tree account (read-only)
@@ -125,7 +124,7 @@ pub fn mint_passport_open(
     let registry = &mut ctx.accounts.registry;
     let current_time = Clock::get()?.unix_timestamp;
 
-    require!(tier <= MAX_TIER, MiloError::InvalidTier);
+    require!(tier <= MAX_TIER, PassportError::InvalidTier);
 
     registry.owner = owner;
     registry.user_hash = user_hash;
@@ -166,17 +165,17 @@ pub fn upgrade_passport_open(
 
     require!(
         registry.user_hash == user_hash,
-        MiloError::InvalidUserHash
+        PassportError::InvalidUserHash
     );
     require!(
         new_tier >= registry.tier,
-        MiloError::DowngradeNotAllowed
+        PassportError::DowngradeNotAllowed
     );
     require!(
         new_score >= registry.score,
-        MiloError::DowngradeNotAllowed
+        PassportError::DowngradeNotAllowed
     );
-    require!(new_tier <= MAX_TIER, MiloError::InvalidTier);
+    require!(new_tier <= MAX_TIER, PassportError::InvalidTier);
 
     registry.tier = new_tier;
     registry.score = new_score;
@@ -211,7 +210,7 @@ pub fn reissue_passport_open(
 
     require!(
         registry.user_hash == user_hash,
-        MiloError::InvalidUserHash
+        PassportError::InvalidUserHash
     );
 
     let old_owner = registry.owner;
@@ -234,7 +233,7 @@ pub fn revoke_passport_open(ctx: Context<RevokePassportOpen>, user_hash: [u8; 32
 
     require!(
         registry.user_hash == user_hash,
-        MiloError::InvalidUserHash
+        PassportError::InvalidUserHash
     );
 
     registry.tier = 0;
@@ -277,17 +276,17 @@ pub fn upgrade_passport_proved(
 
     require!(
         registry.user_hash == user_hash,
-        MiloError::InvalidUserHash
+        PassportError::InvalidUserHash
     );
     require!(
         new_tier >= registry.tier,
-        MiloError::DowngradeNotAllowed
+        PassportError::DowngradeNotAllowed
     );
     require!(
         new_score >= registry.score,
-        MiloError::DowngradeNotAllowed
+        PassportError::DowngradeNotAllowed
     );
-    require!(new_tier <= MAX_TIER, MiloError::InvalidTier);
+    require!(new_tier <= MAX_TIER, PassportError::InvalidTier);
 
     registry.tier = new_tier;
     registry.score = new_score;
