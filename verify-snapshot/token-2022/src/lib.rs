@@ -89,9 +89,9 @@ declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
 #[cfg(not(feature = "no-entrypoint"))]
 security_txt! {
-    name: "Verifiable Distribution Protocol (Token-2022)",
+    name: "Attention Oracle - Verifiable Distribution Protocol (Token-2022)",
     project_url: "https://github.com/twzrd-sol/attention-oracle-program",
-    contacts: "email:security.xyz",
+    contacts: "email:security@twzrd.xyz",
     policy: "https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md",
     preferred_languages: "en",
     source_code: "https://github.com/twzrd-sol/attention-oracle-program",
