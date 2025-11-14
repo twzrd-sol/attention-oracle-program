@@ -11,7 +11,7 @@ use crate::constants::{
     CHANNEL_BITMAP_BYTES, CHANNEL_MAX_CLAIMS, CHANNEL_RING_SLOTS, CHANNEL_STATE_SEED, PROTOCOL_SEED,
 };
 use crate::errors::ProtocolError;
-use crate::instructions::claim::{compute_leaf, verify_proof};
+use crate::instructions::claim::{compute_leaf, compute_participation_leaf, verify_proof};
 use crate::state::{ChannelSlot, ChannelState, ProtocolState};
 use anchor_lang::accounts::account_loader::AccountLoader;
 use std::convert::TryInto;
@@ -209,7 +209,7 @@ pub fn claim_channel_open(
     epoch: u64,
     index: u32,
     amount: u64,
-    id: String,
+    user_hash: String,
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
@@ -260,7 +260,9 @@ pub fn claim_channel_open(
         ProtocolError::AlreadyClaimed
     );
 
-    let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
+    // Compute participation leaf (user_hash || channel || epoch)
+    // This matches the aggregator's makeParticipationLeaf format
+    let leaf = compute_participation_leaf(&user_hash, &channel, epoch)?;
     require!(
         verify_proof(&proof, leaf, channel_state.slots[slot_idx].root),
         ProtocolError::InvalidProof

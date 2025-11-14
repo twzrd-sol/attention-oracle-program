@@ -6,9 +6,9 @@ pub const TREASURY_SEED: &[u8] = b"treasury";
 pub const EPOCH_STATE_SEED: &[u8] = b"epoch_state";
 pub const CHANNEL_STATE_SEED: &[u8] = b"channel_state";
 
-pub const CHANNEL_RING_SLOTS: usize = 10;
-pub const CHANNEL_MAX_CLAIMS: usize = 1024;
-pub const CHANNEL_BITMAP_BYTES: usize = (CHANNEL_MAX_CLAIMS + 7) / 8;
+pub const CHANNEL_RING_SLOTS: usize = 9;
+pub const CHANNEL_BITMAP_BYTES: usize = 1024;  // v2: 1024 bytes = 8192 bits (was 512 in v1.5, 128 in v1)
+pub const CHANNEL_MAX_CLAIMS: usize = CHANNEL_BITMAP_BYTES * 8;  // 8192 claims (8x improvement over v1, supports jasontheween's 5132 participants)
 
 pub const MAX_EPOCH_CLAIMS: u32 = 1_000_000;
 pub const MAX_ID_BYTES: usize = 64;

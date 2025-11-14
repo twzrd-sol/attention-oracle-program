@@ -81,9 +81,9 @@ mod tests {
 
     #[test]
     fn test_metadata_hash() {
-        let hash1 = compute_metadata_hash("xqc", 12345);
-        let hash2 = compute_metadata_hash("xqc", 12345);
-        let hash3 = compute_metadata_hash("lacy", 12345);
+        let hash1 = compute_metadata_hash("user1", 12345);
+        let hash2 = compute_metadata_hash("user1", 12345);
+        let hash3 = compute_metadata_hash("user2", 12345);
 
         // Same inputs = same hash
         assert_eq!(hash1, hash2);

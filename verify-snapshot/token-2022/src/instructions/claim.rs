@@ -323,8 +323,39 @@ pub fn claim_open(
     Ok(())
 }
 
+/// Simple hex decoder (avoids external hex crate dependency)
+fn decode_hex_32(hex_str: &str) -> Result<[u8; 32]> {
+    let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    require!(hex_str.len() == 64, ProtocolError::InvalidProof);
+
+    let mut result = [0u8; 32];
+    for i in 0..32 {
+        let byte_str = &hex_str[i * 2..i * 2 + 2];
+        result[i] = u8::from_str_radix(byte_str, 16)
+            .map_err(|_| ProtocolError::InvalidProof)?;
+    }
+    Ok(result)
+}
+
+/// Compute participation leaf to match aggregator's makeParticipationLeaf
+/// Leaf = keccak256(user_hash || channel || epoch)
+/// This matches: apps/gateway/src/lib/participation-merkle.ts:13-28
+pub fn compute_participation_leaf(user_hash_hex: &str, channel: &str, epoch: u64) -> Result<[u8; 32]> {
+    // Parse user_hash from hex string (32 bytes)
+    let user_hash = decode_hex_32(user_hash_hex)?;
+
+    // Encode channel as UTF-8 bytes
+    let channel_bytes = channel.as_bytes();
+
+    // Encode epoch as u64 little-endian
+    let epoch_bytes = epoch.to_le_bytes();
+
+    // keccak256(user_hash || channel || epoch)
+    Ok(keccak::hashv(&[&user_hash, channel_bytes, &epoch_bytes]).to_bytes())
+}
+
+// Legacy function kept for backwards compatibility with other claim types
 pub fn compute_leaf(claimer: &Pubkey, index: u32, amount: u64, id: &str) -> [u8; 32] {
-    // Note: Off-chain must mirror this exact hashing scheme
     let idx = index.to_le_bytes();
     let amt = amount.to_le_bytes();
     let id_bytes = id.as_bytes();
