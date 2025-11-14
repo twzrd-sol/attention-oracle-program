@@ -3,7 +3,7 @@
 Brand‑neutral, production‑grade Anchor program implementing Token‑2022 claim verification and a transfer‑hook entrypoint. No secrets or third‑party API keys in this repository.
 
 ## CLS Protocol Overview
-Brand‑neutral, production‑grade system for streaming viewer loyalty rewards via Solana Token‑2022. Viewers earn tokens through merkle‑proof claims. Fixed‑size ring buffer (~9.5KB per channel) ensures bounded storage.
+Brand‑neutral, production‑grade system for Twitch viewer loyalty rewards via Solana Token‑2022. Viewers earn tokens through merkle‑proof claims. Fixed‑size ring buffer (~9.5KB per channel) ensures bounded storage.
 
 ### Key On‑Chain Structures
 ```rust

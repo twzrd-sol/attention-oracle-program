@@ -13,10 +13,14 @@ fn test_channel_bitmap_bytes() {
     // Verify CHANNEL_MAX_CLAIMS is also 8192
     assert_eq!(CHANNEL_MAX_CLAIMS, 8192);
 
-    println!("✅ CHANNEL_BITMAP_BYTES = {} (supports {} participants per channel)",
-             CHANNEL_BITMAP_BYTES, max_participants);
-    println!("✅ CHANNEL_MAX_CLAIMS = {} (max claimable per epoch)",
-             CHANNEL_MAX_CLAIMS);
+    println!(
+        "✅ CHANNEL_BITMAP_BYTES = {} (supports {} participants per channel)",
+        CHANNEL_BITMAP_BYTES, max_participants
+    );
+    println!(
+        "✅ CHANNEL_MAX_CLAIMS = {} (max claimable per epoch)",
+        CHANNEL_MAX_CLAIMS
+    );
 }
 
 #[test]
@@ -43,18 +47,33 @@ fn test_channel_state_size() {
     const HEADER_SIZE: usize = 1 + 1 + 32 + 32 + 8;
     assert_eq!(HEADER_SIZE, 74);
 
-    assert_eq!(CHANNEL_RING_SLOTS, 9, "v2.0.1 uses 9 slots to stay under 10KB");
+    assert_eq!(
+        CHANNEL_RING_SLOTS, 9,
+        "v2.0.1 uses 9 slots to stay under 10KB"
+    );
 
     const TOTAL_SIZE: usize = 8 + HEADER_SIZE + (CHANNEL_RING_SLOTS * SLOT_SIZE); // 8 bytes discriminator
     assert_eq!(TOTAL_SIZE, 9676);
 
     // Verify it's safely under the 10KB growth limit
-    assert!(TOTAL_SIZE <= 10_240, "ChannelState must remain under the 10KB limit ({} bytes)", TOTAL_SIZE);
+    assert!(
+        TOTAL_SIZE <= 10_240,
+        "ChannelState must remain under the 10KB limit ({} bytes)",
+        TOTAL_SIZE
+    );
 
-    println!("✅ ChannelState size: {} bytes ({:.2} KB)", TOTAL_SIZE, TOTAL_SIZE as f64 / 1024.0);
+    println!(
+        "✅ ChannelState size: {} bytes ({:.2} KB)",
+        TOTAL_SIZE,
+        TOTAL_SIZE as f64 / 1024.0
+    );
     println!("   - Discriminator: 8 bytes");
     println!("   - Header: {} bytes", HEADER_SIZE);
-    println!("   - Slots ({}x): {} bytes", CHANNEL_RING_SLOTS, CHANNEL_RING_SLOTS * SLOT_SIZE);
+    println!(
+        "   - Slots ({}x): {} bytes",
+        CHANNEL_RING_SLOTS,
+        CHANNEL_RING_SLOTS * SLOT_SIZE
+    );
 }
 
 #[test]
@@ -133,35 +152,21 @@ fn test_merkle_leaf_computation() {
     let amt_bytes = amount.to_le_bytes();
     let id_bytes = id.as_bytes();
 
-    let leaf = keccak::hashv(&[
-        claimer.as_ref(),
-        &idx_bytes,
-        &amt_bytes,
-        id_bytes,
-    ]).to_bytes();
+    let leaf = keccak::hashv(&[claimer.as_ref(), &idx_bytes, &amt_bytes, id_bytes]).to_bytes();
 
     // Leaf should be 32 bytes
     assert_eq!(leaf.len(), 32);
 
     // Re-computing with same inputs should give same result
-    let leaf2 = keccak::hashv(&[
-        claimer.as_ref(),
-        &idx_bytes,
-        &amt_bytes,
-        id_bytes,
-    ]).to_bytes();
+    let leaf2 = keccak::hashv(&[claimer.as_ref(), &idx_bytes, &amt_bytes, id_bytes]).to_bytes();
 
     assert_eq!(leaf, leaf2, "Leaf computation should be deterministic");
 
     // Different inputs should give different leaf
     let different_index = 43u32;
     let different_idx_bytes = different_index.to_le_bytes();
-    let leaf3 = keccak::hashv(&[
-        claimer.as_ref(),
-        &different_idx_bytes,
-        &amt_bytes,
-        id_bytes,
-    ]).to_bytes();
+    let leaf3 =
+        keccak::hashv(&[claimer.as_ref(), &different_idx_bytes, &amt_bytes, id_bytes]).to_bytes();
 
     assert_ne!(leaf, leaf3, "Different inputs should give different leaf");
 
@@ -196,7 +201,7 @@ fn test_ring_buffer_slot_index() {
     assert_eq!(slot_index((2 * RING_SIZE) as u64), 0);
 
     // Large epoch number
-    assert_eq!(slot_index(1762556400), 0);  // moonmoon epoch from monitoring
+    assert_eq!(slot_index(1762556400), 0); // moonmoon epoch from monitoring
     assert_eq!(slot_index(1762556401), 1);
 
     println!("✅ Ring buffer slot indexing works correctly");
@@ -220,7 +225,10 @@ fn test_constants_consistency() {
 
     println!("✅ Constants are consistent:");
     println!("   - CHANNEL_BITMAP_BYTES: {}", CHANNEL_BITMAP_BYTES);
-    println!("   - Bitmap capacity: {} participants", CHANNEL_BITMAP_BYTES * 8);
+    println!(
+        "   - Bitmap capacity: {} participants",
+        CHANNEL_BITMAP_BYTES * 8
+    );
     println!("   - CHANNEL_MAX_CLAIMS: {}", CHANNEL_MAX_CLAIMS);
     println!("   - Max claimable: {}", CHANNEL_MAX_CLAIMS);
 }
@@ -233,13 +241,22 @@ fn test_production_scenario_jasontheween() {
     let participant_count = 5132;
 
     // This exceeds the old 1024 limit
-    assert!(participant_count > 1024, "jasontheween exceeds v1 1024 limit");
+    assert!(
+        participant_count > 1024,
+        "jasontheween exceeds v1 1024 limit"
+    );
 
     // This exceeds the v1.5 4096 limit
-    assert!(participant_count > 4096, "jasontheween exceeds v1.5 4096 limit");
+    assert!(
+        participant_count > 4096,
+        "jasontheween exceeds v1.5 4096 limit"
+    );
 
     // This is within the new 8192 max claims (v2 upgrade)
-    assert!(participant_count <= CHANNEL_MAX_CLAIMS, "jasontheween fits in v2 8192 max");
+    assert!(
+        participant_count <= CHANNEL_MAX_CLAIMS,
+        "jasontheween fits in v2 8192 max"
+    );
 
     println!("✅ Production scenario (jasontheween):");
     println!("   - Participants: {}", participant_count);

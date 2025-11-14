@@ -16,7 +16,11 @@ pub fn derive_streamer_key(channel: &str) -> Pubkey {
     Pubkey::new_from_array(hash.0)
 }
 
-pub async fn send_ixs(context: &mut ProgramTestContext, payer: &Keypair, ixs: Vec<Instruction>) -> std::result::Result<(), Box<dyn std::error::Error>> {
+pub async fn send_ixs(
+    context: &mut ProgramTestContext,
+    payer: &Keypair,
+    ixs: Vec<Instruction>,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let recent = context.banks_client.get_latest_blockhash().await?;
     let tx = Transaction::new_signed_with_payer(&ixs, Some(&payer.pubkey()), &[payer], recent);
     context.banks_client.process_transaction(tx).await?;
@@ -34,9 +38,15 @@ pub async fn create_mint_with_transfer_fee(
     max_fee: u64,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     use spl_t22::extension::ExtensionType;
-    let mint_len = ExtensionType::try_calculate_account_len::<spl_t22::state::Mint>(&[ExtensionType::TransferFeeConfig])
-        .unwrap();
-    let rent = context.banks_client.get_rent().await?.minimum_balance(mint_len);
+    let mint_len = ExtensionType::try_calculate_account_len::<spl_t22::state::Mint>(&[
+        ExtensionType::TransferFeeConfig,
+    ])
+    .unwrap();
+    let rent = context
+        .banks_client
+        .get_rent()
+        .await?
+        .minimum_balance(mint_len);
     // Create mint account owned by Token-2022 program
     let create = system_instruction::create_account(
         &payer.pubkey(),
@@ -56,7 +66,13 @@ pub async fn create_mint_with_transfer_fee(
         max_fee,
     )?;
     // Initialize mint (decimals + authorities)
-    let init_mint = spl_t22::instruction::initialize_mint2(&spl_t22::id(), &mint_kp.pubkey(), &payer.pubkey(), None, decimals)?;
+    let init_mint = spl_t22::instruction::initialize_mint2(
+        &spl_t22::id(),
+        &mint_kp.pubkey(),
+        &payer.pubkey(),
+        None,
+        decimals,
+    )?;
 
     // Need both payer and mint_kp as signers for create_account
     let recent = context.banks_client.get_latest_blockhash().await?;
@@ -64,7 +80,7 @@ pub async fn create_mint_with_transfer_fee(
         &[create, init_fee, init_mint],
         Some(&payer.pubkey()),
         &[payer, mint_kp], // Both signers required
-        recent
+        recent,
     );
     context.banks_client.process_transaction(tx).await?;
     Ok(())
@@ -107,15 +123,30 @@ pub async fn mint_to(
     )?;
     // Need both payer and authority
     let recent = context.banks_client.get_latest_blockhash().await?;
-    let tx = Transaction::new_signed_with_payer(&[ix], Some(&payer.pubkey()), &[payer, authority], recent);
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[payer, authority],
+        recent,
+    );
     context.banks_client.process_transaction(tx).await?;
     Ok(())
 }
 
 pub fn ix_initialize_mint_open(admin: &Pubkey, mint: &Pubkey) -> Instruction {
     use solana_sdk::instruction::AccountMeta;
-    let (protocol, _) = Pubkey::find_program_address(&[token_2022::constants::PROTOCOL_SEED, mint.as_ref()], &token_2022::id());
-    let (fee_cfg, _) = Pubkey::find_program_address(&[token_2022::constants::PROTOCOL_SEED, mint.as_ref(), b"fee_config"], &token_2022::id());
+    let (protocol, _) = Pubkey::find_program_address(
+        &[token_2022::constants::PROTOCOL_SEED, mint.as_ref()],
+        &token_2022::id(),
+    );
+    let (fee_cfg, _) = Pubkey::find_program_address(
+        &[
+            token_2022::constants::PROTOCOL_SEED,
+            mint.as_ref(),
+            b"fee_config",
+        ],
+        &token_2022::id(),
+    );
     let metas = vec![
         AccountMeta::new_readonly(*admin, true),
         AccountMeta::new_readonly(*mint, false),
@@ -126,14 +157,28 @@ pub fn ix_initialize_mint_open(admin: &Pubkey, mint: &Pubkey) -> Instruction {
     Instruction {
         program_id: token_2022::id(),
         accounts: metas,
-        data: token_2022::instruction::InitializeMintOpen { fee_basis_points: 0, max_fee: 0 }.data(),
+        data: token_2022::instruction::InitializeMintOpen {
+            fee_basis_points: 0,
+            max_fee: 0,
+        }
+        .data(),
     }
 }
 
 pub fn ix_initialize_channel(payer: &Pubkey, mint: &Pubkey, streamer: &Pubkey) -> Instruction {
     use solana_sdk::instruction::AccountMeta;
-    let (protocol, _) = Pubkey::find_program_address(&[token_2022::constants::PROTOCOL_SEED, mint.as_ref()], &token_2022::id());
-    let (chan, _) = Pubkey::find_program_address(&[token_2022::constants::CHANNEL_STATE_SEED, mint.as_ref(), streamer.as_ref()], &token_2022::id());
+    let (protocol, _) = Pubkey::find_program_address(
+        &[token_2022::constants::PROTOCOL_SEED, mint.as_ref()],
+        &token_2022::id(),
+    );
+    let (chan, _) = Pubkey::find_program_address(
+        &[
+            token_2022::constants::CHANNEL_STATE_SEED,
+            mint.as_ref(),
+            streamer.as_ref(),
+        ],
+        &token_2022::id(),
+    );
     let metas = vec![
         AccountMeta::new(*payer, true),
         AccountMeta::new_readonly(protocol, false),
@@ -143,6 +188,19 @@ pub fn ix_initialize_channel(payer: &Pubkey, mint: &Pubkey, streamer: &Pubkey) -
     Instruction {
         program_id: token_2022::id(),
         accounts: metas,
-        data: token_2022::instruction::InitializeChannel { streamer_key: *streamer }.data(),
+        data: token_2022::instruction::InitializeChannel {
+            streamer_key: *streamer,
+        }
+        .data(),
     }
+}
+
+pub async fn fund_account(
+    context: &mut ProgramTestContext,
+    dest: &Keypair,
+    lamports: u64,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let ix = system_instruction::transfer(&context.payer.pubkey(), &dest.pubkey(), lamports);
+    send_ixs(context, &context.payer, vec![ix]).await?;
+    Ok(())
 }
