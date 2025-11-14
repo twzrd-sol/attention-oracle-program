@@ -1,9 +1,16 @@
 use crate::{
-    constants::{CHANNEL_STATE_SEED, PROTOCOL_SEED},
-    errors::MiloError,
-    state::{ChannelState, ProtocolState},
+    constants::{CHANNEL_MAX_CLAIMS, CHANNEL_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED},
+    errors::ProtocolError,
+    instructions::claim::{compute_leaf, verify_proof},
+    state::{ChannelSlot, ChannelState, ProtocolState},
 };
 use anchor_lang::prelude::*;
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked},
+};
+
+const MAX_PROOF_NODES: usize = 20;
 
 /// Initialize channel ring buffer (one-time setup per channel)
 #[derive(Accounts)]
@@ -81,24 +88,32 @@ pub fn set_merkle_root_ring(
 ) -> Result<()> {
     let protocol = &ctx.accounts.protocol_state;
 
-    // Authorization check
-    let signer = ctx.accounts.update_authority.key();
-    let is_admin = signer == protocol.admin;
-    let is_publisher = protocol.publisher != Pubkey::default() && signer == protocol.publisher;
-    require!(is_admin || is_publisher, MiloError::Unauthorized);
-    require!(!protocol.paused, MiloError::ProtocolPaused);
+    authorize_publisher(protocol, &ctx.accounts.update_authority.key())?;
+    require!(!protocol.paused, ProtocolError::ProtocolPaused);
+    require!(epoch > 0, ProtocolError::InvalidEpoch);
+    require!(
+        claim_count as usize <= CHANNEL_MAX_CLAIMS,
+        ProtocolError::InvalidInputLength
+    );
 
     let channel_state = &mut ctx.accounts.channel_state.load_mut()?;
 
     // Verify channel was initialized
-    require!(channel_state.version > 0, MiloError::ChannelNotInitialized);
+    require!(
+        channel_state.version > 0,
+        ProtocolError::ChannelNotInitialized
+    );
     require!(
         channel_state.streamer == streamer_key,
-        MiloError::InvalidStreamer
+        ProtocolError::InvalidStreamer
     );
 
     // Update ring buffer slot (modulo 10)
     let slot = channel_state.slot_mut(epoch);
+    require!(
+        slot.epoch == 0 || epoch > slot.epoch,
+        ProtocolError::EpochNotIncreasing
+    );
     slot.reset(epoch, root);
     slot.claim_count = claim_count;
 
@@ -118,7 +133,7 @@ pub fn set_merkle_root_ring(
 
 /// Claim tokens using ring buffer state
 #[derive(Accounts)]
-#[instruction(epoch: u64, index: u32, amount: u64, proof: Vec<[u8; 32]>, streamer_key: Pubkey)]
+#[instruction(epoch: u64, index: u32, amount: u64, proof: Vec<[u8; 32]>, id: String, streamer_key: Pubkey)]
 pub struct ClaimWithRing<'info> {
     #[account(mut)]
     pub claimer: Signer<'info>,
@@ -127,7 +142,7 @@ pub struct ClaimWithRing<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
+        constraint = !protocol_state.paused @ ProtocolError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -138,8 +153,27 @@ pub struct ClaimWithRing<'info> {
     )]
     pub channel_state: AccountLoader<'info, ChannelState>,
 
-    // Token accounts would go here for actual claim
-    // Simplified for demonstration
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = protocol_state,
+        associated_token::token_program = token_program
+    )]
+    pub treasury_ata: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(
+        init_if_needed,
+        payer = claimer,
+        associated_token::mint = mint,
+        associated_token::authority = claimer,
+        associated_token::token_program = token_program
+    )]
+    pub claimer_ata: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
@@ -149,72 +183,75 @@ pub fn claim_with_ring(
     index: u32,
     amount: u64,
     proof: Vec<[u8; 32]>,
+    id: String,
     streamer_key: Pubkey,
 ) -> Result<()> {
     let channel_state = &mut ctx.accounts.channel_state.load_mut()?;
 
     // Verify channel initialized
-    require!(channel_state.version > 0, MiloError::ChannelNotInitialized);
+    require!(
+        channel_state.version > 0,
+        ProtocolError::ChannelNotInitialized
+    );
     require!(
         channel_state.streamer == streamer_key,
-        MiloError::InvalidStreamer
+        ProtocolError::InvalidStreamer
     );
 
-    // Get the slot for this epoch
     let slot = channel_state.slot_mut(epoch);
-
-    // Verify epoch matches
-    require!(slot.epoch == epoch, MiloError::InvalidEpoch);
-
-    // Check if already claimed
-    require!(!slot.test_bit(index as usize), MiloError::AlreadyClaimed);
-
-    // Verify merkle proof (would use actual verification here)
-    // For now just a placeholder
-    require!(proof.len() > 0, MiloError::InvalidProof);
-
-    // Mark as claimed
-    slot.set_bit(index as usize);
-
-    // Transfer tokens would happen here
-    msg!(
-        "Claimed {} tokens for epoch {} index {}",
-        amount,
-        epoch,
-        index
+    require!(slot.epoch == epoch, ProtocolError::InvalidEpoch);
+    require!(id.len() <= MAX_ID_BYTES, ProtocolError::InvalidInputLength);
+    ChannelSlot::validate_index(index as usize)?;
+    require!(index < slot.claim_count as u32, ProtocolError::InvalidIndex);
+    require!(
+        proof.len() <= MAX_PROOF_NODES,
+        ProtocolError::InvalidProofLength
     );
+    require!(
+        !slot.test_bit(index as usize),
+        ProtocolError::AlreadyClaimed
+    );
+
+    let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
+    require!(
+        verify_proof(&proof, leaf, slot.root),
+        ProtocolError::InvalidProof
+    );
+
+    require!(
+        ctx.accounts.treasury_ata.amount >= amount,
+        ProtocolError::InvalidAmount
+    );
+
+    let signer_seeds: &[&[u8]] = &[
+        PROTOCOL_SEED,
+        ctx.accounts.protocol_state.mint.as_ref(),
+        &[ctx.accounts.protocol_state.bump],
+    ];
+
+    token_interface::transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.treasury_ata.to_account_info(),
+                to: ctx.accounts.claimer_ata.to_account_info(),
+                authority: ctx.accounts.protocol_state.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
+            },
+            &[signer_seeds],
+        ),
+        amount,
+        ctx.accounts.mint.decimals,
+    )?;
+
+    slot.set_bit(index as usize);
 
     Ok(())
 }
 
-/// Close old epoch state accounts to recover rent
-#[derive(Accounts)]
-pub struct CloseOldEpochState<'info> {
-    #[account(mut)]
-    pub admin: Signer<'info>,
-
-    /// The old epoch_state account to close
-    /// CHECK: We're closing this account, so we just need it to exist
-    #[account(mut)]
-    pub epoch_state: AccountInfo<'info>,
-
-    pub system_program: Program<'info, System>,
-}
-
-pub fn close_old_epoch_state(ctx: Context<CloseOldEpochState>) -> Result<()> {
-    // Transfer lamports to admin
-    let epoch_state = &mut ctx.accounts.epoch_state;
-    let admin = &mut ctx.accounts.admin;
-
-    let lamports = epoch_state.lamports();
-    **epoch_state.try_borrow_mut_lamports()? -= lamports;
-    **admin.try_borrow_mut_lamports()? += lamports;
-
-    // Invalidate account
-    epoch_state.assign(&System::id());
-    epoch_state.realloc(0, false)?;
-
-    msg!("Closed old epoch state, recovered {} lamports", lamports);
-
+fn authorize_publisher(protocol: &ProtocolState, signer: &Pubkey) -> Result<()> {
+    let is_admin = *signer == protocol.admin;
+    let is_publisher = protocol.publisher != Pubkey::default() && *signer == protocol.publisher;
+    require!(is_admin || is_publisher, ProtocolError::Unauthorized);
     Ok(())
 }

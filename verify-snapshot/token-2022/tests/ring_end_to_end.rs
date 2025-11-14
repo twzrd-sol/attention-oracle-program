@@ -39,11 +39,9 @@ async fn test_e2e_single_claim() {
     // Airdrop
     let _rent = 5_000_000_000u64;
     let lamports = 20_000_000_000u64;
-    let airdrop_ixs = vec![system_instruction::transfer(
-        &ctx.payer.pubkey(),
-        &admin.pubkey(),
-        lamports,
-    )];
+    let airdrop_ixs = vec![
+        system_instruction::transfer(&ctx.payer.pubkey(), &admin.pubkey(), lamports),
+    ];
     {
         // avoid simultaneous mutable/immutable borrow of ctx
         let payer_kp = Keypair::from_bytes(&ctx.payer.to_bytes()).unwrap();
@@ -69,10 +67,7 @@ async fn test_e2e_single_claim() {
     let im_open = ix_initialize_mint_open(&admin.pubkey(), &mint_kp.pubkey());
     send_ixs(&mut ctx, &admin, vec![im_open]).await.unwrap();
     let (protocol_pda, _) = Pubkey::find_program_address(
-        &[
-            token_2022::constants::PROTOCOL_SEED,
-            mint_kp.pubkey().as_ref(),
-        ],
+        &[token_2022::constants::PROTOCOL_SEED, mint_kp.pubkey().as_ref()],
         &token_2022::id(),
     );
 
@@ -81,25 +76,15 @@ async fn test_e2e_single_claim() {
         .await
         .unwrap();
     // Mint some tokens to treasury
-    mint_to(
-        &mut ctx,
-        &admin,
-        &mint_kp.pubkey(),
-        &treasury_ata,
-        &admin,
-        1_000_000_000,
-        6,
-    )
-    .await
-    .unwrap();
+    mint_to(&mut ctx, &admin, &mint_kp.pubkey(), &treasury_ata, &admin, 1_000_000_000, 6)
+        .await
+        .unwrap();
 
     // Initialize channel ring
     let channel = "test_channel";
     let streamer = derive_streamer_key(channel);
     let ix_init_chan = ix_initialize_channel(&admin.pubkey(), &mint_kp.pubkey(), &streamer);
-    send_ixs(&mut ctx, &admin, vec![ix_init_chan])
-        .await
-        .unwrap();
+    send_ixs(&mut ctx, &admin, vec![ix_init_chan]).await.unwrap();
     let (chan_pda, _) = Pubkey::find_program_address(
         &[
             token_2022::constants::CHANNEL_STATE_SEED,
@@ -183,70 +168,22 @@ async fn test_boundary_and_close() {
     {
         let payer_kp = Keypair::from_bytes(&ctx.payer.to_bytes()).unwrap();
         let payer_pub = payer_kp.pubkey();
-        send_ixs(
-            &mut ctx,
-            &payer_kp,
-            vec![system_instruction::transfer(
-                &payer_pub,
-                &admin.pubkey(),
-                20_000_000_000,
-            )],
-        )
-        .await
-        .unwrap();
+        send_ixs(&mut ctx, &payer_kp, vec![system_instruction::transfer(&payer_pub, &admin.pubkey(), 20_000_000_000)]).await.unwrap();
     }
 
     let mint_kp = Keypair::new();
-    create_mint_with_transfer_fee(
-        &mut ctx,
-        &admin,
-        &mint_kp,
-        6,
-        &admin.pubkey(),
-        &admin.pubkey(),
-        0,
-        0,
-    )
-    .await
-    .unwrap();
+    create_mint_with_transfer_fee(&mut ctx, &admin, &mint_kp, 6, &admin.pubkey(), &admin.pubkey(), 0, 0).await.unwrap();
     let im_open = ix_initialize_mint_open(&admin.pubkey(), &mint_kp.pubkey());
     send_ixs(&mut ctx, &admin, vec![im_open]).await.unwrap();
-    let (protocol_pda, _) = Pubkey::find_program_address(
-        &[
-            token_2022::constants::PROTOCOL_SEED,
-            mint_kp.pubkey().as_ref(),
-        ],
-        &token_2022::id(),
-    );
-    let treasury_ata = create_ata(&mut ctx, &admin, &protocol_pda, &mint_kp.pubkey())
-        .await
-        .unwrap();
-    mint_to(
-        &mut ctx,
-        &admin,
-        &mint_kp.pubkey(),
-        &treasury_ata,
-        &admin,
-        1_000_000_000,
-        6,
-    )
-    .await
-    .unwrap();
+    let (protocol_pda, _) = Pubkey::find_program_address(&[token_2022::constants::PROTOCOL_SEED, mint_kp.pubkey().as_ref()], &token_2022::id());
+    let treasury_ata = create_ata(&mut ctx, &admin, &protocol_pda, &mint_kp.pubkey()).await.unwrap();
+    mint_to(&mut ctx, &admin, &mint_kp.pubkey(), &treasury_ata, &admin, 1_000_000_000, 6).await.unwrap();
 
     let channel = "boundary";
     let streamer = derive_streamer_key(channel);
     let ix_init_chan = ix_initialize_channel(&admin.pubkey(), &mint_kp.pubkey(), &streamer);
-    send_ixs(&mut ctx, &admin, vec![ix_init_chan])
-        .await
-        .unwrap();
-    let (chan_pda, _) = Pubkey::find_program_address(
-        &[
-            token_2022::constants::CHANNEL_STATE_SEED,
-            mint_kp.pubkey().as_ref(),
-            streamer.as_ref(),
-        ],
-        &token_2022::id(),
-    );
+    send_ixs(&mut ctx, &admin, vec![ix_init_chan]).await.unwrap();
+    let (chan_pda, _) = Pubkey::find_program_address(&[token_2022::constants::CHANNEL_STATE_SEED, mint_kp.pubkey().as_ref(), streamer.as_ref()], &token_2022::id());
 
     // Set root with claim_count=8192; allow index 8191
     let epoch = 9;
@@ -264,20 +201,12 @@ async fn test_boundary_and_close() {
             AccountMeta::new(chan_pda, false),
             AccountMeta::new_readonly(anchor_lang::solana_program::system_program::ID, false),
         ],
-        data: token_2022::instruction::SetMerkleRootRing {
-            root,
-            epoch,
-            claim_count: 8192,
-            streamer_key: streamer,
-        }
-        .data(),
+        data: token_2022::instruction::SetMerkleRootRing { root, epoch, claim_count: 8192, streamer_key: streamer }.data(),
     };
     send_ixs(&mut ctx, &admin, vec![ix_set]).await.unwrap();
 
     // Claim index 8191 (should succeed)
-    let claimer_ata = create_ata(&mut ctx, &admin, &claimer.pubkey(), &mint_kp.pubkey())
-        .await
-        .unwrap();
+    let claimer_ata = create_ata(&mut ctx, &admin, &claimer.pubkey(), &mint_kp.pubkey()).await.unwrap();
     let ix_claim_ok = solana_sdk::instruction::Instruction {
         program_id: token_2022::id(),
         accounts: vec![
@@ -291,23 +220,10 @@ async fn test_boundary_and_close() {
             AccountMeta::new_readonly(spl_ata::id(), false),
             AccountMeta::new_readonly(anchor_lang::solana_program::system_program::ID, false),
         ],
-        data: token_2022::instruction::ClaimWithRing {
-            epoch,
-            index: 8191,
-            amount,
-            proof: vec![],
-            id: id.to_string(),
-            streamer_key: streamer,
-        }
-        .data(),
+        data: token_2022::instruction::ClaimWithRing { epoch, index: 8191, amount, proof: vec![], id: id.to_string(), streamer_key: streamer }.data(),
     };
     let recent = ctx.banks_client.get_latest_blockhash().await.unwrap();
-    let tx_ok = Transaction::new_signed_with_payer(
-        &[ix_claim_ok],
-        Some(&admin.pubkey()),
-        &[&admin, &claimer],
-        recent,
-    );
+    let tx_ok = Transaction::new_signed_with_payer(&[ix_claim_ok], Some(&admin.pubkey()), &[&admin, &claimer], recent);
     ctx.banks_client.process_transaction(tx_ok).await.unwrap();
 
     // Claim index 8192 (should fail InvalidIndex)
@@ -324,29 +240,11 @@ async fn test_boundary_and_close() {
             AccountMeta::new_readonly(spl_ata::id(), false),
             AccountMeta::new_readonly(anchor_lang::solana_program::system_program::ID, false),
         ],
-        data: token_2022::instruction::ClaimWithRing {
-            epoch,
-            index: 8192,
-            amount,
-            proof: vec![],
-            id: id.to_string(),
-            streamer_key: streamer,
-        }
-        .data(),
+        data: token_2022::instruction::ClaimWithRing { epoch, index: 8192, amount, proof: vec![], id: id.to_string(), streamer_key: streamer }.data(),
     };
     let recent2 = ctx.banks_client.get_latest_blockhash().await.unwrap();
-    let tx_bad = Transaction::new_signed_with_payer(
-        &[ix_claim_bad],
-        Some(&admin.pubkey()),
-        &[&admin, &claimer],
-        recent2,
-    );
-    let err = ctx
-        .banks_client
-        .process_transaction(tx_bad)
-        .await
-        .err()
-        .expect("expected failure");
+    let tx_bad = Transaction::new_signed_with_payer(&[ix_claim_bad], Some(&admin.pubkey()), &[&admin, &claimer], recent2);
+    let err = ctx.banks_client.process_transaction(tx_bad).await.err().expect("expected failure");
     // Just assert it failed; deeper code checks InvalidIndex inside program
     drop(err);
 
