@@ -1,8 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::keccak;
 
-/// Verify cNFT receipt from TWZRD L1
-/// Production implementation would integrate with mpl-bubblegum
+/// Verify external receipt proof
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct CnftReceiptProof {
     /// Leaf owner (must match claimer)
@@ -17,40 +16,35 @@ pub struct CnftReceiptProof {
     pub metadata_hash: [u8; 32],
 }
 
-/// Verify cNFT receipt ownership and metadata
+/// Verify receipt ownership and metadata
 pub fn verify_cnft_receipt(
     receipt_proof: &CnftReceiptProof,
     claimer: &Pubkey,
     expected_channel: &str,
     expected_epoch: u64,
 ) -> Result<()> {
-    use crate::errors::MiloError;
+    use crate::errors::ProtocolError;
 
     // Step 1: Verify ownership
-    require!(receipt_proof.owner == *claimer, MiloError::InvalidProof);
+    require!(receipt_proof.owner == *claimer, ProtocolError::InvalidProof);
 
     // Step 2: Verify metadata hash matches expected channel/epoch
     let expected_hash = compute_metadata_hash(expected_channel, expected_epoch);
     require!(
         receipt_proof.metadata_hash == expected_hash,
-        MiloError::InvalidProof
+        ProtocolError::InvalidProof
     );
 
-    msg!(
-        "cNFT verified: owner={}, channel={}, epoch={}",
-        claimer,
-        expected_channel,
-        expected_epoch
-    );
+    msg!("Receipt verified: owner={} channel={} epoch={}", claimer, expected_channel, expected_epoch);
 
     Ok(())
 }
 
-/// Compute metadata hash for cNFT verification
-/// Hash = keccak256("twzrd:" || channel || ":" || epoch)
+/// Compute metadata hash for receipt verification
+/// Hash = keccak256("rcpt:" || channel || ":" || epoch)
 fn compute_metadata_hash(channel: &str, epoch: u64) -> [u8; 32] {
     let mut preimage = Vec::new();
-    preimage.extend_from_slice(b"twzrd:");
+    preimage.extend_from_slice(b"rcpt:");
     preimage.extend_from_slice(channel.as_bytes());
     preimage.extend_from_slice(b":");
     preimage.extend_from_slice(&epoch.to_le_bytes());
@@ -58,8 +52,7 @@ fn compute_metadata_hash(channel: &str, epoch: u64) -> [u8; 32] {
     keccak::hash(&preimage).to_bytes()
 }
 
-/// Verify merkle proof (used for Bubblegum tree verification)
-/// This is a simplified version - production should use mpl-bubblegum CPI
+/// Verify merkle proof (generic verification)
 pub fn verify_merkle_proof(leaf: &[u8; 32], proof: &[[u8; 32]], root: &[u8; 32]) -> bool {
     let mut current = *leaf;
 
@@ -88,9 +81,9 @@ mod tests {
 
     #[test]
     fn test_metadata_hash() {
-        let hash1 = compute_metadata_hash("xqc", 12345);
-        let hash2 = compute_metadata_hash("xqc", 12345);
-        let hash3 = compute_metadata_hash("lacy", 12345);
+        let hash1 = compute_metadata_hash("user1", 12345);
+        let hash2 = compute_metadata_hash("user1", 12345);
+        let hash3 = compute_metadata_hash("user2", 12345);
 
         // Same inputs = same hash
         assert_eq!(hash1, hash2);
