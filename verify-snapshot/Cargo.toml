@@ -14,3 +14,4 @@ codegen-units = 1
 
 [patch.crates-io]
 base64ct = { path = "vendor/base64ct-1.5.3" }
+toml_edit = { path = "vendor/toml_edit-0.21.1" }
