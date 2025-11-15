@@ -43,6 +43,3 @@ codegen-units = 1   # Single codegen unit for better optimization
 strip = true        # Strip symbols
 panic = "abort"     # Smaller panic handler
 overflow-checks = false
-
-[patch.crates-io]
-base64ct = { git = "https://github.com/RustCrypto/formats", tag = "base64ct-v1.5.3" }
