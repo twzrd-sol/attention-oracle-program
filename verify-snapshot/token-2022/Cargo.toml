@@ -29,10 +29,10 @@ mpl-bubblegum = "1.4"
 spl-noop = "0.2"
 solana-security-txt = "1"
 
-[dev-dependencies]
-solana-program-test = "1.18.17"
-solana-sdk = "1.18"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-spl-token-2022 = "1.0.0"
-spl-associated-token-account = "1.0.3"
-
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Single codegen unit for better optimization
+strip = true        # Strip symbols
+panic = "abort"     # Smaller panic handler
+overflow-checks = false

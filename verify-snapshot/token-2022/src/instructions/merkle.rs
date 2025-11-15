@@ -1,6 +1,6 @@
 use crate::{
-    constants::{EPOCH_STATE_SEED, PROTOCOL_SEED},
-    errors::MiloError,
+    constants::{EPOCH_STATE_SEED, MAX_EPOCH_CLAIMS, PROTOCOL_SEED},
+    errors::ProtocolError,
     state::{EpochState, ProtocolState},
 };
 use anchor_lang::prelude::*;
@@ -40,12 +40,14 @@ pub fn set_merkle_root(
     streamer_key: Pubkey,
 ) -> Result<()> {
     let protocol = &ctx.accounts.protocol_state;
-    // Authorization: admin or allowlisted publisher
-    let signer = ctx.accounts.update_authority.key();
-    let is_admin = signer == protocol.admin;
-    let is_publisher = protocol.publisher != Pubkey::default() && signer == protocol.publisher;
-    require!(is_admin || is_publisher, MiloError::Unauthorized);
-    require!(!protocol.paused, MiloError::ProtocolPaused);
+    authorize_publisher(protocol, &ctx.accounts.update_authority.key())?;
+    require!(!protocol.paused, ProtocolError::ProtocolPaused);
+
+    require!(epoch > 0, ProtocolError::InvalidEpoch);
+    require!(
+        claim_count <= MAX_EPOCH_CLAIMS,
+        ProtocolError::InvalidInputLength
+    );
 
     let epoch_state = &mut ctx.accounts.epoch_state;
     let ts = Clock::get()?.unix_timestamp;
@@ -53,7 +55,7 @@ pub fn set_merkle_root(
     // Prevent re-initialization of an active epoch
     require!(
         epoch_state.timestamp == 0,
-        MiloError::EpochAlreadyInitialized
+        ProtocolError::EpochAlreadyInitialized
     );
 
     // Initialize/overwrite epoch fields
@@ -110,12 +112,14 @@ pub fn set_merkle_root_open(
     streamer_key: Pubkey,
 ) -> Result<()> {
     let protocol = &ctx.accounts.protocol_state;
-    // Authorization: admin or allowlisted publisher
-    let signer = ctx.accounts.update_authority.key();
-    let is_admin = signer == protocol.admin;
-    let is_publisher = protocol.publisher != Pubkey::default() && signer == protocol.publisher;
-    require!(is_admin || is_publisher, MiloError::Unauthorized);
-    require!(!protocol.paused, MiloError::ProtocolPaused);
+    authorize_publisher(protocol, &ctx.accounts.update_authority.key())?;
+    require!(!protocol.paused, ProtocolError::ProtocolPaused);
+
+    require!(epoch > 0, ProtocolError::InvalidEpoch);
+    require!(
+        claim_count <= MAX_EPOCH_CLAIMS,
+        ProtocolError::InvalidInputLength
+    );
 
     let epoch_state = &mut ctx.accounts.epoch_state;
     let ts = Clock::get()?.unix_timestamp;
@@ -123,7 +127,7 @@ pub fn set_merkle_root_open(
     // Prevent re-initialization of an active epoch
     require!(
         epoch_state.timestamp == 0,
-        MiloError::EpochAlreadyInitialized
+        ProtocolError::EpochAlreadyInitialized
     );
 
     epoch_state.epoch = epoch;
@@ -139,5 +143,12 @@ pub fn set_merkle_root_open(
     let need = ((claim_count as usize + 7) / 8).max(1);
     epoch_state.claimed_bitmap = vec![0u8; need];
 
+    Ok(())
+}
+
+fn authorize_publisher(protocol: &ProtocolState, signer: &Pubkey) -> Result<()> {
+    let is_admin = *signer == protocol.admin;
+    let is_publisher = protocol.publisher != Pubkey::default() && *signer == protocol.publisher;
+    require!(is_admin || is_publisher, ProtocolError::Unauthorized);
     Ok(())
 }
