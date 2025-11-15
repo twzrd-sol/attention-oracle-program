@@ -1,0 +1,160 @@
+#!/usr/bin/env tsx
+/**
+ * Test: Generate Merkle tree and publish root to mainnet
+ * Bypasses all services - direct on-chain interaction
+ */
+
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import crypto from 'crypto';
+import fs from 'fs';
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+  sendAndConfirmTransaction,
+  ComputeBudgetProgram,
+} from '@solana/web3.js';
+
+// Mainnet config
+const RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+const PROGRAM_ID = new PublicKey('4rArjoSZKrYkoE7hkvZNBP2Wpxovr78cfkxBnNwFNPn5');
+const MINT = new PublicKey('AAHd7u22jCMgmbF7ATkiY3BhkifD4MN3Vbsy4eYQGWN5');
+
+// Load admin keypair
+const adminKeypair = Keypair.fromSecretKey(
+  new Uint8Array(JSON.parse(fs.readFileSync('/home/twzrd/milo-token/keys/admin-keypair.json', 'utf8')))
+);
+
+console.log('🔨 MILO Test: Generate & Publish Merkle Root');
+console.log('Admin:', adminKeypair.publicKey.toBase58());
+
+// Merkle tree functions (from aggregator)
+function makeClaimLeaf(index: number, amount: number, id: string): Uint8Array {
+  const indexBytes = Buffer.alloc(4);
+  indexBytes.writeUInt32LE(index, 0);
+
+  const amountBytes = Buffer.alloc(8);
+  amountBytes.writeBigUInt64LE(BigInt(amount), 0);
+
+  const idBytes = Buffer.from(id, 'utf8');
+  const preimage = Buffer.concat([indexBytes, amountBytes, idBytes]);
+  return keccak_256(preimage);
+}
+
+function merkleRoot(leaves: Uint8Array[]): Uint8Array {
+  if (leaves.length === 0) throw new Error('No leaves');
+  if (leaves.length === 1) return leaves[0];
+
+  let level = [...leaves];
+  while (level.length > 1) {
+    const nextLevel: Uint8Array[] = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i];
+      const right = level[i + 1] || left;
+      const [first, second] = Buffer.compare(Buffer.from(left), Buffer.from(right)) <= 0
+        ? [left, right]
+        : [right, left];
+      nextLevel.push(keccak_256(Buffer.concat([first, second])));
+    }
+    level = nextLevel;
+  }
+  return level[0];
+}
+
+async function main() {
+  // Test claims
+  const claims = [
+    { id: adminKeypair.publicKey.toBase58(), amount: 1000_000_000_000 }, // 1000 MILO (9 decimals)
+    { id: 'Lacy7B2UabGNw8PMCLufYgaoaAwtLZqvKfYVBYqYbBY', amount: 500_000_000_000 }, // 500 MILO
+  ];
+
+  console.log(`\n📋 Claims: ${claims.length}`);
+  claims.forEach((c, i) => console.log(`  ${i}: ${c.id.slice(0, 8)}... → ${Number(c.amount) / 1e9} MILO`));
+
+  // Build Merkle tree
+  const leaves = claims.map((c, i) => makeClaimLeaf(i, c.amount, c.id));
+  const root = merkleRoot(leaves);
+  const rootHex = Buffer.from(root).toString('hex');
+
+  console.log(`\n🌳 Merkle Root: ${rootHex}`);
+
+  // Derive epoch state PDA (SINGLETON variant: [b"epoch_state", epoch (LE), streamer_key])
+  const epoch = Math.floor(Date.now() / 1000);
+  const epochBytesLE = Buffer.alloc(8);
+  epochBytesLE.writeBigUInt64LE(BigInt(epoch), 0);
+
+  const streamerKey = adminKeypair.publicKey; // Using admin as streamer
+
+  const [epochStatePDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('epoch_state'), epochBytesLE, streamerKey.toBuffer()],
+    PROGRAM_ID
+  );
+
+  console.log(`\n📍 Epoch: ${epoch}`);
+  console.log(`📍 Streamer: ${streamerKey.toBase58()}`);
+  console.log(`📍 Epoch State PDA: ${epochStatePDA.toBase58()}`);
+
+  // Build set_merkle_root instruction (SINGLETON variant)
+  const discriminator = crypto.createHash('sha256').update('global:set_merkle_root').digest().slice(0, 8);
+
+  // Instruction data: discriminator + root (32 bytes) + epoch (u64 LE) + claim_count (u32 LE) + streamer_key (32 bytes)
+  const claimCountBytes = Buffer.alloc(4);
+  claimCountBytes.writeUInt32LE(claims.length, 0);
+
+  const data = Buffer.concat([
+    discriminator,
+    Buffer.from(root),
+    epochBytesLE, // Already defined above for PDA derivation
+    claimCountBytes,
+    adminKeypair.publicKey.toBuffer(), // streamer_key
+  ]);
+
+  // Derive protocol state PDA (SINGLETON variant: [b"protocol"])
+  const [protocolStatePDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('protocol')],
+    PROGRAM_ID
+  );
+
+  const instruction = new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: adminKeypair.publicKey, isSigner: true, isWritable: true }, // update_authority (payer)
+      { pubkey: protocolStatePDA, isSigner: false, isWritable: true }, // protocol_state (mut)
+      { pubkey: epochStatePDA, isSigner: false, isWritable: true }, // epoch_state (mut)
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+    ],
+    data,
+  });
+
+  // Send transaction
+  const connection = new Connection(RPC_URL, 'confirmed');
+  const tx = new Transaction();
+  tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }));
+  tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }));
+  tx.add(instruction);
+
+  console.log(`\n🚀 Publishing root to mainnet...`);
+  const sig = await sendAndConfirmTransaction(connection, tx, [adminKeypair], {
+    commitment: 'confirmed',
+  });
+
+  console.log(`\n✅ ROOT PUBLISHED!`);
+  console.log(`   TX: ${sig}`);
+  console.log(`   Explorer: https://explorer.solana.com/tx/${sig}`);
+  console.log(`\n📊 Next: Test claim with proof from leaf 0`);
+
+  // Save epoch data for claim test
+  const epochData = {
+    epoch,
+    root: rootHex,
+    claims: claims.map((c, i) => ({ ...c, index: i, leaf: Buffer.from(leaves[i]).toString('hex') })),
+  };
+
+  fs.writeFileSync('/tmp/milo-epoch-0.json', JSON.stringify(epochData, null, 2));
+  console.log(`   Saved: /tmp/milo-epoch-0.json`);
+}
+
+main().catch(console.error);

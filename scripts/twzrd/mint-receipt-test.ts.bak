@@ -1,0 +1,263 @@
+#!/usr/bin/env tsx
+/**
+ * TWZRD cNFT Receipt Minter (Test CLI)
+ *
+ * Mints a compressed NFT receipt for channel participation
+ * Requires proof from aggregator
+ *
+ * Usage:
+ *   tsx scripts/twzrd/mint-receipt-test.ts \
+ *     --channel rubius \
+ *     --epoch 1760475780 \
+ *     --user-hash 00304829fdff60bedb04a0559f9ab540a355b49e83eed364c4130bd9c0aacde5 \
+ *     --index 0 \
+ *     --proof "0x1234...,0x5678..." \
+ *     --cluster devnet
+ */
+
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  Transaction,
+  SystemProgram,
+  TransactionInstruction,
+  SYSVAR_RENT_PUBKEY,
+} from '@solana/web3.js';
+import * as fs from 'fs';
+import { createHash } from 'crypto';
+
+// Config
+const PROGRAM_ID_DEVNET = new PublicKey('Gc7FSSFkL4VoJUCtY5AF4mcwpnfWDBGzNXwPeSPjPBj6');
+const MPL_BUBBLEGUM_ID = new PublicKey('BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY');
+const SPL_ACCOUNT_COMPRESSION_ID = new PublicKey('cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK');
+const SPL_NOOP_ID = new PublicKey('noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV');
+
+// Parse CLI args
+const args = process.argv.slice(2);
+const getArg = (name: string): string | undefined => {
+  const idx = args.indexOf(name);
+  return idx !== -1 ? args[idx + 1] : undefined;
+};
+
+const channel = getArg('--channel') || 'rubius';
+const epoch = Number(getArg('--epoch') || 1760475780);
+const userHash = getArg('--user-hash');
+const index = Number(getArg('--index') || 0);
+const proofArg = getArg('--proof');
+const cluster = getArg('--cluster') || 'devnet';
+const treeAddress = getArg('--tree') || 'NkpKhZKZTpAoiosAKASd6J8i89AeSK98byeTzb8N8Rq'; // Updated to initialized tree
+const recipient = getArg('--recipient'); // Optional: wallet to mint to
+
+if (!userHash || !proofArg) {
+  console.error('❌ Missing required args: --user-hash and --proof');
+  process.exit(1);
+}
+
+// Parse proof (comma-separated hex strings)
+const proof = proofArg
+  .split(',')
+  .map((p) => Buffer.from(p.replace('0x', ''), 'hex'));
+
+console.log('╔═══════════════════════════════════════════════════════╗');
+console.log('║     TWZRD cNFT Receipt Minter                        ║');
+console.log('╚═══════════════════════════════════════════════════════╝\n');
+
+console.log('📋 Configuration:');
+console.log(`  Cluster: ${cluster}`);
+console.log(`  Channel: ${channel}`);
+console.log(`  Epoch:   ${epoch}`);
+console.log(`  User Hash: ${userHash}`);
+console.log(`  Index: ${index}`);
+console.log(`  Proof depth: ${proof.length}`);
+console.log(`  Tree: ${treeAddress}\n`);
+
+// Setup connection
+const rpc =
+  cluster === 'devnet'
+    ? 'https://devnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+    : 'https://api.mainnet-beta.solana.com';
+
+const connection = new Connection(rpc, 'confirmed');
+const programId = PROGRAM_ID_DEVNET;
+
+// Load payer keypair (use twzrd-protocol-keypair for consistency)
+const payerPath = '/home/twzrd/twzrd-token/twzrd-protocol-keypair.json';
+const payer = Keypair.fromSecretKey(
+  new Uint8Array(JSON.parse(fs.readFileSync(payerPath, 'utf8')))
+);
+
+console.log(`💰 Payer: ${payer.publicKey.toBase58()}`);
+
+(async () => {
+  const balance = await connection.getBalance(payer.publicKey);
+  console.log(`   Balance: ${(balance / 1e9).toFixed(4)} SOL\n`);
+
+  // Derive epoch state PDA
+  const epochBytes = Buffer.alloc(8);
+  epochBytes.writeBigUInt64LE(BigInt(epoch));
+  const channelBytes = Buffer.from(channel, 'utf8');
+
+  const [epochStatePDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('epoch_state'), epochBytes, channelBytes],
+    programId
+  );
+
+  console.log(`🔑 Epoch State PDA: ${epochStatePDA.toBase58()}`);
+
+  // Derive claim record PDA
+  // Truncate user_hash to first 32 chars to fit PDA seed limit
+  const userHashTruncated = userHash.substring(0, 32);
+  const userHashBytes = Buffer.from(userHashTruncated, 'utf8');
+  const [claimRecordPDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('claim'), epochBytes, channelBytes, userHashBytes],
+    programId
+  );
+
+  console.log(`🔒 Claim Record PDA: ${claimRecordPDA.toBase58()}`);
+
+  // Derive Bubblegum tree config PDA
+  const merkleTree = new PublicKey(treeAddress);
+  const [treeConfigPDA] = PublicKey.findProgramAddressSync(
+    [merkleTree.toBuffer()],
+    MPL_BUBBLEGUM_ID
+  );
+
+  console.log(`🌳 Tree Config PDA: ${treeConfigPDA.toBase58()}`);
+  console.log(`   Merkle Tree: ${merkleTree.toBase58()}\n`);
+
+  // Determine recipient (default to payer)
+  const leafOwner = recipient ? new PublicKey(recipient) : payer.publicKey;
+  const leafDelegate = leafOwner; // Same as owner
+
+  console.log(`📦 Recipient: ${leafOwner.toBase58()}\n`);
+
+  // Build mint_receipt instruction
+  // Discriminator: sighash("global:mint_receipt")
+  const discriminator = createHash('sha256')
+    .update('global:mint_receipt')
+    .digest()
+    .slice(0, 8);
+
+  // Borsh encode parameters: channel, epoch, user_hash, proof
+  // Format:
+  // - channel: String (u32 len + bytes)
+  // - epoch: u64
+  // - user_hash: String (u32 len + bytes)
+  // - proof: Vec<[u8;32]> (u32 len + elements)
+
+  const channelLen = Buffer.alloc(4);
+  channelLen.writeUInt32LE(channelBytes.length);
+
+  const epochBytesLE = Buffer.alloc(8);
+  epochBytesLE.writeBigUInt64LE(BigInt(epoch));
+
+  // user_hash for instruction data (full string, not truncated)
+  const userHashFullBytes = Buffer.from(userHash, 'utf8');
+  const userHashLen = Buffer.alloc(4);
+  userHashLen.writeUInt32LE(userHashFullBytes.length);
+
+  const proofLen = Buffer.alloc(4);
+  proofLen.writeUInt32LE(proof.length);
+
+  const instructionData = Buffer.concat([
+    discriminator,
+    channelLen,
+    channelBytes,
+    epochBytesLE,
+    userHashLen,
+    userHashFullBytes,
+    proofLen,
+    ...proof,
+  ]);
+
+  console.log(`📝 Building mint_receipt instruction...`);
+  console.log(`   Discriminator: ${discriminator.toString('hex')}`);
+  console.log(`   Data length: ${instructionData.length} bytes\n`);
+
+  // Accounts for mint_receipt:
+  // 1. epoch_state
+  // 2. tree_config
+  // 3. leaf_owner
+  // 4. leaf_delegate
+  // 5. merkle_tree
+  // 6. payer
+  // 7. tree_creator_or_delegate (the creator who initialized the tree)
+  // 8. bubblegum_program
+  // 9. log_wrapper (SPL Noop)
+  // 10. compression_program
+  // 11. system_program
+
+  // Tree creator is the payer who created the tree (not a PDA)
+  const treeCreator = payer.publicKey;
+
+  const instruction = new TransactionInstruction({
+    keys: [
+      { pubkey: claimRecordPDA, isSigner: false, isWritable: true },
+      { pubkey: epochStatePDA, isSigner: false, isWritable: false },
+      { pubkey: treeConfigPDA, isSigner: false, isWritable: true },
+      { pubkey: leafOwner, isSigner: false, isWritable: false },
+      { pubkey: leafDelegate, isSigner: false, isWritable: false },
+      { pubkey: merkleTree, isSigner: false, isWritable: true },
+      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: treeCreator, isSigner: false, isWritable: false },
+      { pubkey: MPL_BUBBLEGUM_ID, isSigner: false, isWritable: false },
+      { pubkey: SPL_NOOP_ID, isSigner: false, isWritable: false },
+      { pubkey: SPL_ACCOUNT_COMPRESSION_ID, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    programId,
+    data: instructionData,
+  });
+
+  console.log('📊 Transaction accounts:');
+  console.log(`   epoch_state: ${epochStatePDA.toBase58()}`);
+  console.log(`   tree_config: ${treeConfigPDA.toBase58()}`);
+  console.log(`   tree_creator: ${treeCreator.toBase58()}`);
+  console.log(`   merkle_tree: ${merkleTree.toBase58()}`);
+  console.log(`   leaf_owner: ${leafOwner.toBase58()}\n`);
+
+  // Build and send transaction
+  const tx = new Transaction().add(instruction);
+  tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+  tx.feePayer = payer.publicKey;
+
+  console.log('🚀 Sending transaction...');
+
+  try {
+    const signature = await connection.sendTransaction(tx, [payer], {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+
+    console.log(`   Signature: ${signature}`);
+    console.log(
+      `   Explorer: https://explorer.solana.com/tx/${signature}?cluster=${cluster}\n`
+    );
+
+    console.log('⏳ Confirming transaction...');
+    await connection.confirmTransaction(signature, 'confirmed');
+
+    console.log('✅ cNFT receipt minted successfully!\n');
+
+    // Fetch transaction details to show cost
+    const txDetails = await connection.getTransaction(signature, {
+      commitment: 'confirmed',
+      maxSupportedTransactionVersion: 0,
+    });
+
+    if (txDetails?.meta) {
+      const fee = txDetails.meta.fee;
+      console.log(`💸 Transaction cost: ${fee} lamports (${(fee / 1e9).toFixed(9)} SOL)`);
+    }
+  } catch (err: any) {
+    console.error('\n❌ Transaction failed:', err.message);
+
+    if (err.logs) {
+      console.error('\n📜 Program logs:');
+      err.logs.forEach((log: string) => console.error(`   ${log}`));
+    }
+
+    process.exit(1);
+  }
+})();

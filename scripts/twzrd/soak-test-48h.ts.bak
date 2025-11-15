@@ -1,0 +1,423 @@
+#!/usr/bin/env tsx
+/**
+ * TWZRD 48-Hour Soak Test
+ *
+ * Runs continuous epoch finalization + receipt minting on devnet
+ * Tracks reliability metrics, costs, and error patterns
+ *
+ * Usage:
+ *   tsx scripts/twzrd/soak-test-48h.ts --duration 48 --cluster devnet
+ *
+ * Environment:
+ *   AGGREGATOR_URL: Default http://localhost:3001
+ *   MAX_MINTS_PER_EPOCH: Default 5 (to conserve devnet SOL)
+ */
+
+import { Connection, Keypair, PublicKey, Transaction, SystemProgram, TransactionInstruction } from '@solana/web3.js';
+import * as fs from 'fs';
+import { createHash } from 'crypto';
+
+const PROGRAM_ID = new PublicKey('Gc7FSSFkL4VoJUCtY5AF4mcwpnfWDBGzNXwPeSPjPBj6');
+const MPL_BUBBLEGUM_ID = new PublicKey('BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY');
+const SPL_ACCOUNT_COMPRESSION_ID = new PublicKey('cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK');
+const SPL_NOOP_ID = new PublicKey('noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV');
+
+const AGGREGATOR_URL = process.env.AGGREGATOR_URL || 'http://localhost:3001';
+const MAX_MINTS_PER_EPOCH = Number(process.env.MAX_MINTS_PER_EPOCH || 5);
+const TARGET_CHANNELS = (process.env.TARGET_CHANNELS || 'silky,adapt,jasontheween,lacy,stableronaldo,kaysan')
+  .split(',')
+  .map((c) => c.trim().toLowerCase())
+  .filter(Boolean);
+const TREE_ADDRESS = 'NkpKhZKZTpAoiosAKASd6J8i89AeSK98byeTzb8N8Rq';
+
+// Parse args
+const args = process.argv.slice(2);
+const getArg = (name: string) => {
+  const idx = args.indexOf(name);
+  return idx !== -1 ? args[idx + 1] : undefined;
+};
+
+const durationHours = Number(getArg('--duration') || 48);
+const cluster = getArg('--cluster') || 'devnet';
+
+interface SoakStats {
+  startTime: number;
+  totalEpochs: number;
+  epochsFinalized: number;
+  epochsPublished: number;
+  totalMints: number;
+  successfulMints: number;
+  failedMints: number;
+  totalCost: number;
+  errors: { [key: string]: number };
+  lastEpoch: number;
+}
+
+const stats: SoakStats = {
+  startTime: Date.now(),
+  totalEpochs: 0,
+  epochsFinalized: 0,
+  epochsPublished: 0,
+  totalMints: 0,
+  successfulMints: 0,
+  failedMints: 0,
+  totalCost: 0,
+  errors: {},
+  lastEpoch: 0,
+};
+
+const logFile = `/home/twzrd/milo-token/logs/soak-test-${Date.now()}.log`;
+
+function log(msg: string) {
+  const timestamp = new Date().toISOString();
+  const logMsg = `[${timestamp}] ${msg}`;
+  console.log(logMsg);
+  fs.appendFileSync(logFile, logMsg + '\n');
+}
+
+function recordError(err: string) {
+  stats.errors[err] = (stats.errors[err] || 0) + 1;
+}
+
+function printStats() {
+  const elapsed = ((Date.now() - stats.startTime) / 1000 / 3600).toFixed(2);
+  const successRate = stats.totalMints > 0 ? ((stats.successfulMints / stats.totalMints) * 100).toFixed(1) : '0';
+  const avgCost = stats.successfulMints > 0 ? (stats.totalCost / stats.successfulMints).toFixed(0) : '0';
+
+  log('\n╔═══════════════════════════════════════════════════════╗');
+  log('║     Soak Test Statistics                             ║');
+  log('╚═══════════════════════════════════════════════════════╝');
+  log(`  Runtime: ${elapsed} hours / ${durationHours} hours`);
+  log(`  Epochs Processed: ${stats.totalEpochs}`);
+  log(`  Epochs Finalized: ${stats.epochsFinalized}`);
+  log(`  Epochs Published: ${stats.epochsPublished}`);
+  log(`  Total Mints: ${stats.totalMints}`);
+  log(`  Successful: ${stats.successfulMints} (${successRate}%)`);
+  log(`  Failed: ${stats.failedMints}`);
+  log(`  Total Cost: ${stats.totalCost} lamports (${(stats.totalCost / 1e9).toFixed(6)} SOL)`);
+  log(`  Avg Cost/Mint: ${avgCost} lamports`);
+
+  if (Object.keys(stats.errors).length > 0) {
+    log('\n  Error Summary:');
+    Object.entries(stats.errors).forEach(([err, count]) => {
+      log(`    ${err}: ${count}`);
+    });
+  }
+  log('');
+}
+
+async function processEpoch(
+  connection: Connection,
+  payer: Keypair,
+  epoch: number,
+  channels: string[]
+) {
+  stats.totalEpochs++;
+  stats.lastEpoch = epoch;
+
+  for (const channel of channels) {
+    try {
+      // Check if epoch has participants
+      const statsRes = await fetch(`${AGGREGATOR_URL}/stats?channel=${channel}&epoch=${epoch}`);
+      const channelStats = await statsRes.json();
+
+      if (channelStats.participants === 0) {
+        continue; // Skip empty epochs
+      }
+
+      log(`📊 Epoch ${epoch} (${channel}): ${channelStats.participants} participants`);
+
+      // Finalize epoch (build merkle tree)
+      const finalizeRes = await fetch(`${AGGREGATOR_URL}/finalize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ epoch }),
+      });
+      const finalizeData = await finalizeRes.json();
+
+      if (!finalizeData.roots || !finalizeData.roots[channel]) {
+        log(`  ⚠️  No root generated for ${channel}`);
+        continue;
+      }
+
+      stats.epochsFinalized++;
+      const { root, participants } = finalizeData.roots[channel];
+      log(`  ✅ Finalized: root=${root.substring(0, 16)}... (${participants} users)`);
+
+      // Publish epoch state on-chain
+      const epochBytes = Buffer.alloc(8);
+      epochBytes.writeBigUInt64LE(BigInt(epoch));
+      const channelBytes = Buffer.from(channel, 'utf8');
+      const channelLen = Buffer.alloc(4);
+      channelLen.writeUInt32LE(channelBytes.length);
+
+      const [epochStatePDA] = PublicKey.findProgramAddressSync(
+        [Buffer.from('epoch_state'), epochBytes, channelBytes],
+        PROGRAM_ID
+      );
+
+      // Check if already published
+      const accountInfo = await connection.getAccountInfo(epochStatePDA);
+      if (accountInfo) {
+        log(`  ⏭️  Already published (${epochStatePDA.toBase58()})`);
+      } else {
+        // Build publish instruction
+        const discriminator = createHash('sha256')
+          .update('global:init_epoch_state')
+          .digest()
+          .slice(0, 8);
+
+        const rootBytes = Buffer.from(root, 'hex');
+        const participantBytes = Buffer.alloc(4);
+        participantBytes.writeUInt32LE(participants);
+
+        const publishData = Buffer.concat([
+          discriminator,
+          epochBytes,
+          channelLen,
+          channelBytes,
+          rootBytes,
+          participantBytes,
+        ]);
+
+        const publishIx = new TransactionInstruction({
+          keys: [
+            { pubkey: epochStatePDA, isSigner: false, isWritable: true },
+            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          ],
+          programId: PROGRAM_ID,
+          data: publishData,
+        });
+
+        const tx = new Transaction().add(publishIx);
+        tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+        tx.feePayer = payer.publicKey;
+
+        const sig = await connection.sendTransaction(tx, [payer], {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+        });
+
+        await connection.confirmTransaction(sig, 'confirmed');
+
+        stats.epochsPublished++;
+        log(`  📝 Published: ${sig.substring(0, 16)}...`);
+      }
+
+      // Root-sync guard: ensure aggregator proof root matches on-chain root
+      // Small delay to let RPC index and aggregator settle
+      await new Promise((r) => setTimeout(r, 500));
+
+      // Mint receipts (limited to MAX_MINTS_PER_EPOCH)
+      const mintCount = Math.min(participants, MAX_MINTS_PER_EPOCH);
+
+      const merkleTree = new PublicKey(TREE_ADDRESS);
+      const [treeConfigPDA] = PublicKey.findProgramAddressSync(
+        [merkleTree.toBuffer()],
+        MPL_BUBBLEGUM_ID
+      );
+
+      for (let i = 0; i < mintCount; i++) {
+        try {
+          // Fetch proof
+          const proofRes = await fetch(
+            `${AGGREGATOR_URL}/proof-by-index?channel=${channel}&epoch=${epoch}&index=${i}`
+          );
+          const proofData = await proofRes.json();
+
+          if (proofData.error) {
+            throw new Error(proofData.error);
+          }
+
+          const { user_hash, proof, root: proofRoot } = proofData;
+
+          // Skip mint if aggregator root drifted from finalized/published root
+          if ((proofRoot || '').toLowerCase() !== root.toLowerCase()) {
+            log(`  ⏭️  Skipping [${i}] root drift (agg=${(proofRoot||'').slice(0,8)}…, pub=${root.slice(0,8)}…)`);
+            continue;
+          }
+
+          stats.totalMints++;
+
+          // Derive claim record PDA
+          const userHashTruncated = user_hash.substring(0, 32);
+          const userHashBytes = Buffer.from(userHashTruncated, 'utf8');
+
+          const [claimRecordPDA] = PublicKey.findProgramAddressSync(
+            [Buffer.from('claim'), epochBytes, channelBytes, userHashBytes],
+            PROGRAM_ID
+          );
+
+          // Build mint instruction
+          const mintDiscriminator = createHash('sha256')
+            .update('global:mint_receipt')
+            .digest()
+            .slice(0, 8);
+
+          const userHashFullBytes = Buffer.from(user_hash, 'utf8');
+          const userHashLen = Buffer.alloc(4);
+          userHashLen.writeUInt32LE(userHashFullBytes.length);
+
+          const proofBuffers = proof.map((p: string) => Buffer.from(p, 'hex'));
+          const proofLen = Buffer.alloc(4);
+          proofLen.writeUInt32LE(proofBuffers.length);
+
+          const mintData = Buffer.concat([
+            mintDiscriminator,
+            channelLen,
+            channelBytes,
+            epochBytes,
+            userHashLen,
+            userHashFullBytes,
+            proofLen,
+            ...proofBuffers,
+          ]);
+
+          const mintIx = new TransactionInstruction({
+            keys: [
+              { pubkey: claimRecordPDA, isSigner: false, isWritable: true },
+              { pubkey: epochStatePDA, isSigner: false, isWritable: false },
+              { pubkey: treeConfigPDA, isSigner: false, isWritable: true },
+              { pubkey: payer.publicKey, isSigner: false, isWritable: false },
+              { pubkey: payer.publicKey, isSigner: false, isWritable: false },
+              { pubkey: merkleTree, isSigner: false, isWritable: true },
+              { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+              { pubkey: payer.publicKey, isSigner: false, isWritable: false },
+              { pubkey: MPL_BUBBLEGUM_ID, isSigner: false, isWritable: false },
+              { pubkey: SPL_NOOP_ID, isSigner: false, isWritable: false },
+              { pubkey: SPL_ACCOUNT_COMPRESSION_ID, isSigner: false, isWritable: false },
+              { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+            ],
+            programId: PROGRAM_ID,
+            data: mintData,
+          });
+
+          const mintTx = new Transaction().add(mintIx);
+          mintTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+          mintTx.feePayer = payer.publicKey;
+
+          const mintSig = await connection.sendTransaction(mintTx, [payer], {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+          });
+
+          await connection.confirmTransaction(mintSig, 'confirmed');
+
+          // Get cost
+          const txDetails = await connection.getTransaction(mintSig, {
+            commitment: 'confirmed',
+            maxSupportedTransactionVersion: 0,
+          });
+
+          const cost = txDetails?.meta?.fee || 0;
+          stats.totalCost += cost;
+          stats.successfulMints++;
+
+          log(`  ✅ Minted [${i}]: ${mintSig.substring(0, 16)}... (${cost} lamports)`);
+        } catch (err: any) {
+          stats.failedMints++;
+          const errMsg = err.message || 'unknown';
+          recordError(errMsg);
+          log(`  ❌ Mint [${i}] failed: ${errMsg}`);
+        }
+
+        // Small delay between mints
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    } catch (err: any) {
+      recordError(err.message || 'unknown');
+      log(`  ❌ Epoch ${epoch} (${channel}) failed: ${err.message}`);
+    }
+  }
+}
+
+async function main() {
+  log('╔═══════════════════════════════════════════════════════╗');
+  log('║     TWZRD 48-Hour Soak Test                          ║');
+  log('╚═══════════════════════════════════════════════════════╝');
+  log(`  Duration: ${durationHours} hours`);
+  log(`  Cluster: ${cluster}`);
+  log(`  Max Mints/Epoch: ${MAX_MINTS_PER_EPOCH}`);
+  log(`  Log: ${logFile}\n`);
+
+  // Setup
+  const rpc =
+    cluster === 'devnet'
+      ? 'https://devnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+      : 'https://api.mainnet-beta.solana.com';
+
+  const connection = new Connection(rpc, 'confirmed');
+  const payer = Keypair.fromSecretKey(
+    new Uint8Array(JSON.parse(fs.readFileSync('/home/twzrd/twzrd-token/twzrd-protocol-keypair.json', 'utf8')))
+  );
+
+  log(`💰 Payer: ${payer.publicKey.toBase58()}`);
+  const balance = await connection.getBalance(payer.publicKey);
+  log(`   Balance: ${(balance / 1e9).toFixed(4)} SOL\n`);
+
+  // Select channels to monitor (user-provided targets)
+  const channels = TARGET_CHANNELS.length ? TARGET_CHANNELS : ['soakchan'];
+
+  // Calculate end time
+  const endTime = Date.now() + durationHours * 3600 * 1000;
+  const epochInterval = 60; // 60-second epochs
+
+  log(`🚀 Starting soak test (ends ${new Date(endTime).toISOString()})\n`);
+
+  // Stats reporting interval
+  const statsInterval = setInterval(() => {
+    printStats();
+  }, 3600 * 1000); // Every hour
+
+  // Main loop
+  let running = true;
+
+  process.on('SIGINT', () => {
+    log('\n⚠️  Received SIGINT, shutting down gracefully...');
+    running = false;
+    clearInterval(statsInterval);
+  });
+
+  while (running && Date.now() < endTime) {
+    // Process previous epoch (N-1) to give worker time to flush
+    const nowEpoch = Math.floor(Date.now() / 1000 / epochInterval) * epochInterval;
+    const currentEpoch = nowEpoch - epochInterval;
+
+    // Skip if we already processed this epoch
+    if (currentEpoch === stats.lastEpoch) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      continue;
+    }
+
+    log(`\n⏰ Processing epoch ${currentEpoch}...`);
+
+    await processEpoch(connection, payer, currentEpoch, channels);
+
+    // Wait for next epoch
+    const nextEpoch = currentEpoch + epochInterval;
+    const waitTime = nextEpoch * 1000 - Date.now();
+
+    if (waitTime > 0) {
+      log(`  💤 Waiting ${(waitTime / 1000).toFixed(0)}s for next epoch...\n`);
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+    }
+  }
+
+  clearInterval(statsInterval);
+
+  log('\n╔═══════════════════════════════════════════════════════╗');
+  log('║     Soak Test Complete                               ║');
+  log('╚═══════════════════════════════════════════════════════╝\n');
+
+  printStats();
+
+  log(`\n📊 Full log: ${logFile}`);
+  log('\n✅ Soak test finished successfully\n');
+}
+
+main().catch((err) => {
+  log(`\n❌ Fatal error: ${err.message}`);
+  log(err.stack);
+  process.exit(1);
+});

@@ -1,0 +1,143 @@
+#!/usr/bin/env npx tsx
+/**
+ * Initialize channel ring buffers for all Twitch channels
+ * This is a ONE-TIME setup per channel (costs 0.013 SOL each)
+ * After initialization, channels reuse the same 10 slots forever
+ */
+
+import { Connection, PublicKey, Keypair } from '@solana/web3.js';
+import { Program, AnchorProvider, Wallet, BN } from '@coral-xyz/anchor';
+import { readFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+
+// Configuration
+const PROGRAM_ID = new PublicKey('4rArjoSZKrYkoE7hkvZNBP2Wpxovr78cfkxBnNwFNPn5');
+const MINT_PUBKEY = new PublicKey('ESt3DoTMTSxkabcsjiqYZUuNuGJsnkT9WD1CxpaVPhzk');
+const RPC_URL = process.env.RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+
+// Channels to initialize
+const CHANNELS = [
+  'stableronaldo',
+  'lacy',
+  'yourragegaming',
+  'kaicenat',
+  'silky',
+  'jasontheween',
+  'adapt'
+];
+
+// Channel pubkeys (deterministic from channel names)
+function getChannelPubkey(channelName: string): PublicKey {
+  // Use a deterministic mapping from channel name to pubkey
+  // In production, these would be the actual streamer wallet addresses
+  const channelSeeds = {
+    'stableronaldo': 'BpMjQhWKKyzqgDCCxPYWCHhkC3YMKZqKeL3LjeJLKJNy',
+    'lacy': '3aDPjCVMJCPYhNcUNxY6gXKVBNefBfLj1SWnHBMKgLmk',
+    'yourragegaming': '8oQY5VvY1gNKBjz7wUTPzJQMfvHLMvJQ9aKVfC5YvgBz',
+    'kaicenat': 'EZqVqVBBBvR6xsftGzqQfszhmud6osGfCpo4eX6z5S5c',
+    'silky': '4vRJQzfPbjVCcBYFQVJmJbVfDPFMqvGzBLDzLqNBhcTX',
+    'jasontheween': 'G5abwCtRn9WF7YVHJBV8hPwbhJPQFRYZeWSPKvtkcfnt',
+    'adapt': '2LbZZ6WgE1jUmFUqzFJQpA5hCCQ7DkqEH8F5qKcWNuUE'
+  };
+
+  return new PublicKey(channelSeeds[channelName] || channelSeeds['stableronaldo']);
+}
+
+async function initializeChannels() {
+  console.log('🚀 Initializing Channel Ring Buffers');
+  console.log('=====================================');
+
+  // Load keypair
+  const keypairPath = join(homedir(), '.config/solana/oracle-authority.json');
+  const keypair = Keypair.fromSecretKey(
+    Uint8Array.from(JSON.parse(readFileSync(keypairPath, 'utf-8')))
+  );
+
+  // Create connection and provider
+  const connection = new Connection(RPC_URL, 'confirmed');
+  const wallet = new Wallet(keypair);
+  const provider = new AnchorProvider(connection, wallet, {
+    commitment: 'confirmed',
+  });
+
+  // Load IDL and create program
+  const idl = JSON.parse(readFileSync('./target/idl/milo_2022.json', 'utf-8'));
+  const program = new Program(idl, PROGRAM_ID, provider);
+
+  console.log(`Oracle wallet: ${keypair.publicKey}`);
+  console.log(`Program ID: ${PROGRAM_ID}`);
+  console.log(`Mint: ${MINT_PUBKEY}`);
+  console.log('');
+
+  let successCount = 0;
+  let skipCount = 0;
+  let errorCount = 0;
+
+  for (const channel of CHANNELS) {
+    const streamerKey = getChannelPubkey(channel);
+
+    try {
+      // Derive channel state PDA
+      const [channelState] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from('channel_state'),
+          streamerKey.toBuffer(),
+          MINT_PUBKEY.toBuffer()
+        ],
+        PROGRAM_ID
+      );
+
+      // Check if already initialized
+      const accountInfo = await connection.getAccountInfo(channelState);
+      if (accountInfo) {
+        console.log(`✅ ${channel} - Already initialized (${channelState.toString().slice(0, 8)}...)`);
+        skipCount++;
+        continue;
+      }
+
+      console.log(`Initializing ${channel}...`);
+
+      // Derive protocol state PDA
+      const [protocolState] = PublicKey.findProgramAddressSync(
+        [Buffer.from('protocol'), MINT_PUBKEY.toBuffer()],
+        PROGRAM_ID
+      );
+
+      // Initialize channel
+      const tx = await program.methods
+        .initializeChannel(streamerKey)
+        .accounts({
+          payer: keypair.publicKey,
+          authority: keypair.publicKey,
+          protocolState,
+          channelState,
+        })
+        .rpc();
+
+      console.log(`✅ ${channel} - Initialized! TX: ${tx}`);
+      console.log(`   Channel state: ${channelState.toString()}`);
+      console.log(`   Cost: ~0.013 SOL (one-time)`);
+      successCount++;
+
+      // Wait a bit to avoid rate limits
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+    } catch (error) {
+      console.error(`❌ ${channel} - Error:`, error.message);
+      errorCount++;
+    }
+  }
+
+  console.log('\n=====================================');
+  console.log('Summary:');
+  console.log(`✅ Initialized: ${successCount}`);
+  console.log(`⏩ Already exists: ${skipCount}`);
+  console.log(`❌ Errors: ${errorCount}`);
+  console.log(`Total cost: ~${successCount * 0.013} SOL`);
+  console.log('\nChannels are now using ring buffers!');
+  console.log('Each channel has 10 reusable slots.');
+  console.log('No more per-epoch account creation!');
+}
+
+initializeChannels().catch(console.error);

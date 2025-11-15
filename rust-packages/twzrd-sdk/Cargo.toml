@@ -1,0 +1,22 @@
+[package]
+name = "twzrd-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Rust SDK for TWZRD Attention Oracle on Solana"
+keywords = ["solana", "attention", "oracle", "twzrd", "spl"]
+categories = ["cryptography::cryptocurrencies"]
+
+[dependencies]
+solana-sdk.workspace = true
+solana-program.workspace = true
+spl-token-2022.workspace = true
+anchor-lang.workspace = true
+borsh.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+solana-program-test = "1.18"

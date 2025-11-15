@@ -1,0 +1,13 @@
+# Surfpool configuration for MILO token testing
+[manifest]
+name = "milo-token-test"
+description = "Testing participation tree claim fix"
+
+# Deployment runbook for upgraded program
+[runbook.deploy_token_2022]
+
+[[runbook.deploy_token_2022.actions]]
+type = "svm::deploy_program"
+description = "Deploy upgraded token_2022 program with fixed participation leaf logic"
+program_path = "clean-hackathon/target/deploy/token_2022.so"
+program_id = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"

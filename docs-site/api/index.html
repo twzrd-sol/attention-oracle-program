@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Reference - TWZRD Documentation</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>API Reference</h1>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="container">
+      <a href="../">Home</a>
+      <a href="../getting-started/">Getting Started</a>
+      <a href="./">API Reference</a>
+      <a href="../cli/">CLI Docs</a>
+      <a href="../guides/">Guides</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <section>
+      <h2>TwzrdClient</h2>
+      <p>Main client class for interacting with TWZRD program.</p>
+
+      <h3>Constructor</h3>
+      <pre><code>new TwzrdClient(connection: Connection, programId?: PublicKey)</code></pre>
+      <p><strong>Parameters:</strong></p>
+      <ul>
+        <li><code>connection</code> - Solana RPC connection</li>
+        <li><code>programId</code> - Optional program ID (defaults to mainnet)</li>
+      </ul>
+
+      <h3>Methods</h3>
+
+      <h4>getChannelState()</h4>
+      <pre><code>async getChannelState(streamer: PublicKey): Promise&lt;ChannelState&gt;</code></pre>
+      <p>Fetch channel state for a given streamer.</p>
+      <p><strong>Returns:</strong> Channel state object with mint, epoch, and status info.</p>
+
+      <h4>claimTokens()</h4>
+      <pre><code>async claimTokens(user: PublicKey, channel: PublicKey): Promise&lt;string&gt;</code></pre>
+      <p>Submit a claim transaction to receive tokens.</p>
+      <p><strong>Returns:</strong> Transaction signature.</p>
+    </section>
+
+    <section>
+      <h2>Types</h2>
+
+      <h3>ChannelState</h3>
+      <pre><code>interface ChannelState {
+  streamer: PublicKey;
+  mint: PublicKey;
+  currentEpoch: number;
+  totalMinted: bigint;
+  active: boolean;
+}</code></pre>
+
+      <h3>ClaimData</h3>
+      <pre><code>interface ClaimData {
+  user: PublicKey;
+  channel: PublicKey;
+  amount: bigint;
+  timestamp: number;
+}</code></pre>
+    </section>
+
+    <section>
+      <h2>Program Instructions</h2>
+
+      <h3>initialize_channel</h3>
+      <p>Initialize a new channel for a streamer.</p>
+      <pre><code>Accounts:
+- channel: Channel PDA (writable)
+- mint: Token mint (writable)
+- streamer: Streamer authority (signer)
+- system_program: System program</code></pre>
+
+      <h3>claim</h3>
+      <p>Claim tokens for verified presence.</p>
+      <pre><code>Accounts:
+- channel: Channel PDA (writable)
+- mint: Token mint (writable)
+- user: User wallet (signer)
+- user_token_account: User's token account (writable)
+- token_program: Token-2022 program</code></pre>
+
+      <h3>close_channel_state</h3>
+      <p>Close channel and recover rent (admin only).</p>
+      <pre><code>Accounts:
+- channel: Channel PDA (writable)
+- authority: Admin authority (signer)
+- receiver: Rent receiver (writable)</code></pre>
+    </section>
+
+    <section>
+      <h2>Error Codes</h2>
+      <ul>
+        <li><code>0x1770</code> - Unauthorized</li>
+        <li><code>0x1771</code> - AlreadyClaimed</li>
+        <li><code>0x1772</code> - ChannelInactive</li>
+        <li><code>0x1773</code> - InvalidEpoch</li>
+        <li><code>0x1774</code> - ExcessiveEmissions</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>Built in Houston, TX · MIT License · <a href="mailto:dev@twzrd.xyz">dev@twzrd.xyz</a></p>
+      <p>TWZRD™ is a trademark of TWZRD Inc.</p>
+    </div>
+  </footer>
+</body>
+</html>

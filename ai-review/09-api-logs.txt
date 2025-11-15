@@ -1,0 +1,6 @@
+🚀 CHAT Claim API running on http://localhost:3000
+
+📍 Endpoints:
+  GET  /api/eligibility?username=test_user
+  POST /api/claim
+  GET  /health

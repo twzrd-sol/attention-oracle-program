@@ -1,0 +1,272 @@
+#!/usr/bin/env ts-node
+/**
+ * 🏎️ LaFerrari RPC Benchmark - LIGHTNING MODE
+ *
+ * Measures RPC performance across multiple endpoints:
+ * - Helius LaFerrari (Premium)
+ * - Helius (Fallback)
+ * - Public Mainnet
+ *
+ * Tests:
+ * 1. getLatestBlockhash (most common operation)
+ * 2. getAccountInfo (MILO treasury)
+ * 3. getTokenAccountBalance (MILO ATA)
+ * 4. getMultipleAccounts (batch operation)
+ * 5. getProgramAccounts (heavy query)
+ */
+
+import { Connection, PublicKey, Commitment } from '@solana/web3.js';
+
+const TESTS = {
+  ITERATIONS: parseInt(process.env.ITERATIONS || '10', 10),
+  COMMITMENT: 'confirmed' as Commitment,
+};
+
+const ENDPOINTS = {
+  laferrari: process.env.RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+  helius: process.env.RPC_URL_HELIUS_FALLBACK || 'https://mainnet.helius-rpc.com/?api-key=f494919d-87b0-4f0d-a8a3-f3c05d5e17ee',
+  public: 'https://api.mainnet-beta.solana.com',
+};
+
+// MILO Test Accounts
+const MILO_PROGRAM = new PublicKey('6DoHCzhmWGDYCvPoADqNfRD8kgVex226LtmUH26v1cLX');
+const MILO_TREASURY = new PublicKey('FESHVgdUHwB24HjHjz5cmGWbDgba4DJj7A3RD3QeLqT7');
+const MILO_MINT = new PublicKey('9FTs5rJKc8W7njVHwctoZWfyU47KrxXJ4eFFW2FWDyZC');
+
+interface BenchmarkResult {
+  endpoint: string;
+  test: string;
+  iterations: number;
+  totalMs: number;
+  avgMs: number;
+  minMs: number;
+  maxMs: number;
+  p95Ms?: number;
+  p99Ms?: number;
+  successRate: number;
+}
+
+async function benchmarkLatestBlockhash(
+  connection: Connection,
+  iterations: number
+): Promise<number[]> {
+  const times: number[] = [];
+  for (let i = 0; i < iterations; i++) {
+    const start = performance.now();
+    await connection.getLatestBlockhash(TESTS.COMMITMENT);
+    times.push(performance.now() - start);
+  }
+  return times;
+}
+
+async function benchmarkGetAccountInfo(
+  connection: Connection,
+  iterations: number,
+  account: PublicKey
+): Promise<number[]> {
+  const times: number[] = [];
+  for (let i = 0; i < iterations; i++) {
+    const start = performance.now();
+    await connection.getAccountInfo(account, TESTS.COMMITMENT);
+    times.push(performance.now() - start);
+  }
+  return times;
+}
+
+async function benchmarkGetMultipleAccounts(
+  connection: Connection,
+  iterations: number,
+  accounts: PublicKey[]
+): Promise<number[]> {
+  const times: number[] = [];
+  for (let i = 0; i < iterations; i++) {
+    const start = performance.now();
+    await connection.getMultipleAccountsInfo(accounts, TESTS.COMMITMENT);
+    times.push(performance.now() - start);
+  }
+  return times;
+}
+
+async function benchmarkGetProgramAccounts(
+  connection: Connection,
+  iterations: number,
+  programId: PublicKey
+): Promise<number[]> {
+  const times: number[] = [];
+  for (let i = 0; i < iterations; i++) {
+    const start = performance.now();
+    await connection.getProgramAccounts(programId, {
+      commitment: TESTS.COMMITMENT,
+      filters: [{ dataSize: 100 }], // Limit results
+    });
+    times.push(performance.now() - start);
+  }
+  return times;
+}
+
+function calculateStats(times: number[]): Omit<BenchmarkResult, 'endpoint' | 'test' | 'successRate'> {
+  const sorted = [...times].sort((a, b) => a - b);
+  const total = times.reduce((a, b) => a + b, 0);
+  const p95 = sorted[Math.floor(sorted.length * 0.95)];
+  const p99 = sorted[Math.floor(sorted.length * 0.99)];
+  return {
+    iterations: times.length,
+    totalMs: Math.round(total),
+    avgMs: Math.round(total / times.length),
+    minMs: Math.round(Math.min(...times)),
+    maxMs: Math.round(Math.max(...times)),
+    p95Ms: Math.round(p95 || 0),
+    p99Ms: Math.round(p99 || 0),
+  };
+}
+
+async function runBenchmark(
+  name: string,
+  endpoint: string,
+  testFn: (conn: Connection) => Promise<number[]>
+): Promise<BenchmarkResult> {
+  const connection = new Connection(endpoint, TESTS.COMMITMENT);
+  console.log(`  ⚡ Running ${name}...`);
+
+  try {
+    const times = await testFn(connection);
+    const stats = calculateStats(times);
+
+    return {
+      endpoint: endpoint.split('/')[2].split('.')[0], // Extract domain
+      test: name,
+      successRate: 100,
+      ...stats,
+    };
+  } catch (error) {
+    console.error(`  ❌ Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    return {
+      endpoint: endpoint.split('/')[2].split('.')[0],
+      test: name,
+      iterations: 0,
+      totalMs: 0,
+      avgMs: 0,
+      minMs: 0,
+      maxMs: 0,
+      successRate: 0,
+    };
+  }
+}
+
+function printResults(results: BenchmarkResult[]) {
+  console.log('\n╔═══════════════════════════════════════════════════════════════════════╗');
+  console.log('║                   🏎️  RPC BENCHMARK RESULTS                           ║');
+  console.log('╚═══════════════════════════════════════════════════════════════════════╝\n');
+
+  const groupedByTest = results.reduce((acc, result) => {
+    if (!acc[result.test]) acc[result.test] = [];
+    acc[result.test].push(result);
+    return acc;
+  }, {} as Record<string, BenchmarkResult[]>);
+
+  Object.entries(groupedByTest).forEach(([test, testResults]) => {
+    console.log(`\n📊 ${test}`);
+    console.log('─'.repeat(75));
+
+    // Sort by avgMs
+    const sorted = testResults.sort((a, b) => a.avgMs - b.avgMs);
+    const fastest = sorted[0];
+
+    sorted.forEach((result, idx) => {
+      const rank = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉';
+      const speedup = fastest.avgMs > 0
+        ? ((result.avgMs / fastest.avgMs - 1) * 100).toFixed(0)
+        : '0';
+      const speedupStr = idx === 0 ? '' : ` (+${speedup}% slower)`;
+
+      console.log(
+        `${rank} ${result.endpoint.padEnd(20)} | ` +
+        `Avg: ${result.avgMs.toString().padStart(5)}ms | ` +
+        `P95: ${String(result.p95Ms ?? 0).padStart(5)}ms | ` +
+        `P99: ${String(result.p99Ms ?? 0).padStart(5)}ms | ` +
+        `Min: ${result.minMs.toString().padStart(5)}ms | ` +
+        `Max: ${result.maxMs.toString().padStart(5)}ms` +
+        speedupStr
+      );
+    });
+  });
+
+  console.log('\n╔═══════════════════════════════════════════════════════════════════════╗');
+  console.log('║                        OVERALL WINNER                                 ║');
+  console.log('╚═══════════════════════════════════════════════════════════════════════╝\n');
+
+  const avgByEndpoint = results.reduce((acc, r) => {
+    if (!acc[r.endpoint]) acc[r.endpoint] = [];
+    acc[r.endpoint].push(r.avgMs);
+    return acc;
+  }, {} as Record<string, number[]>);
+
+  const overallAvg = Object.entries(avgByEndpoint)
+    .map(([endpoint, avgs]) => ({
+      endpoint,
+      avgMs: Math.round(avgs.reduce((a, b) => a + b, 0) / avgs.length),
+    }))
+    .sort((a, b) => a.avgMs - b.avgMs);
+
+  overallAvg.forEach((result, idx) => {
+    const icon = idx === 0 ? '🏆' : idx === 1 ? '🥈' : '🥉';
+    console.log(`${icon} ${result.endpoint.padEnd(20)} | Overall Avg: ${result.avgMs}ms`);
+  });
+
+  console.log('');
+}
+
+async function main() {
+  console.log('🏎️💨 LAFERRARI RPC BENCHMARK - LIGHTNING MODE 💨🏎️\n');
+  console.log(`Iterations per test: ${TESTS.ITERATIONS}`);
+  console.log(`Commitment level: ${TESTS.COMMITMENT}\n`);
+
+  const results: BenchmarkResult[] = [];
+
+  for (const [name, endpoint] of Object.entries(ENDPOINTS)) {
+    console.log(`\n🔥 Testing ${name.toUpperCase()} (${endpoint.split('/')[2]})\n`);
+
+    // Test 1: getLatestBlockhash
+    results.push(
+      await runBenchmark('getLatestBlockhash', endpoint, (conn) =>
+        benchmarkLatestBlockhash(conn, TESTS.ITERATIONS)
+      )
+    );
+
+    // Test 2: getAccountInfo
+    results.push(
+      await runBenchmark('getAccountInfo (Treasury)', endpoint, (conn) =>
+        benchmarkGetAccountInfo(conn, TESTS.ITERATIONS, MILO_TREASURY)
+      )
+    );
+
+    // Test 3: getMultipleAccounts
+    results.push(
+      await runBenchmark('getMultipleAccounts (3 accounts)', endpoint, (conn) =>
+        benchmarkGetMultipleAccounts(conn, Math.max(3, Math.floor(TESTS.ITERATIONS / 2)), [
+          MILO_TREASURY,
+          MILO_MINT,
+          MILO_PROGRAM,
+        ])
+      )
+    );
+
+    // Test 4: getProgramAccounts (optional heavy test)
+    if (process.env.INCLUDE_HEAVY === '1') {
+      results.push(
+        await runBenchmark('getProgramAccounts (filtered)', endpoint, (conn) =>
+          benchmarkGetProgramAccounts(conn, Math.max(2, Math.floor(TESTS.ITERATIONS / 5)), MILO_PROGRAM)
+        )
+      );
+    }
+  }
+
+  printResults(results);
+
+  console.log('✅ Benchmark complete!\n');
+}
+
+main().catch((error) => {
+  console.error('Fatal error:', error);
+  process.exit(1);
+});

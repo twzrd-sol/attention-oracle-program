@@ -1,0 +1,132 @@
+#!/usr/bin/env tsx
+/**
+ * Helius vs Helius - Head to Head Benchmark
+ * Focus on common operations, no heavy queries
+ */
+
+import { Connection, PublicKey } from '@solana/web3.js';
+
+const ITERATIONS = parseInt(process.env.ITERATIONS || '50', 10);
+
+const ENDPOINTS = {
+  Helius: 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+  helius: 'https://mainnet.helius-rpc.com/?api-key=f494919d-87b0-4f0d-a8a3-f3c05d5e17ee',
+};
+
+const TEST_ACCOUNT = new PublicKey('FESHVgdUHwB24HjHjz5cmGWbDgba4DJj7A3RD3QeLqT7');
+
+interface Stats {
+  min: number;
+  max: number;
+  avg: number;
+  median: number;
+  p95: number;
+  p99: number;
+}
+
+function calculateStats(times: number[]): Stats {
+  const sorted = [...times].sort((a, b) => a - b);
+  const sum = times.reduce((a, b) => a + b, 0);
+  return {
+    min: Math.round(sorted[0]),
+    max: Math.round(sorted[sorted.length - 1]),
+    avg: Math.round(sum / times.length),
+    median: Math.round(sorted[Math.floor(sorted.length / 2)]),
+    p95: Math.round(sorted[Math.floor(sorted.length * 0.95)]),
+    p99: Math.round(sorted[Math.floor(sorted.length * 0.99)]),
+  };
+}
+
+async function benchmarkEndpoint(name: string, url: string) {
+  console.log(`\n🔥 Testing ${name}...`);
+  const conn = new Connection(url, 'confirmed');
+
+  // Test 1: getLatestBlockhash
+  console.log('  ⚡ getLatestBlockhash...');
+  const blockhashTimes: number[] = [];
+  for (let i = 0; i < ITERATIONS; i++) {
+    const start = performance.now();
+    await conn.getLatestBlockhash('confirmed');
+    blockhashTimes.push(performance.now() - start);
+  }
+
+  // Test 2: getAccountInfo
+  console.log('  ⚡ getAccountInfo...');
+  const accountTimes: number[] = [];
+  for (let i = 0; i < ITERATIONS; i++) {
+    const start = performance.now();
+    await conn.getAccountInfo(TEST_ACCOUNT, 'confirmed');
+    accountTimes.push(performance.now() - start);
+  }
+
+  // Test 3: getBalance
+  console.log('  ⚡ getBalance...');
+  const balanceTimes: number[] = [];
+  for (let i = 0; i < ITERATIONS; i++) {
+    const start = performance.now();
+    await conn.getBalance(TEST_ACCOUNT, 'confirmed');
+    balanceTimes.push(performance.now() - start);
+  }
+
+  return {
+    getLatestBlockhash: calculateStats(blockhashTimes),
+    getAccountInfo: calculateStats(accountTimes),
+    getBalance: calculateStats(balanceTimes),
+  };
+}
+
+async function main() {
+  console.log('╔══════════════════════════════════════════════════════════╗');
+  console.log('║     SYNDICA vs HELIUS - HEAD TO HEAD BENCHMARK          ║');
+  console.log('╚══════════════════════════════════════════════════════════╝');
+  console.log(`\nIterations: ${ITERATIONS}`);
+  console.log('Commitment: confirmed');
+  console.log('Region: Mainnet');
+
+  const syndicaResults = await benchmarkEndpoint('Helius LaFerrari', ENDPOINTS.Helius);
+  const heliusResults = await benchmarkEndpoint('Helius', ENDPOINTS.helius);
+
+  console.log('\n╔══════════════════════════════════════════════════════════╗');
+  console.log('║                      RESULTS                             ║');
+  console.log('╚══════════════════════════════════════════════════════════╝\n');
+
+  const tests = ['getLatestBlockhash', 'getAccountInfo', 'getBalance'] as const;
+
+  tests.forEach((test) => {
+    const s = syndicaResults[test];
+    const h = heliusResults[test];
+    const speedup = ((h.avg - s.avg) / h.avg * 100).toFixed(0);
+    const winner = s.avg < h.avg ? 'Helius' : 'Helius';
+
+    console.log(`\n📊 ${test}`);
+    console.log('─'.repeat(60));
+    console.log(`${'Metric'.padEnd(15)} | ${'Helius'.padStart(10)} | ${'Helius'.padStart(10)} | Winner`);
+    console.log('─'.repeat(60));
+    console.log(`${'Avg'.padEnd(15)} | ${s.avg.toString().padStart(8)}ms | ${h.avg.toString().padStart(8)}ms | ${winner}`);
+    console.log(`${'Median'.padEnd(15)} | ${s.median.toString().padStart(8)}ms | ${h.median.toString().padStart(8)}ms |`);
+    console.log(`${'P95'.padEnd(15)} | ${s.p95.toString().padStart(8)}ms | ${h.p95.toString().padStart(8)}ms |`);
+    console.log(`${'P99'.padEnd(15)} | ${s.p99.toString().padStart(8)}ms | ${h.p99.toString().padStart(8)}ms |`);
+    console.log(`${'Min'.padEnd(15)} | ${s.min.toString().padStart(8)}ms | ${h.min.toString().padStart(8)}ms |`);
+    console.log(`${'Max'.padEnd(15)} | ${s.max.toString().padStart(8)}ms | ${h.max.toString().padStart(8)}ms |`);
+    console.log(`\n${winner} is ${Math.abs(Number(speedup))}% ${s.avg < h.avg ? 'faster' : 'slower'}`);
+  });
+
+  // Overall winner
+  const syndicaOverall = (syndicaResults.getLatestBlockhash.avg + syndicaResults.getAccountInfo.avg + syndicaResults.getBalance.avg) / 3;
+  const heliusOverall = (heliusResults.getLatestBlockhash.avg + heliusResults.getAccountInfo.avg + heliusResults.getBalance.avg) / 3;
+  const overallSpeedup = ((heliusOverall - syndicaOverall) / heliusOverall * 100).toFixed(0);
+
+  console.log('\n╔══════════════════════════════════════════════════════════╗');
+  console.log('║                   OVERALL WINNER                         ║');
+  console.log('╚══════════════════════════════════════════════════════════╝\n');
+  console.log(`Helius avg: ${Math.round(syndicaOverall)}ms`);
+  console.log(`Helius avg:  ${Math.round(heliusOverall)}ms\n`);
+
+  if (syndicaOverall < heliusOverall) {
+    console.log(`🏆 Helius is ${overallSpeedup}% faster overall\n`);
+  } else {
+    console.log(`🏆 Helius is ${Math.abs(Number(overallSpeedup))}% faster overall\n`);
+  }
+}
+
+main().catch(console.error);

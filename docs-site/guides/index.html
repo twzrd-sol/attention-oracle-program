@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guides - TWZRD Documentation</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Integration Guides</h1>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="container">
+      <a href="../">Home</a>
+      <a href="../getting-started/">Getting Started</a>
+      <a href="../api/">API Reference</a>
+      <a href="../cli/">CLI Docs</a>
+      <a href="./">Guides</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <section>
+      <h2>Available Guides</h2>
+
+      <div class="feature-grid">
+        <div class="feature">
+          <h3>🎯 Streamer Integration</h3>
+          <p>Set up TWZRD for your Twitch channel and start distributing attention tokens to your viewers.</p>
+          <a href="#streamer-guide">Read Guide →</a>
+        </div>
+
+        <div class="feature">
+          <h3>🔧 Developer Integration</h3>
+          <p>Integrate TWZRD SDK into your dApp or analytics platform.</p>
+          <a href="#developer-guide">Read Guide →</a>
+        </div>
+
+        <div class="feature">
+          <h3>🌐 Web3 Wallet Setup</h3>
+          <p>Connect your Solana wallet to claim attention tokens.</p>
+          <a href="#wallet-guide">Read Guide →</a>
+        </div>
+
+        <div class="feature">
+          <h3>⚡ Advanced Usage</h3>
+          <p>Custom epochs, bulk claims, and programmatic access patterns.</p>
+          <a href="#advanced-guide">Read Guide →</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="streamer-guide">
+      <h2>Streamer Integration Guide</h2>
+
+      <h3>1. Prerequisites</h3>
+      <ul>
+        <li>Twitch account</li>
+        <li>Solana wallet (Phantom, Solflare, etc.)</li>
+        <li>Small amount of SOL for transactions</li>
+      </ul>
+
+      <h3>2. Initialize Your Channel</h3>
+      <p>Contact TWZRD team to initialize your channel:</p>
+      <pre><code>Email: dev@twzrd.xyz
+Subject: Channel Initialization Request
+Include: Twitch username, Solana wallet address</code></pre>
+
+      <h3>3. Share Claim Link</h3>
+      <p>Once initialized, share your claim link with viewers:</p>
+      <pre><code>https://twzrd.xyz/claim.html?channel=[YOUR_CHANNEL_ID]</code></pre>
+
+      <h3>4. Monitor Your Channel</h3>
+      <pre><code>twzrd channel [YOUR_PUBKEY]</code></pre>
+    </section>
+
+    <section id="developer-guide">
+      <h2>Developer Integration Guide</h2>
+
+      <h3>1. Install SDK</h3>
+      <pre><code>npm install @twzrd/sdk @solana/web3.js</code></pre>
+
+      <h3>2. Initialize Client</h3>
+      <pre><code>import { TwzrdClient } from '@twzrd/sdk';
+import { Connection } from '@solana/web3.js';
+
+const connection = new Connection(
+  process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'
+);
+const client = new TwzrdClient(connection);</code></pre>
+
+      <h3>3. Fetch Channel Data</h3>
+      <pre><code>const channelState = await client.getChannelState(streamerPubkey);
+console.log('Current epoch:', channelState.currentEpoch);
+console.log('Total minted:', channelState.totalMinted.toString());</code></pre>
+
+      <h3>4. Handle Claims</h3>
+      <pre><code>try {
+  const signature = await client.claimTokens(userPubkey, channelPubkey);
+  console.log('Claim successful:', signature);
+} catch (error) {
+  console.error('Claim failed:', error.message);
+}</code></pre>
+    </section>
+
+    <section id="wallet-guide">
+      <h2>Wallet Setup Guide</h2>
+
+      <h3>1. Install a Solana Wallet</h3>
+      <ul>
+        <li><a href="https://phantom.app" target="_blank">Phantom</a> (Recommended)</li>
+        <li><a href="https://solflare.com" target="_blank">Solflare</a></li>
+        <li><a href="https://backpack.app" target="_blank">Backpack</a></li>
+      </ul>
+
+      <h3>2. Get Some SOL</h3>
+      <p>You'll need a small amount of SOL for transaction fees. Purchase from:</p>
+      <ul>
+        <li>Coinbase</li>
+        <li>Binance</li>
+        <li>Jupiter (swap from other tokens)</li>
+      </ul>
+
+      <h3>3. Connect to TWZRD</h3>
+      <ol>
+        <li>Visit <a href="https://twzrd.xyz/claim.html">twzrd.xyz/claim.html</a></li>
+        <li>Click "Connect Wallet"</li>
+        <li>Approve connection in your wallet</li>
+        <li>Authenticate with Twitch</li>
+        <li>Claim your tokens!</li>
+      </ol>
+    </section>
+
+    <section id="advanced-guide">
+      <h2>Advanced Usage</h2>
+
+      <h3>Batch Processing</h3>
+      <pre><code>// Process multiple channels
+const channels = [pubkey1, pubkey2, pubkey3];
+const states = await Promise.all(
+  channels.map(ch => client.getChannelState(ch))
+);
+
+states.forEach((state, i) => {
+  console.log(`Channel ${i}: Epoch ${state.currentEpoch}`);
+});</code></pre>
+
+      <h3>Custom Program Interaction</h3>
+      <pre><code>import { TwzrdClient, PROGRAM_ID } from '@twzrd/sdk';
+import { PublicKey, TransactionInstruction } from '@solana/web3.js';
+
+// Derive channel PDA
+const [channelPDA] = PublicKey.findProgramAddressSync(
+  [Buffer.from('channel'), streamerPubkey.toBuffer()],
+  PROGRAM_ID
+);</code></pre>
+
+      <h3>Monitoring Events</h3>
+      <pre><code>// Subscribe to account changes
+connection.onAccountChange(
+  channelPDA,
+  (accountInfo) => {
+    console.log('Channel state updated:', accountInfo);
+  },
+  'confirmed'
+);</code></pre>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>Built in Houston, TX · MIT License · <a href="mailto:dev@twzrd.xyz">dev@twzrd.xyz</a></p>
+      <p>TWZRD™ is a trademark of TWZRD Inc.</p>
+    </div>
+  </footer>
+</body>
+</html>

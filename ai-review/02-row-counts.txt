@@ -1,0 +1,10 @@
+      table_name       |  rows   
+-----------------------+---------
+ channel_participation | 2738092
+ sealed_participants   |  961564
+ claimable_allocations |   22447
+ twitch_events_raw     |   11790
+ user_mapping          |    9618
+ sealed_epochs         |    1230
+(6 rows)
+

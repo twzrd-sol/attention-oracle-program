@@ -1,0 +1,278 @@
+═══════════════════════════════════════════════════════════════════════════════
+    CRITICAL FILES & OUTPUTS FOR AI REVIEW
+    Attention Oracle: 9K → 100K+ Users Scaling Plan
+═══════════════════════════════════════════════════════════════════════════════
+
+LOCATION: /home/twzrd/milo-token/ai-review/
+
+TOTAL SIZE: ~130 KB (perfect for Claude paste or email)
+READ TIME: 45-60 minutes for thorough review
+
+───────────────────────────────────────────────────────────────────────────────
+QUICK START: What to Give AI
+───────────────────────────────────────────────────────────────────────────────
+
+For a quick 15-minute AI review:
+1. ai-review/00-README.md (this overview + 15 questions)
+2. ai-review/11-expansion-strategy.md (scaling plan)
+3. ai-review/02-row-counts.txt (current data state)
+
+For a thorough 60-minute deep dive:
+All files listed below + SYSTEM_ARCHITECTURE.md in repo root
+
+───────────────────────────────────────────────────────────────────────────────
+COMPLETE FILE MANIFEST
+───────────────────────────────────────────────────────────────────────────────
+
+📋 OVERVIEW & STRATEGY
+  ✓ 00-README.md (7.6 KB)
+    Purpose: Guide for AI reviewer with 15 key questions
+    Read first
+    Covers: Current state, expansion plan, review checklist
+
+  ✓ 11-expansion-strategy.md (7.1 KB)
+    Purpose: Detailed scaling plan (9K → 100K → 300K)
+    Contains: SQL formulas, risk assessment, validation queries
+    Read with 00-README.md
+
+📊 DATABASE & DIAGNOSTICS
+  ✓ 01-db-inventory.txt (1.8 KB)
+    Purpose: Table sizes, structure, storage usage
+    Key finding: 2.87 GB user_signals, 752 MB channel_participation
+
+  ✓ 02-row-counts.txt (276 B)
+    Purpose: Current eligible user count + related tables
+    Key numbers: 9,318 users, 22,447 allocations, 2.24M CHAT
+    This is your single source of truth for launch baseline
+
+💻 SOURCE CODE (API & Aggregator)
+  ✓ 03-server.ts (24 KB)
+    Purpose: Main claim API (Express.js)
+    Key sections: /api/claim, /api/eligibility, Solana integration
+    AI should check: Rate limiting, transaction signing, error handling
+
+  ✓ 04-claim.ts (6.3 KB)
+    Purpose: Solana transaction builder
+    Key sections: Mint authority, token transfer logic
+    AI should check: Key management, fee estimation, retry logic
+
+  ✓ 05-eligibility.ts (4.5 KB)
+    Purpose: User eligibility check logic
+    Key sections: Suppression list enforcement, allocation lookup
+    AI should check: SQL injection risk, performance
+
+  ✓ 06-irc-collector.ts (13 KB)
+    Purpose: Live username ingestion from Twitch IRC
+    Key sections: Channel connection, event parsing, DB persistence
+    AI should check: Username extraction (special chars), throughput, crash recovery
+
+🔧 SYSTEM STATUS
+  ✓ 07-pm2-status.txt (4.3 KB)
+    Purpose: Current running processes (PM2 list)
+    Shows: cls-aggregator, workers, tree-builder, epoch-watcher status
+    Key insight: Gateway has 567 restarts (RPC flakiness), acceptable for launch
+
+📋 LOGS & DIAGNOSTICS
+  ✓ 08-aggregator-logs.txt (26 KB)
+    Purpose: Recent cls-aggregator activity
+    Shows: Tree finalization for epochs, ingestion processing
+    AI should scan for: Errors, connection issues, throughput metrics
+
+  ✓ 09-api-logs.txt (146 B)
+    Purpose: Claim API health check
+    Shows: Server running, endpoints live
+
+  ✓ 10-irc-logs.txt (81 B)
+    Purpose: IRC collector status
+    Shows: Connected to channels, collecting events
+
+───────────────────────────────────────────────────────────────────────────────
+ALSO PROVIDED (Repository Root)
+───────────────────────────────────────────────────────────────────────────────
+
+  • SYSTEM_ARCHITECTURE.md (12 KB)
+    Complete system map: databases, services, data flow, deployment status
+
+  • ARCHITECTURE_DIAGRAM.txt (visual system layout with ASCII art)
+
+  • AI_REVIEW_KIT.md (comprehensive guide with export commands)
+
+───────────────────────────────────────────────────────────────────────────────
+HOW TO SHARE WITH AI
+───────────────────────────────────────────────────────────────────────────────
+
+Option 1: Paste into Claude (Recommended for <500 KB)
+  cd /home/twzrd/milo-token/ai-review
+  # Select all files, copy-paste with prompt:
+
+  Prompt:
+  """
+  Review this Solana-based Attention Oracle system for scaling from 9,318 to
+  100K+ eligible users.
+
+  Focus on:
+  1. Database performance (will 150K new allocations cause lag?)
+  2. Expansion logic correctness (is formula optimal?)
+  3. Supply safety (17M new CHAT, is it acceptable?)
+  4. Security (rate limiting, double-claim prevention, key management)
+  5. Live data ingestion (can IRC scale to 20 channels?)
+
+  Flag any critical blockers. Confidence score for launch?
+  """
+
+Option 2: Create GitHub Gist (Private link)
+  gh gist create --private ai-review/*.md ai-review/*.ts ai-review/*.txt
+  # Share link with security team
+
+Option 3: Send as ZIP (Email / Slack)
+  cd /home/twzrd/milo-token
+  zip -r ai-review-kit.zip ai-review/
+  # Email to team for async review
+
+Option 4: LaunchPad Script (Auto-generate summary)
+  cat ai-review/00-README.md ai-review/11-expansion-strategy.md | \
+    pbcopy  # macOS
+  # Paste into any markdown viewer / email client
+
+───────────────────────────────────────────────────────────────────────────────
+KEY CONTEXT FOR AI REVIEWER
+───────────────────────────────────────────────────────────────────────────────
+
+CURRENT STATE
+• Launch timeline: 24-48 hours
+• Eligible users: 9,318 (ready to claim)
+• CHAT tokens: 2.24M staged
+• Infrastructure: DigitalOcean (8 vCPU, 32GB RAM, 640GB SSD)
+• Database: PostgreSQL 14 (local) + PostgreSQL 16 (DO)
+• On-chain: Solana Mainnet (live, tested)
+
+GOAL: Scale to 100K+ users before viral spike
+
+EXPANSION PLAN (3 phases)
+1. TODAY: Backfill 150K mapped users (~5 min SQL)
+2. WEEK 1: Scale IRC collector (20 channels, +2K users/day)
+3. MONTH 1: Viral loop (leaderboard, community imports, +150K)
+
+CRITICAL DECISION POINT
+• Formula for allocation: 100 + (participation_count × 10), cap 1000
+  → Is this optimal? Does it favor high-volume channels unfairly?
+  → Should we tier differently?
+
+SUPPLY QUESTION
+• We're adding ~17M CHAT tokens (Phase 1)
+• Total would be ~19.2M staged (of uncapped mint)
+• Is this acceptable for launch?
+
+───────────────────────────────────────────────────────────────────────────────
+AI REVIEW DELIVERABLES (Expected)
+───────────────────────────────────────────────────────────────────────────────
+
+After 45-60 min review, AI should provide:
+
+1. BLOCKERS (if any)
+   • Critical issues that prevent 100K launch
+   • Suggested fixes with priority
+
+2. RECOMMENDATIONS (3-5 top optimizations)
+   • Database indexes
+   • Rate limiting
+   • Crash recovery
+   • Scaling to 1M users
+
+3. CONFIDENCE SCORE
+   • 1-10 score for 100K launch readiness
+   • Expected: 8-9/10
+
+4. GO-LIVE CHECKLIST
+   • Pre-launch verification steps
+   • Monitoring dashboard queries
+   • Rollback procedures
+
+5. POST-LAUNCH PRIORITIES
+   • Which fixes to apply first
+   • Which can wait for v2
+
+───────────────────────────────────────────────────────────────────────────────
+IMPORTANT: NOT IN THIS KIT (Secure Storage)
+───────────────────────────────────────────────────────────────────────────────
+
+⛔ Solana keypairs (location: ~/.keys/)
+⛔ DigitalOcean credentials (in .env, not shared)
+⛔ Twitch OAuth tokens (in .env, not shared)
+⛔ RPC API keys (in .env, not shared)
+
+All of above are redacted from ai-review files for security.
+
+───────────────────────────────────────────────────────────────────────────────
+COMMON QUESTIONS FOR AI REVIEWER
+───────────────────────────────────────────────────────────────────────────────
+
+Q: "Will the database handle 150K inserts?"
+A: Review 01-db-inventory.txt + 03-server.ts for current structure
+
+Q: "Is the allocation formula fair?"
+A: Review 11-expansion-strategy.md + AI should run simulations
+
+Q: "Can we scale IRC to 20 channels?"
+A: Review 06-irc-collector.ts + 10-irc-logs.txt for current throughput
+
+Q: "What about security?"
+A: Review 03-server.ts, 04-claim.ts for rate limiting, key management
+
+Q: "What happens if we hit 1M users?"
+A: 11-expansion-strategy.md has scaling targets (expected high priority)
+
+───────────────────────────────────────────────────────────────────────────────
+NEXT STEPS (For You)
+───────────────────────────────────────────────────────────────────────────────
+
+1. SHARE THIS KIT
+   cp -r ai-review/ ~/Desktop/  # Or paste URL
+   # Send to your AI reviewer (Claude, security team, etc.)
+
+2. COLLECT FEEDBACK
+   # Set a 1-hour SLA for initial review
+   # Flag any "critical" or "high" severity items
+
+3. TRIAGE BLOCKERS
+   # If any blockers found, fix before launch
+   # Medium/low items can be post-launch
+
+4. EXECUTE BACKFILL
+   # Run expansion SQL (Phase 1)
+   # Verify 150K users in claimable_allocations
+   # Launch with announcement
+
+5. SCALE IRC
+   # Week 1: Expand to 20 channels
+   # Monitor new user inflow
+   # Ramp allocation as needed
+
+6. VIRALITY
+   # Month 1: Leaderboard + community imports
+   # Target 300K users
+   # Monitor supply/inflation
+
+───────────────────────────────────────────────────────────────────────────────
+CONTACT & FEEDBACK
+───────────────────────────────────────────────────────────────────────────────
+
+If AI reviewer finds blockers:
+1. Share findings with team
+2. Assign owner + deadline
+3. Track in GitHub issues
+4. Verify fix before launch
+
+If all clear:
+1. Celebrate! 🚀
+2. Run Phase 1 backfill immediately
+3. Go live with 150K announcement
+4. Scale per Phase 2/3 timeline
+
+───────────────────────────────────────────────────────────────────────────────
+
+Last Updated: 2025-11-12 00:54 UTC
+System Status: ✅ LAUNCH-READY (pending AI review)
+Expected Launch: Today or Tomorrow
+
+Good luck! 🚀💎

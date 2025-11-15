@@ -1,0 +1,131 @@
+#!/usr/bin/env tsx
+/**
+ * Fund the OPEN protocol treasury ATA
+ */
+
+import fs from 'fs';
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  Transaction,
+  sendAndConfirmTransaction,
+} from '@solana/web3.js';
+import {
+  TOKEN_2022_PROGRAM_ID,
+  getAssociatedTokenAddress,
+  createAssociatedTokenAccountInstruction,
+  mintTo,
+  getAccount,
+} from '@solana/spl-token';
+
+const RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+const PROGRAM_ID = new PublicKey('4rArjoSZKrYkoE7hkvZNBP2Wpxovr78cfkxBnNwFNPn5');
+const MINT = new PublicKey('AAHd7u22jCMgmbF7ATkiY3BhkifD4MN3Vbsy4eYQGWN5');
+
+// Load oracle keypair (has mint authority)
+const oracleKeypair = Keypair.fromSecretKey(
+  new Uint8Array(JSON.parse(fs.readFileSync(process.env.HOME + '/.config/solana/oracle-authority.json', 'utf8')))
+);
+
+console.log('💰 Fund OPEN Protocol Treasury');
+console.log('==============================');
+console.log('Mint Authority:', oracleKeypair.publicKey.toBase58());
+
+async function main() {
+  const connection = new Connection(RPC_URL, 'confirmed');
+
+  // OPEN protocol state (keyed by mint)
+  const [openProtocolPDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('protocol'), MINT.toBuffer()],
+    PROGRAM_ID
+  );
+
+  // Singleton protocol state (original treasury with funds)
+  const [singletonProtocolPDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('protocol')],
+    PROGRAM_ID
+  );
+
+  console.log(`\n📍 Protocol States:`);
+  console.log(`  Singleton: ${singletonProtocolPDA.toBase58()}`);
+  console.log(`  OPEN:      ${openProtocolPDA.toBase58()}`);
+
+  // Get ATAs
+  const singletonATA = await getAssociatedTokenAddress(
+    MINT,
+    singletonProtocolPDA,
+    true,
+    TOKEN_2022_PROGRAM_ID
+  );
+
+  const openATA = await getAssociatedTokenAddress(
+    MINT,
+    openProtocolPDA,
+    true,
+    TOKEN_2022_PROGRAM_ID
+  );
+
+  console.log(`\n📍 Treasury ATAs:`);
+  console.log(`  Singleton ATA: ${singletonATA.toBase58()}`);
+  console.log(`  OPEN ATA:      ${openATA.toBase58()}`);
+
+  // Check balances
+  const singletonAccount = await getAccount(connection, singletonATA, 'confirmed', TOKEN_2022_PROGRAM_ID);
+  console.log(`\n💰 Singleton Balance: ${Number(singletonAccount.amount) / 1e9} MILO`);
+
+  let openATAExists = false;
+  try {
+    const openAccount = await getAccount(connection, openATA, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    console.log(`💰 OPEN Balance: ${Number(openAccount.amount) / 1e9} MILO`);
+    openATAExists = true;
+  } catch {
+    console.log(`💰 OPEN Balance: 0 (ATA not created)`);
+  }
+
+  // Create OPEN ATA if needed
+  if (!openATAExists) {
+    console.log(`\n🔨 Creating OPEN treasury ATA...`);
+    const tx = new Transaction();
+    tx.add(
+      createAssociatedTokenAccountInstruction(
+        oracleKeypair.publicKey, // payer
+        openATA,
+        openProtocolPDA, // owner
+        MINT,
+        TOKEN_2022_PROGRAM_ID
+      )
+    );
+
+    const sig = await sendAndConfirmTransaction(connection, tx, [oracleKeypair], {
+      commitment: 'confirmed',
+    });
+    console.log(`   ✅ Created: ${sig}`);
+  }
+
+  // Mint 500M MILO to OPEN treasury
+  const mintAmount = BigInt(500_000_000) * BigInt(1_000_000_000); // 500M MILO
+  console.log(`\n🪙 Minting ${Number(mintAmount) / 1e9} MILO to OPEN treasury...`);
+
+  const sig = await mintTo(
+    connection,
+    oracleKeypair, // payer
+    MINT,
+    openATA,
+    oracleKeypair, // mint authority
+    mintAmount,
+    [],
+    { commitment: 'confirmed' },
+    TOKEN_2022_PROGRAM_ID
+  );
+
+  console.log(`\n✅ OPEN TREASURY FUNDED!`);
+  console.log(`   TX: ${sig}`);
+  console.log(`   Explorer: https://explorer.solana.com/tx/${sig}`);
+
+  // Verify final balances
+  const finalOpen = await getAccount(connection, openATA, 'confirmed', TOKEN_2022_PROGRAM_ID);
+  console.log(`\n💰 Final OPEN Balance: ${Number(finalOpen.amount) / 1e9} MILO`);
+}
+
+main().catch(console.error);

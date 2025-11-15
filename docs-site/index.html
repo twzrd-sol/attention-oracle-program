@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TWZRD Documentation</title>
+  <meta name="description" content="Official documentation for TWZRD Attention Oracle on Solana">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>TWZRD Documentation</h1>
+      <p class="tagline">Open-core Solana primitive for tokenized attention</p>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="container">
+      <a href="#overview">Overview</a>
+      <a href="getting-started/">Getting Started</a>
+      <a href="api/">API Reference</a>
+      <a href="cli/">CLI Docs</a>
+      <a href="guides/">Guides</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <section id="overview">
+      <h2>What is TWZRD?</h2>
+      <p>TWZRD is an open-source attention oracle on Solana that tokenizes viewer presence in live streams. It provides verifiable, on-chain proof of attention and distributes tokens based on verified engagement.</p>
+
+      <div class="feature-grid">
+        <div class="feature">
+          <h3>🎯 Verifiable Attention</h3>
+          <p>On-chain proof of viewer presence via Twitch OAuth integration</p>
+        </div>
+        <div class="feature">
+          <h3>⚡ SPL Token 2022</h3>
+          <p>Built on modern Solana token standards with transfer hooks</p>
+        </div>
+        <div class="feature">
+          <h3>🔐 Epoch-Based Distribution</h3>
+          <p>Fair token allocation using time-based epochs (5-minute windows)</p>
+        </div>
+        <div class="feature">
+          <h3>🌐 Open Source</h3>
+          <p>MIT licensed, forkable, and community-driven</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="quick-start">
+      <h2>Quick Start</h2>
+
+      <h3>TypeScript SDK</h3>
+      <pre><code>npm install @twzrd/sdk
+
+import { TwzrdClient } from '@twzrd/sdk';
+import { Connection } from '@solana/web3.js';
+
+const client = new TwzrdClient(
+  new Connection('https://api.mainnet-beta.solana.com')
+);
+
+const channelState = await client.getChannelState(streamerPubkey);</code></pre>
+
+      <h3>Rust SDK</h3>
+      <pre><code>cargo add twzrd-sdk
+
+use twzrd_sdk::TwzrdClient;
+
+let client = TwzrdClient::new("https://api.mainnet-beta.solana.com");
+let channel_state = client.get_channel_state(&streamer_pubkey).await?;</code></pre>
+
+      <h3>CLI</h3>
+      <pre><code>cargo install twzrd-cli
+
+twzrd info
+twzrd channel &lt;STREAMER_PUBKEY&gt;
+twzrd claim &lt;USER_PUBKEY&gt; &lt;CHANNEL_PUBKEY&gt;</code></pre>
+    </section>
+
+    <section id="architecture">
+      <h2>Architecture</h2>
+      <p>TWZRD consists of three main components:</p>
+      <ol>
+        <li><strong>Solana Program</strong> - On-chain logic for channel management and token claims</li>
+        <li><strong>Web Frontend</strong> - User interface for claiming tokens via Twitch OAuth</li>
+        <li><strong>SDKs</strong> - TypeScript and Rust libraries for programmatic access</li>
+      </ol>
+    </section>
+
+    <section id="resources">
+      <h2>Resources</h2>
+      <ul>
+        <li><a href="https://github.com/twzrd-sol/attention-oracle-program">GitHub Repository</a></li>
+        <li><a href="https://twzrd.xyz">Main Website</a></li>
+        <li><a href="https://twzrd.xyz/claim.html">Claim Interface</a></li>
+        <li><a href="https://twitter.com/twzrd_xyz">Twitter/X</a></li>
+        <li><a href="mailto:dev@twzrd.xyz">Contact Us</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>Built in Houston, TX · MIT License · <a href="mailto:dev@twzrd.xyz">dev@twzrd.xyz</a></p>
+      <p>TWZRD™ is a trademark of TWZRD Inc.</p>
+    </div>
+  </footer>
+</body>
+</html>

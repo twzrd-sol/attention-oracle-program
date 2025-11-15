@@ -1,0 +1,110 @@
+#!/usr/bin/env tsx
+/**
+ * Initialize OPEN variant of protocol state (keyed by mint)
+ */
+
+import crypto from 'crypto';
+import fs from 'fs';
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+  sendAndConfirmTransaction,
+  ComputeBudgetProgram,
+} from '@solana/web3.js';
+// No SPL token imports needed for this instruction
+
+// Mainnet config
+const RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+const PROGRAM_ID = new PublicKey('4rArjoSZKrYkoE7hkvZNBP2Wpxovr78cfkxBnNwFNPn5');
+const MINT = new PublicKey('AAHd7u22jCMgmbF7ATkiY3BhkifD4MN3Vbsy4eYQGWN5');
+
+// Load admin keypair
+const adminKeypair = Keypair.fromSecretKey(
+  new Uint8Array(JSON.parse(fs.readFileSync('/home/twzrd/milo-token/keys/admin-keypair.json', 'utf8')))
+);
+
+console.log('🔨 Initialize OPEN Protocol State');
+console.log('Admin:', adminKeypair.publicKey.toBase58());
+console.log('Mint:', MINT.toBase58());
+
+async function main() {
+  const connection = new Connection(RPC_URL, 'confirmed');
+
+  // Derive OPEN protocol state PDA: [b"protocol", mint]
+  const [protocolStatePDA, protocolBump] = PublicKey.findProgramAddressSync(
+    [Buffer.from('protocol'), MINT.toBuffer()],
+    PROGRAM_ID
+  );
+
+  console.log(`\n📍 Protocol State PDA: ${protocolStatePDA.toBase58()}`);
+  console.log(`   Bump: ${protocolBump}`);
+
+  // Check if already initialized
+  const accountInfo = await connection.getAccountInfo(protocolStatePDA);
+  if (accountInfo && accountInfo.data.length > 0) {
+    console.log(`\n✅ Protocol state already initialized!`);
+    console.log(`   Size: ${accountInfo.data.length} bytes`);
+    return;
+  }
+
+  // Derive fee config PDA: [b"protocol", mint, b"fee_config"]
+  const [feeConfigPDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('protocol'), MINT.toBuffer(), Buffer.from('fee_config')],
+    PROGRAM_ID
+  );
+
+  console.log(`\n📊 Accounts:`);
+  console.log(`   Fee Config PDA: ${feeConfigPDA.toBase58()}`);
+
+  // Build initialize_mint_open instruction
+  const discriminator = crypto.createHash('sha256')
+    .update('global:initialize_mint_open')
+    .digest()
+    .slice(0, 8);
+
+  // Parameters: fee_basis_points (u16) + max_fee (u64)
+  const feeBasisPoints = 10; // 0.1%
+  const maxFee = BigInt(100_000_000_000); // 100 MILO max
+
+  const data = Buffer.concat([
+    discriminator,
+    Buffer.from(new Uint16Array([feeBasisPoints]).buffer),
+    Buffer.from(new BigUint64Array([maxFee]).buffer),
+  ]);
+
+  const instruction = new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: adminKeypair.publicKey, isSigner: true, isWritable: true }, // admin
+      { pubkey: MINT, isSigner: false, isWritable: true }, // milo_mint
+      { pubkey: protocolStatePDA, isSigner: false, isWritable: true }, // protocol_state
+      { pubkey: feeConfigPDA, isSigner: false, isWritable: true }, // fee_config
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+    ],
+    data,
+  });
+
+  // Send transaction
+  const tx = new Transaction();
+  tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }));
+  tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100_000 }));
+  tx.add(instruction);
+
+  console.log(`\n🚀 Initializing OPEN protocol state...`);
+  const sig = await sendAndConfirmTransaction(connection, tx, [adminKeypair], {
+    commitment: 'confirmed',
+  });
+
+  console.log(`\n✅ PROTOCOL STATE INITIALIZED!`);
+  console.log(`   TX: ${sig}`);
+  console.log(`   Explorer: https://explorer.solana.com/tx/${sig}`);
+  console.log(`\n📊 Protocol State PDA: ${protocolStatePDA.toBase58()}`);
+  console.log(`   Fee: ${feeBasisPoints} bps (0.1%)`);
+  console.log(`   Max: ${Number(maxFee) / 1e9} MILO`);
+}
+
+main().catch(console.error);

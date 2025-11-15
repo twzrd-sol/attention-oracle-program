@@ -1,0 +1,71 @@
+#!/usr/bin/env tsx
+/**
+ * Send exactly six RPC calls to a Helius endpoint (for dashboard visibility).
+ *
+ * Usage:
+ *   SYNDICA_RPC=<url> pnpm Helius:ping6
+ *   pnpm Helius:ping6 -- --cluster devnet
+ */
+
+import { Connection, Keypair, PublicKey, SystemProgram } from '@solana/web3.js';
+import * as fs from 'fs';
+import * as path from 'path';
+
+function getArg(flag: string): string | undefined {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+function defaultEndpoint(cluster: string) {
+  if (cluster === 'devnet') {
+    return 'https://devnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+  }
+  return 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+}
+
+async function main() {
+  const cluster = getArg('--cluster') || 'mainnet';
+  const endpoint = process.env.SYNDICA_RPC || defaultEndpoint(cluster);
+  const conn = new Connection(endpoint, 'confirmed');
+
+  const walletPath = process.env.WALLET_PATH || path.join(process.env.HOME || '', '.config/solana/id.json');
+  let payer: PublicKey | null = null;
+  try {
+    const secret = JSON.parse(fs.readFileSync(walletPath, 'utf8'));
+    payer = Keypair.fromSecretKey(Uint8Array.from(secret)).publicKey;
+  } catch {}
+
+  console.log('Helius Ping 6');
+  console.log('Endpoint:', endpoint);
+  console.log('Cluster :', cluster);
+  if (payer) console.log('Payer   :', payer.toBase58());
+  console.log('');
+
+  const t = async <T>(label: string, fn: () => Promise<T>) => {
+    const t0 = performance.now();
+    const out = await fn();
+    const dt = Math.round(performance.now() - t0);
+    console.log(`${label.padEnd(28)} ${String(dt).padStart(4)} ms`);
+    return out;
+  };
+
+  // Exactly six calls
+  await t('1) getLatestBlockhash', () => conn.getLatestBlockhash('confirmed'));
+  await t('2) getSlot', () => conn.getSlot('confirmed'));
+  if (payer) {
+    await t('3) getBalance(payer)', () => conn.getBalance(payer!, 'confirmed'));
+  } else {
+    await t('3) getGenesisHash', () => conn.getGenesisHash());
+  }
+  await t('4) getVersion', () => conn.getVersion());
+  await t('5) getAccountInfo(System)', () => conn.getAccountInfo(SystemProgram.programId, 'confirmed'));
+  await t('6) getMultipleAccountsInfo', () => conn.getMultipleAccountsInfo([
+    SystemProgram.programId,
+    new PublicKey('11111111111111111111111111111111'), // native SOL pseudo mint
+  ], 'confirmed'));
+
+  console.log('\nDone — 6 calls sent to Helius.');
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });
+

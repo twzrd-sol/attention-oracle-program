@@ -1,0 +1,201 @@
+#!/usr/bin/env tsx
+/**
+ * MILO Merkle Root Setter
+ * Sets merkle root for MILO claim epochs on Solana mainnet
+ */
+
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { config as dotenvConfig } from 'dotenv';
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+  sendAndConfirmTransaction,
+  ComputeBudgetProgram,
+} from '@solana/web3.js';
+
+dotenvConfig();
+
+// MILO MAINNET configuration (Oct 18, 2025)
+const RPC_URL = process.env.RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+const MILO_PROGRAM_ID = new PublicKey('4rArjoSZKrYkoE7hkvZNBP2Wpxovr78cfkxBnNwFNPn5');
+const MILO_MINT = new PublicKey('AAHd7u22jCMgmbF7ATkiY3BhkifD4MN3Vbsy4eYQGWN5');
+const ADMIN_AUTHORITY = new PublicKey('AmMftc4zHgR4yYfv29awV9Q46emo2aGPFW8utP81CsBv');
+
+// Load admin keypair
+const adminKeyPath = path.join(process.cwd(), 'admin-keypair.json');
+if (!fs.existsSync(adminKeyPath)) {
+  console.error('❌ admin-keypair.json not found');
+  process.exit(1);
+}
+
+const adminKeypair = Keypair.fromSecretKey(
+  new Uint8Array(JSON.parse(fs.readFileSync(adminKeyPath, 'utf-8')))
+);
+
+if (adminKeypair.publicKey.toString() !== ADMIN_AUTHORITY.toString()) {
+  console.error('❌ Admin keypair does not match expected authority');
+  console.error('Expected:', ADMIN_AUTHORITY.toString());
+  console.error('Got:', adminKeypair.publicKey.toString());
+  process.exit(1);
+}
+
+function calculateDiscriminator(ixName: string): Buffer {
+  const hash = crypto.createHash('sha256').update(`global:${ixName}`).digest();
+  return hash.slice(0, 8);
+}
+
+async function setMerkleRoot(epochFile: string) {
+  // Load epoch data
+  const epochPath = path.join(process.cwd(), 'data', 'epochs', epochFile);
+  if (!fs.existsSync(epochPath)) {
+    console.error(`❌ Epoch file not found: ${epochPath}`);
+    process.exit(1);
+  }
+
+  const epochData = JSON.parse(fs.readFileSync(epochPath, 'utf-8'));
+  const { epoch, merkle_root, total_claims, channel } = epochData;
+
+  console.log(`🐕 MILO Merkle Root Setter`);
+  console.log(`📦 Epoch: ${epoch}`);
+  console.log(`🔗 Channel: ${channel}`);
+  console.log(`📊 Total Claims: ${total_claims}`);
+  console.log(`#️⃣ Root: ${merkle_root}\n`);
+
+  const connection = new Connection(RPC_URL, 'confirmed');
+
+  // For Lacy's channel, use admin authority as streamer
+  const streamerKey = ADMIN_AUTHORITY;
+
+  // Derive epoch state PDA (updated to match program's seeds)
+  // The program expects: seeds = [EPOCH_STATE_SEED, streamer_key.as_ref(), epoch.to_be_bytes().as_ref()]
+  const epochBEBytes = Buffer.alloc(8);
+  epochBEBytes.writeBigUInt64BE(BigInt(epoch)); // Big-endian encoding
+
+  const [epochStatePDA] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from('epoch_state'),
+      streamerKey.toBuffer(),
+      epochBEBytes,
+    ],
+    MILO_PROGRAM_ID
+  );
+
+  console.log(`📍 Epoch State PDA: ${epochStatePDA.toString()}`);
+
+  // Check current state
+  const accountInfo = await connection.getAccountInfo(epochStatePDA);
+  if (accountInfo) {
+    console.log(`⚠️  Epoch state already exists. Size: ${accountInfo.data.length} bytes`);
+    // Could add logic here to read current root and skip if already set
+  }
+
+  // Build instruction
+  const discriminator = calculateDiscriminator('set_merkle_root');
+  const rootBuffer = Buffer.from(merkle_root, 'hex');
+  const epochBuffer = Buffer.alloc(8);
+  epochBuffer.writeBigUInt64LE(BigInt(epoch));
+  const claimsBuffer = Buffer.alloc(4); // claim_count is u32
+  claimsBuffer.writeUInt32LE(total_claims);
+  const streamerBuffer = streamerKey.toBuffer();
+
+  const data = Buffer.concat([
+    discriminator,
+    rootBuffer,
+    epochBuffer,
+    claimsBuffer,
+    streamerBuffer,
+  ]);
+
+  // Derive reward config PDA
+  const [rewardConfigPDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('reward_config'), MILO_MINT.toBuffer()],
+    MILO_PROGRAM_ID
+  );
+
+  const setRootIx = new TransactionInstruction({
+    programId: MILO_PROGRAM_ID,
+    keys: [
+      { pubkey: epochStatePDA, isSigner: false, isWritable: true },
+      { pubkey: MILO_MINT, isSigner: false, isWritable: false },
+      { pubkey: adminKeypair.publicKey, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: rewardConfigPDA, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+
+  // Build and send transaction
+  const tx = new Transaction();
+
+  // Add compute budget
+  tx.add(
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 })
+  );
+
+  tx.add(setRootIx);
+
+  try {
+    console.log(`\n🚀 Sending transaction...`);
+    const signature = await sendAndConfirmTransaction(
+      connection,
+      tx,
+      [adminKeypair],
+      { commitment: 'confirmed' }
+    );
+
+    console.log(`\n✅ Merkle root set successfully!`);
+    console.log(`📝 Signature: ${signature}`);
+    console.log(`🔗 View: https://solscan.io/tx/${signature}`);
+
+    // Save success record
+    const successLog = {
+      timestamp: new Date().toISOString(),
+      epoch,
+      merkle_root,
+      signature,
+      epochStatePDA: epochStatePDA.toString(),
+    };
+
+    const logPath = path.join(process.cwd(), 'logs', 'merkle-roots.ndjson');
+    fs.appendFileSync(logPath, JSON.stringify(successLog) + '\n');
+
+    return signature;
+  } catch (error: any) {
+    console.error(`\n❌ Failed to set merkle root:`, error.message);
+    if (error.logs) {
+      console.error('Logs:', error.logs);
+    }
+    process.exit(1);
+  }
+}
+
+// Main execution
+(async () => {
+  const epochFile = process.argv[2];
+
+  if (!epochFile) {
+    // Find most recent epoch file
+    const epochDir = path.join(process.cwd(), 'data', 'epochs');
+    const files = fs.readdirSync(epochDir)
+      .filter(f => f.startsWith('milo-epoch-') && f.endsWith('.json'))
+      .sort()
+      .reverse();
+
+    if (files.length === 0) {
+      console.error('❌ No epoch files found');
+      process.exit(1);
+    }
+
+    console.log(`📦 Found ${files.length} epoch files. Using most recent: ${files[0]}`);
+    await setMerkleRoot(files[0]);
+  } else {
+    await setMerkleRoot(epochFile);
+  }
+})();

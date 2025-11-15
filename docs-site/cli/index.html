@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLI Documentation - TWZRD</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>CLI Documentation</h1>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="container">
+      <a href="../">Home</a>
+      <a href="../getting-started/">Getting Started</a>
+      <a href="../api/">API Reference</a>
+      <a href="./">CLI Docs</a>
+      <a href="../guides/">Guides</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <section>
+      <h2>Installation</h2>
+      <pre><code>cargo install twzrd-cli</code></pre>
+      <p>Or build from source:</p>
+      <pre><code>git clone https://github.com/twzrd-sol/attention-oracle-program
+cd attention-oracle-program/rust-packages/twzrd-cli
+cargo install --path .</code></pre>
+    </section>
+
+    <section>
+      <h2>Global Options</h2>
+      <pre><code>--rpc-url &lt;URL&gt;     Solana RPC endpoint
+                      Default: https://api.mainnet-beta.solana.com
+--help              Show help message
+--version           Show version</code></pre>
+    </section>
+
+    <section>
+      <h2>Commands</h2>
+
+      <h3>info</h3>
+      <p>Display TWZRD program information.</p>
+      <pre><code>twzrd info</code></pre>
+      <p><strong>Output:</strong></p>
+      <pre><code>TWZRD Attention Oracle
+Program ID: [PROGRAM_ID]
+Version: 0.1.0
+Website: https://twzrd.xyz</code></pre>
+
+      <h3>channel</h3>
+      <p>Get channel state for a streamer.</p>
+      <pre><code>twzrd channel &lt;STREAMER_PUBKEY&gt;</code></pre>
+      <p><strong>Example:</strong></p>
+      <pre><code>twzrd channel 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU</code></pre>
+      <p><strong>Output:</strong></p>
+      <pre><code>Channel State:
+  Streamer: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+  Mint: [MINT_ADDRESS]
+  Current Epoch: 12345
+  Total Minted: 1500000
+  Active: true</code></pre>
+
+      <h3>claim</h3>
+      <p>Claim tokens for a user.</p>
+      <pre><code>twzrd claim &lt;USER_PUBKEY&gt; &lt;CHANNEL_PUBKEY&gt;</code></pre>
+      <p><strong>Example:</strong></p>
+      <pre><code>twzrd claim 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU</code></pre>
+      <p><strong>Output:</strong></p>
+      <pre><code>Claiming tokens...
+Transaction signature: [SIGNATURE]
+Success! Tokens claimed.</code></pre>
+    </section>
+
+    <section>
+      <h2>Examples</h2>
+
+      <h3>Check Channel on Devnet</h3>
+      <pre><code>twzrd --rpc-url https://api.devnet.solana.com channel [PUBKEY]</code></pre>
+
+      <h3>Claim with Custom RPC</h3>
+      <pre><code>twzrd --rpc-url https://your-rpc.com claim [USER] [CHANNEL]</code></pre>
+    </section>
+
+    <section>
+      <h2>Environment Variables</h2>
+      <pre><code>SOLANA_RPC_URL      Override default RPC URL
+RUST_LOG            Set logging level (debug, info, warn, error)</code></pre>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>Built in Houston, TX · MIT License · <a href="mailto:dev@twzrd.xyz">dev@twzrd.xyz</a></p>
+      <p>TWZRD™ is a trademark of TWZRD Inc.</p>
+    </div>
+  </footer>
+</body>
+</html>

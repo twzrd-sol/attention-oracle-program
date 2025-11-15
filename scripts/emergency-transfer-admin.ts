@@ -1,0 +1,124 @@
+#!/usr/bin/env tsx
+/**
+ * EMERGENCY: Transfer admin/publisher to oracle-authority keypair
+ * This script can ONLY be run by the program upgrade authority
+ */
+
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  TransactionInstruction,
+  Transaction,
+  sendAndConfirmTransaction,
+} from '@solana/web3.js';
+import fs from 'fs';
+import crypto from 'crypto';
+
+const RPC_URL = process.env.RPC_URL || process.env.RPC_URL || 'https://api.mainnet.solana.com';
+const PROGRAM_ID = new PublicKey('4rArjoSZKrYkoE7hkvZNBP2Wpxovr78cfkxBnNwFNPn5');
+const MINT = new PublicKey('AAHd7u22jCMgmbF7ATkiY3BhkifD4MN3Vbsy4eYQGWN5');
+const UPGRADE_AUTHORITY_PATH = `${process.env.HOME}/.config/solana/oracle-authority.json`;
+
+// New admin/publisher (same key for simplicity)
+const NEW_ADMIN = new PublicKey('87d5WsriU5DiGPSFvojQJH525qsHNiHCP4m2Qa19ufdy');
+
+async function main() {
+  console.log('🚨 EMERGENCY ADMIN TRANSFER');
+  console.log('Program:', PROGRAM_ID.toBase58());
+  console.log('Mint:', MINT.toBase58());
+  console.log('New Admin:', NEW_ADMIN.toBase58());
+  console.log('New Publisher:', NEW_ADMIN.toBase58());
+  console.log('RPC:', RPC_URL);
+  console.log();
+
+  // Load upgrade authority keypair
+  const upgradeAuthority = Keypair.fromSecretKey(
+    new Uint8Array(JSON.parse(fs.readFileSync(UPGRADE_AUTHORITY_PATH, 'utf8')))
+  );
+  console.log('Upgrade Authority (signer):', upgradeAuthority.publicKey.toBase58());
+
+  const connection = new Connection(RPC_URL, 'confirmed');
+
+  // Derive protocol state PDA
+  const [protocolState] = PublicKey.findProgramAddressSync(
+    [Buffer.from('protocol'), MINT.toBuffer()],
+    PROGRAM_ID
+  );
+  console.log('Protocol State PDA:', protocolState.toBase58());
+  console.log();
+
+  // Check current state
+  const accountInfo = await connection.getAccountInfo(protocolState);
+  if (!accountInfo) {
+    throw new Error('Protocol state not found!');
+  }
+  const currentAdmin = new PublicKey(accountInfo.data.slice(8, 40));
+  const currentPublisher = new PublicKey(accountInfo.data.slice(40, 72));
+  console.log('Current Admin:', currentAdmin.toBase58());
+  console.log('Current Publisher:', currentPublisher.toBase58());
+  console.log();
+
+  // Build emergency_transfer_admin instruction
+  const discriminator = crypto
+    .createHash('sha256')
+    .update('global:emergency_transfer_admin')
+    .digest()
+    .slice(0, 8);
+
+  // Encode instruction data: discriminator + new_admin (32 bytes) + new_publisher (32 bytes)
+  const instructionData = Buffer.concat([
+    discriminator,
+    NEW_ADMIN.toBuffer(),
+    NEW_ADMIN.toBuffer(), // Same key for publisher
+  ]);
+
+  const ix = new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: upgradeAuthority.publicKey, isSigner: true, isWritable: true }, // upgrade_authority
+      { pubkey: protocolState, isSigner: false, isWritable: true },             // protocol_state
+    ],
+    data: instructionData,
+  });
+
+  console.log('Instruction details:', {
+    upgrade_authority: upgradeAuthority.publicKey.toBase58(),
+    protocol_state: protocolState.toBase58(),
+    new_admin: NEW_ADMIN.toBase58(),
+    new_publisher: NEW_ADMIN.toBase58(),
+    data_length: instructionData.length,
+  });
+
+  try {
+    console.log('🚀 Executing emergency transfer...');
+    const tx = new Transaction().add(ix);
+    const sig = await sendAndConfirmTransaction(connection, tx, [upgradeAuthority], {
+      commitment: 'confirmed',
+    });
+
+    console.log();
+    console.log('✅ ADMIN TRANSFERRED SUCCESSFULLY!');
+    console.log('TX:', `https://explorer.solana.com/tx/${sig}`);
+    console.log();
+
+    // Verify new state
+    const newAccountInfo = await connection.getAccountInfo(protocolState);
+    if (newAccountInfo) {
+      const newAdmin = new PublicKey(newAccountInfo.data.slice(8, 40));
+      const newPublisher = new PublicKey(newAccountInfo.data.slice(40, 72));
+      console.log('New Admin:', newAdmin.toBase58());
+      console.log('New Publisher:', newPublisher.toBase58());
+      console.log('Match Expected?', newAdmin.equals(NEW_ADMIN) && newPublisher.equals(NEW_ADMIN));
+    }
+  } catch (e: any) {
+    console.error('❌ Failed:', e.message);
+    if (e.logs) console.error('Logs:', e.logs);
+    process.exit(1);
+  }
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

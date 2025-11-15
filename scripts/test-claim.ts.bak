@@ -1,0 +1,234 @@
+#!/usr/bin/env tsx
+/**
+ * Test claiming MILO tokens with Merkle proof
+ */
+
+import crypto from 'crypto';
+import fs from 'fs';
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+  sendAndConfirmTransaction,
+  ComputeBudgetProgram,
+} from '@solana/web3.js';
+import {
+  TOKEN_2022_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAccount,
+} from '@solana/spl-token';
+
+// Mainnet config
+const RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+const PROGRAM_ID = new PublicKey('4rArjoSZKrYkoE7hkvZNBP2Wpxovr78cfkxBnNwFNPn5');
+const MINT = new PublicKey('AAHd7u22jCMgmbF7ATkiY3BhkifD4MN3Vbsy4eYQGWN5');
+
+// Load epoch data
+const epochData = JSON.parse(fs.readFileSync('/tmp/milo-epoch-0.json', 'utf8'));
+
+// Test with admin wallet (claim index 0)
+const adminKeypair = Keypair.fromSecretKey(
+  new Uint8Array(JSON.parse(fs.readFileSync('/home/twzrd/milo-token/keys/admin-keypair.json', 'utf8')))
+);
+
+console.log('🎯 MILO Claim Test');
+console.log('==================');
+console.log('Claimer:', adminKeypair.publicKey.toBase58());
+console.log('Amount:', epochData.claims[0].amount / 1e9, 'MILO');
+console.log('Epoch:', epochData.epoch);
+
+// Import keccak256
+import { keccak256 } from 'ethereum-cryptography/keccak';
+
+// Merkle proof generation - MUST match program exactly
+function makeClaimLeaf(index: number, amount: number, id: string): Buffer {
+  const indexBytes = Buffer.alloc(4);
+  indexBytes.writeUInt32LE(index, 0);
+
+  const amountBytes = Buffer.alloc(8);
+  amountBytes.writeBigUInt64LE(BigInt(amount), 0);
+
+  const idBytes = Buffer.from(id, 'utf8');
+  const preimage = Buffer.concat([indexBytes, amountBytes, idBytes]);
+
+  // Use Keccak256, not SHA3-256!
+  return Buffer.from(keccak256(preimage));
+}
+
+function getMerkleProof(leaves: Buffer[], index: number): Buffer[] {
+  const proof: Buffer[] = [];
+  let level = [...leaves];
+
+  while (level.length > 1) {
+    const nextLevel: Buffer[] = [];
+
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i];
+      const right = level[i + 1] || left;
+
+      if (i === Math.floor(index / 2) * 2) {
+        proof.push(i === index ? right : left);
+      }
+
+      const [first, second] = Buffer.compare(left, right) <= 0
+        ? [left, right]
+        : [right, left];
+      // Use Keccak256 for tree hashing too
+      nextLevel.push(Buffer.from(keccak256(Buffer.concat([first, second]))));
+    }
+
+    level = nextLevel;
+    index = Math.floor(index / 2);
+  }
+
+  return proof;
+}
+
+async function main() {
+  const connection = new Connection(RPC_URL, 'confirmed');
+
+  // Generate Merkle proof for claim 0
+  const leaves = epochData.claims.map((c: any) =>
+    makeClaimLeaf(c.index, c.amount, c.id)
+  );
+
+  const proof = getMerkleProof(leaves, 0);
+  console.log(`\n📝 Merkle Proof: ${proof.length} siblings`);
+  proof.forEach((p, i) => console.log(`  [${i}] ${p.toString('hex').slice(0, 16)}...`));
+
+  // Derive PDAs
+  const streamerKey = new PublicKey('Lacy7B2UabGNw8PMCLufYgaoaAwtLZqvKfYVBYqYbBY');
+  const epochBytesLE = Buffer.alloc(8);
+  epochBytesLE.writeBigUInt64LE(BigInt(epochData.epoch), 0);
+
+  const [protocolStatePDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('protocol'), MINT.toBuffer()],
+    PROGRAM_ID
+  );
+
+  const [epochStatePDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('epoch_state'), epochBytesLE, streamerKey.toBuffer(), MINT.toBuffer()],
+    PROGRAM_ID
+  );
+
+  // Get ATAs - treasury ATA is associated with protocol_state (not singleton)
+  const treasuryATA = getAssociatedTokenAddressSync(
+    MINT,
+    protocolStatePDA, // OPEN protocol state is the treasury
+    true,
+    TOKEN_2022_PROGRAM_ID
+  );
+
+  const claimerATA = getAssociatedTokenAddressSync(
+    MINT,
+    adminKeypair.publicKey,
+    false,
+    TOKEN_2022_PROGRAM_ID
+  );
+
+  console.log(`\n📍 PDAs:`);
+  console.log(`  Protocol State: ${protocolStatePDA.toBase58()}`);
+  console.log(`  Epoch State: ${epochStatePDA.toBase58()}`);
+  console.log(`  Treasury ATA: ${treasuryATA.toBase58()}`);
+  console.log(`  Claimer ATA: ${claimerATA.toBase58()}`);
+
+  // Check initial balance
+  try {
+    const ataAccount = await getAccount(connection, claimerATA, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    console.log(`\n💰 Initial Balance: ${Number(ataAccount.amount) / 1e9} MILO`);
+  } catch {
+    console.log(`\n💰 Initial Balance: 0 MILO (ATA not created yet)`);
+  }
+
+  // Build claim_open instruction (for OPEN variant)
+  const discriminator = crypto.createHash('sha256')
+    .update('global:claim_open')
+    .digest()
+    .slice(0, 8);
+
+  // Serialize ID string with Borsh format: length (u32 LE) + UTF-8 bytes
+  const idString = adminKeypair.publicKey.toBase58();
+  const idBytes = Buffer.from(idString, 'utf8');
+  const idBuffer = Buffer.concat([
+    Buffer.from(new Uint32Array([idBytes.length]).buffer), // string length
+    idBytes,
+  ]);
+
+  // Serialize proof as Vec<[u8; 32]>
+  const proofBuffer = Buffer.concat([
+    Buffer.from([proof.length, 0, 0, 0]), // Vec length (u32 LE)
+    ...proof,
+  ]);
+
+  // Serialize optional parameters as None
+  const noneBuffer = Buffer.from([0]); // Option::None
+
+  // claim_open parameters:
+  // - streamer_index: u8
+  // - index: u32
+  // - amount: u64
+  // - id: String
+  // - proof: Vec<[u8; 32]>
+  // - channel: Option<String> (None)
+  // - twzrd_epoch: Option<u64> (None)
+  // - receipt_proof: Option<CnftReceiptProof> (None)
+  const data = Buffer.concat([
+    discriminator,
+    Buffer.from([0]), // streamer_index (not used in OPEN variant, pass 0)
+    Buffer.from(new Uint32Array([0]).buffer), // index
+    Buffer.from(new BigUint64Array([BigInt(epochData.claims[0].amount)]).buffer), // amount
+    idBuffer, // id (Borsh string)
+    proofBuffer, // proof
+    noneBuffer, // channel (None)
+    noneBuffer, // twzrd_epoch (None)
+    noneBuffer, // receipt_proof (None)
+  ]);
+
+  // Null key for optional accounts
+  const NULL_KEY = new PublicKey('11111111111111111111111111111111');
+
+  const instruction = new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: adminKeypair.publicKey, isSigner: true, isWritable: true }, // claimer
+      { pubkey: protocolStatePDA, isSigner: false, isWritable: true }, // protocol_state (mut)
+      { pubkey: epochStatePDA, isSigner: false, isWritable: true }, // epoch_state
+      { pubkey: MINT, isSigner: false, isWritable: false }, // mint
+      { pubkey: treasuryATA, isSigner: false, isWritable: true }, // treasury_ata
+      { pubkey: claimerATA, isSigner: false, isWritable: true }, // claimer_ata
+      { pubkey: NULL_KEY, isSigner: false, isWritable: false }, // twzrd_epoch_state (optional)
+      { pubkey: NULL_KEY, isSigner: false, isWritable: false }, // merkle_tree (optional)
+      { pubkey: NULL_KEY, isSigner: false, isWritable: false }, // compression_program (optional)
+      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false }, // token_program
+      { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }, // ata_program
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+    ],
+    data,
+  });
+
+  // Send transaction
+  const tx = new Transaction();
+  tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }));
+  tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100_000 }));
+  tx.add(instruction);
+
+  console.log(`\n🚀 Claiming ${epochData.claims[0].amount / 1e9} MILO...`);
+  const sig = await sendAndConfirmTransaction(connection, tx, [adminKeypair], {
+    commitment: 'confirmed',
+  });
+
+  console.log(`\n✅ CLAIM SUCCESSFUL!`);
+  console.log(`   TX: ${sig}`);
+  console.log(`   Explorer: https://explorer.solana.com/tx/${sig}`);
+
+  // Check final balance
+  const finalAccount = await getAccount(connection, claimerATA, 'confirmed', TOKEN_2022_PROGRAM_ID);
+  console.log(`\n💰 Final Balance: ${Number(finalAccount.amount) / 1e9} MILO`);
+  console.log(`\n🎉 END-TO-END TEST COMPLETE!`);
+}
+
+main().catch(console.error);

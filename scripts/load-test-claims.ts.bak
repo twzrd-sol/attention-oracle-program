@@ -1,0 +1,219 @@
+#!/usr/bin/env tsx
+/**
+ * 24-Hour Mainnet Claims Load Test
+ * Targets: 10M RPC calls via Helius
+ * Real metrics: track actual throughput, costs, errors
+ */
+
+import { Connection, PublicKey, Keypair, Transaction, sendAndConfirmTransaction, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import fetch from 'node-fetch';
+import fs from 'fs';
+
+const GATEWAY_URL = process.env.GATEWAY_URL || 'http://localhost:8080';
+const AGGREGATOR_URL = process.env.AGGREGATOR_URL || 'http://localhost:3000';
+const RPC_URL = process.env.RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+
+interface TestMetrics {
+  timestamp: string;
+  secondsElapsed: number;
+  totalClaims: number;
+  successfulClaims: number;
+  failedClaims: number;
+  totalRpcCalls: number;
+  estimatedRpcCost: number;
+  estimatedSolSpent: number;
+  errorRate: number;
+  claimsPerSecond: number;
+  avgClaimTimeMs: number;
+}
+
+const metrics: TestMetrics[] = [];
+let startTime = Date.now();
+let totalClaims = 0;
+let successfulClaims = 0;
+let failedClaims = 0;
+let totalRpcCalls = 0;
+let claimTimes: number[] = [];
+
+const channels = ['adapt', 'jasontheween', 'kaysan', 'lacy', 'silky', 'stableronaldo', 'xqc', 'yourragegaming'];
+
+// Generate test wallets
+const testWallets = Array.from({ length: 100 }, () => Keypair.generate());
+
+async function getClaimProof(channel: string, epoch: number, username: string) {
+  try {
+    totalRpcCalls += 1; // RPC call to aggregator
+    const response = await fetch(
+      `${AGGREGATOR_URL}/receipt-proof?channel=${encodeURIComponent(channel)}&epoch=${epoch}&user=${encodeURIComponent(username)}`
+    );
+    if (!response.ok) throw new Error(`Proof not found: ${response.status}`);
+    return await response.json() as any;
+  } catch (err: any) {
+    console.error(`Failed to get proof for ${channel}/${epoch}/${username}:`, err.message);
+    throw err;
+  }
+}
+
+async function buildClaimTransaction(wallet: Keypair, channel: string, epoch: number, mint: string) {
+  try {
+    totalRpcCalls += 1; // POST request to gateway counts
+    const response = await fetch(`${GATEWAY_URL}/claim-open`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        wallet: wallet.publicKey.toString(),
+        channel,
+        epoch,
+        mint,
+        username: `test-user-${wallet.publicKey.toString().slice(0, 8)}`,
+      }),
+    });
+    if (!response.ok) throw new Error(`Claim build failed: ${response.status}`);
+    return await response.json() as any;
+  } catch (err: any) {
+    console.error(`Failed to build claim tx:`, err.message);
+    throw err;
+  }
+}
+
+async function submitAndConfirmClaim(connection: Connection, wallet: Keypair, txData: any) {
+  try {
+    // Decode transaction
+    const txBuf = Buffer.from(txData.transaction, 'base64');
+    const tx = Transaction.from(txBuf);
+    
+    // Sign
+    tx.sign(wallet);
+    
+    // Submit (Helius RPC call)
+    totalRpcCalls += 1;
+    const sig = await connection.sendRawTransaction(tx.serialize());
+    
+    // Confirm (multiple RPC calls)
+    totalRpcCalls += 2; // confirmation polls
+    await connection.confirmTransaction(sig, 'confirmed');
+    
+    successfulClaims += 1;
+    return sig;
+  } catch (err: any) {
+    failedClaims += 1;
+    console.error(`Claim submission failed:`, err.message);
+    throw err;
+  }
+}
+
+async function attemptClaim(connection: Connection, wallet: Keypair, channel: string, epoch: number, mint: string) {
+  const startClaimTime = Date.now();
+  try {
+    // Build claim
+    const claimTx = await buildClaimTransaction(wallet, channel, epoch, mint);
+    
+    // Submit & confirm
+    await submitAndConfirmClaim(connection, wallet, claimTx);
+    
+    const claimTime = Date.now() - startClaimTime;
+    claimTimes.push(claimTime);
+    if (claimTimes.length > 1000) claimTimes.shift(); // Keep rolling avg
+  } catch (err) {
+    // Already tracked in failedClaims
+  }
+  totalClaims += 1;
+}
+
+async function recordMetrics() {
+  const secondsElapsed = (Date.now() - startTime) / 1000;
+  const errorRate = totalClaims > 0 ? (failedClaims / totalClaims) * 100 : 0;
+  const claimsPerSec = totalClaims / secondsElapsed;
+  const avgClaimTime = claimTimes.length > 0 ? claimTimes.reduce((a, b) => a + b, 0) / claimTimes.length : 0;
+  
+  // Estimate: ~3-5 RPC calls per claim (proof, build, submit, confirm)
+  const estimatedRpcCost = totalRpcCalls * 0.000001; // Very rough estimate
+  const estimatedSolSpent = successfulClaims * 0.00002; // ~20k lamports per claim
+  
+  const metric: TestMetrics = {
+    timestamp: new Date().toISOString(),
+    secondsElapsed: Math.floor(secondsElapsed),
+    totalClaims,
+    successfulClaims,
+    failedClaims,
+    totalRpcCalls,
+    estimatedRpcCost,
+    estimatedSolSpent,
+    errorRate: Math.round(errorRate * 100) / 100,
+    claimsPerSecond: Math.round(claimsPerSec * 100) / 100,
+    avgClaimTimeMs: Math.round(avgClaimTime),
+  };
+  
+  metrics.push(metric);
+  console.log(JSON.stringify(metric));
+}
+
+async function main() {
+  console.log('🚀 Starting 24-hour mainnet claims load test');
+  console.log(`Gateway: ${GATEWAY_URL}`);
+  console.log(`Aggregator: ${AGGREGATOR_URL}`);
+  console.log(`RPC: Helius`);
+  console.log(`Test wallets: ${testWallets.length}`);
+  console.log('');
+  
+  const connection = new Connection(RPC_URL, 'confirmed');
+  
+  // Test for 24 hours
+  const TEST_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+  const METRIC_INTERVAL_MS = 60 * 1000; // Report every 60s
+  const CLAIM_INTERVAL_MS = 100; // Submit a claim every 100ms
+  
+  let lastMetricTime = Date.now();
+  let claimCount = 0;
+  
+  console.log(`Test duration: 24 hours`);
+  console.log(`Target RPC calls: 10,000,000`);
+  console.log(`Required RPC calls/second: ${10_000_000 / 86_400}`);
+  console.log('');
+  
+  while (Date.now() - startTime < TEST_DURATION_MS) {
+    // Record metrics every minute
+    if (Date.now() - lastMetricTime > METRIC_INTERVAL_MS) {
+      await recordMetrics();
+      lastMetricTime = Date.now();
+    }
+    
+    // Submit claim
+    try {
+      const wallet = testWallets[claimCount % testWallets.length];
+      const channel = channels[claimCount % channels.length];
+      const epoch = Math.floor((Date.now() - startTime) / 3600000) + 1760990400; // Current epoch
+      const mint = 'AAHd7u22jCMgmbF7ATkiY3BhkifD4MN3Vbsy4eYQGWN5'; // MILO mint
+      
+      await attemptClaim(connection, wallet, channel, epoch, mint);
+      claimCount += 1;
+    } catch (err) {
+      // Log and continue
+    }
+    
+    // Throttle
+    await new Promise(r => setTimeout(r, CLAIM_INTERVAL_MS));
+  }
+  
+  // Final metrics
+  await recordMetrics();
+  
+  console.log('\n✅ Test complete!\n');
+  console.log('Summary:');
+  console.log(`Total claims: ${totalClaims}`);
+  console.log(`Successful: ${successfulClaims}`);
+  console.log(`Failed: ${failedClaims}`);
+  console.log(`Total RPC calls: ${totalRpcCalls}`);
+  console.log(`Estimated SOL spent: ${(successfulClaims * 0.00002).toFixed(6)} SOL`);
+  
+  // Save metrics
+  fs.writeFileSync(
+    `/home/twzrd/milo-token/logs/load-test-metrics-${Date.now()}.json`,
+    JSON.stringify(metrics, null, 2)
+  );
+}
+
+main().catch(err => {
+  console.error('Test failed:', err);
+  process.exit(1);
+});

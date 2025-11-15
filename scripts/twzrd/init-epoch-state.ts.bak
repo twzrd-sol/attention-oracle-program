@@ -1,0 +1,128 @@
+#!/usr/bin/env tsx
+/**
+ * Initialize TWZRD epoch state on-chain with Merkle root published by the aggregator.
+ *
+ * Usage:
+ *   tsx scripts/twzrd/init-epoch-state.ts \
+ *     --epoch 1760240880 \
+ *     --channel xqc \
+ *     --root 75fb9db998c9f00c98fdb197a467628553b2036fa9a7a23ce6458fdbfee4fb7b \
+ *     --tree Efn4hrQKxwH5GCFBzvtwPa4KuxycNN4PztWEPz2jCauC \
+ *     --participants 1 \
+ *     --cluster devnet
+ */
+
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from '@solana/web3.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import crypto from 'crypto';
+
+const PROGRAM_ID = new PublicKey('Gc7FSSFkL4VoJUCtY5AF4mcwpnfWDBGzNXwPeSPjPBj6');
+
+function getArg(flag: string, required = false): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) {
+    if (required) {
+      console.error(`Missing required flag ${flag}`);
+      process.exit(1);
+    }
+    return undefined;
+  }
+  return process.argv[idx + 1];
+}
+
+function parseHex32(hexStr: string): Buffer {
+  const cleaned = hexStr.startsWith('0x') ? hexStr.slice(2) : hexStr;
+  if (cleaned.length !== 64) {
+    throw new Error('Root must be 32 bytes (64 hex chars)');
+  }
+  return Buffer.from(cleaned, 'hex');
+}
+
+async function main() {
+  const epochArg = getArg('--epoch', true)!;
+  const channel = (getArg('--channel', true) || '').trim();
+  const rootHex = getArg('--root', true)!;
+  const participantsArg = getArg('--participants', false) || '0';
+  const cluster = getArg('--cluster', false) || 'devnet';
+
+  const epoch = BigInt(epochArg);
+  const participantCount = Number(participantsArg);
+
+  const rpcUrl = process.env.RPC_URL
+    || (cluster === 'devnet'
+      ? 'https://devnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+      : 'https://api.mainnet-beta.solana.com');
+
+  const walletPath = process.env.WALLET_PATH || path.join(process.env.HOME!, '.config/solana/id.json');
+  const payer = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(walletPath, 'utf8'))));
+
+  const connection = new Connection(rpcUrl, 'confirmed');
+
+  const epochBuf = Buffer.alloc(8);
+  epochBuf.writeBigUInt64LE(epoch);
+  const channelBytes = Buffer.from(channel);
+
+  const [epochState, bump] = PublicKey.findProgramAddressSync(
+    [Buffer.from('epoch_state'), epochBuf, channelBytes],
+    PROGRAM_ID,
+  );
+
+  const rootBuf = parseHex32(rootHex);
+
+  console.log('╔═══════════════════════════════════════════════════════╗');
+  console.log('║        TWZRD Epoch State Initialisation              ║');
+  console.log('╚═══════════════════════════════════════════════════════╝\n');
+  console.log(`RPC: ${rpcUrl}`);
+  console.log(`Epoch: ${epoch.toString()}`);
+  console.log(`Channel: ${channel}`);
+  console.log(`Participant count: ${participantCount}`);
+  console.log(`Epoch state PDA: ${epochState.toBase58()} (bump ${bump})\n`);
+
+  const discriminator = crypto.createHash('sha256').update('global:init_epoch_state').digest().slice(0, 8);
+
+  const epochBytes = Buffer.alloc(8);
+  epochBytes.writeBigUInt64LE(epoch);
+
+  const channelLen = Buffer.alloc(4);
+  channelLen.writeUInt32LE(channelBytes.length);
+
+  const participantBuf = Buffer.alloc(4);
+  participantBuf.writeUInt32LE(participantCount >>> 0);
+
+  const data = Buffer.concat([
+    discriminator,
+    epochBytes,
+    channelLen,
+    channelBytes,
+    rootBuf,
+    participantBuf,
+  ]);
+
+  const ix = new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: epochState, isSigner: false, isWritable: true },
+      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+
+  const tx = new Transaction().add(ix);
+  tx.feePayer = payer.publicKey;
+
+  const { blockhash } = await connection.getLatestBlockhash();
+  tx.recentBlockhash = blockhash;
+
+  const sig = await connection.sendTransaction(tx, [payer]);
+  console.log('✅ Epoch state initialized');
+  console.log('Signature:', sig);
+  console.log(`Explorer: https://explorer.solana.com/tx/${sig}?cluster=${cluster}`);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+

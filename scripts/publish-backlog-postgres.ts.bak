@@ -1,0 +1,163 @@
+#!/usr/bin/env tsx
+/**
+ * publish-backlog-postgres.ts
+ *
+ * Utility to drain unpublished MILO channel epochs backed by PostgreSQL.
+ * For each (epoch, channel) pair with `published = 0`, it:
+ *  1. Pulls the cached L2 root from the running aggregator (builds if missing)
+ *  2. Publishes the root on-chain via `publishRootRing`
+ *  3. Marks the epoch as published in the database
+ *
+ * Environment variables (defaults align with production):
+ *   DATABASE_URL  – Postgres connection string
+ *   PROGRAM_ID    – MILO program id
+ *   MINT_PUBKEY   – MILO mint
+ *   PAYER_KEYPAIR – Authority keypair path
+ *   RPC_URL       – Solana RPC endpoint
+ *   AGGREGATOR_URL – Base URL for aggregator (default http://127.0.0.1:8080)
+ *   BATCH_LIMIT   – Max epochs to process this run (default 60)
+ */
+
+import { Pool } from 'pg'
+import { publishRootRing } from '../apps/twzrd-aggregator/src/lib/publish.js'
+
+const DATABASE_URL =
+  process.env.DATABASE_URL || 'postgresql://twzrd:twzrd_password_2025@localhost:5432/twzrd_oracle'
+const PROGRAM_ID =
+  process.env.PROGRAM_ID || '4rArjoSZKrYkoE7hkvZNBP2Wpxovr78cfkxBnNwFNPn5'
+const MINT_PUBKEY =
+  process.env.MINT_PUBKEY || 'AAHd7u22jCMgmbF7ATkiY3BhkifD4MN3Vbsy4eYQGWN5'
+const PAYER_KEYPAIR =
+  process.env.PAYER_KEYPAIR || '/home/twzrd/.config/solana/oracle-authority.json'
+const RPC_URL =
+  process.env.RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+const AGGREGATOR_URL = process.env.AGGREGATOR_URL || 'http://127.0.0.1:8080'
+const BATCH_LIMIT = Number(process.env.BATCH_LIMIT || 60)
+
+const pool = new Pool({ connectionString: DATABASE_URL })
+
+type BacklogRow = { epoch: number; channel: string }
+
+async function fetchBacklog(): Promise<BacklogRow[]> {
+  const client = await pool.connect()
+  try {
+    const { rows } = await client.query<BacklogRow>(
+      `
+      SELECT epoch, channel
+      FROM sealed_epochs
+      WHERE (published IS NULL OR published = 0)
+      ORDER BY epoch ASC
+      LIMIT $1
+    `,
+      [BATCH_LIMIT]
+    )
+    return rows
+  } finally {
+    client.release()
+  }
+}
+
+async function getL2Root(channel: string, epoch: number): Promise<{ root: string; count: number } | null> {
+  const rootUrl = `${AGGREGATOR_URL}/claim-root?channel=${encodeURIComponent(channel)}&epoch=${epoch}`
+  const res = await fetch(rootUrl)
+  if (res.ok) {
+    const json = (await res.json()) as { root?: string; participantCount?: number }
+    if (json.root) {
+      return { root: json.root.replace(/^0x/, ''), count: Math.max(1, json.participantCount || 1) }
+    }
+  }
+
+  // If missing (404), trigger artifact build then retry once
+  if (res.status === 404) {
+    const artifactUrl = `${AGGREGATOR_URL}/claim-artifact?channel=${encodeURIComponent(channel)}&epoch=${epoch}`
+    const art = await fetch(artifactUrl)
+    if (!art.ok) return null
+    const again = await fetch(rootUrl)
+    if (!again.ok) return null
+    const json = (await again.json()) as { root?: string; participantCount?: number }
+    if (!json.root) return null
+    return { root: json.root.replace(/^0x/, ''), count: Math.max(1, json.participantCount || 1) }
+  }
+
+  return null
+}
+
+async function markPublished(channel: string, epoch: number) {
+  const client = await pool.connect()
+  try {
+    await client.query(
+      `UPDATE sealed_epochs SET published = 1 WHERE channel = $1 AND epoch = $2`,
+      [channel, epoch]
+    )
+  } finally {
+    client.release()
+  }
+}
+
+async function main() {
+  console.log('🔄 Publish backlog (Postgres)')
+  const backlog = await fetchBacklog()
+  if (!backlog.length) {
+    console.log('✅ Nothing to publish – backlog already empty.')
+    return
+  }
+
+  console.log(`Found ${backlog.length} unpublished epochs.`)
+
+  let success = 0
+  let skipped = 0
+
+  for (const { channel, epoch } of backlog) {
+    console.log(`\n→ ${channel}:${epoch}`)
+
+    try {
+      const l2 = await getL2Root(channel, epoch)
+      if (!l2) {
+        console.warn('  ! Unable to fetch L2 root – skipping')
+        skipped++
+        continue
+      }
+
+      console.log(`  Root: ${l2.root.slice(0, 12)}… count=${l2.count}`)
+
+      try {
+        const sig = await publishRootRing({
+          rpcUrl: RPC_URL,
+          programId: PROGRAM_ID,
+          mintPubkey: MINT_PUBKEY,
+          payerKeypairPath: PAYER_KEYPAIR,
+          channel,
+          epoch,
+          l2RootHex: l2.root,
+          claimCount: l2.count,
+        })
+
+        console.log(`  ✓ Published tx=${sig}`)
+      } catch (err: any) {
+        if (err?.message?.includes('0x1100')) {
+          console.log('  • Already published on-chain, marking complete.')
+        } else {
+          throw err
+        }
+      }
+
+      await markPublished(channel, epoch)
+      success++
+    } catch (err: any) {
+      console.error(`  ✖ ${err?.message || err}`)
+      skipped++
+    }
+  }
+
+  console.log('\nDone.')
+  console.log(`  Success: ${success}`)
+  console.log(`  Skipped/Failed: ${skipped}`)
+}
+
+main()
+  .catch((err) => {
+    console.error('Fatal error while publishing backlog:', err)
+    process.exit(1)
+  })
+  .finally(() => pool.end())
+

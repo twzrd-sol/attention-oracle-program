@@ -1,0 +1,150 @@
+#!/usr/bin/env npx tsx
+/**
+ * Close old epoch state accounts to recover rent
+ * This recovers the 13 accounts that were created before the ring buffer fix
+ */
+
+import { Connection, PublicKey, Keypair } from '@solana/web3.js';
+import { Program, AnchorProvider, Wallet } from '@coral-xyz/anchor';
+import { readFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+
+// Configuration
+const PROGRAM_ID = new PublicKey('4rArjoSZKrYkoE7hkvZNBP2Wpxovr78cfkxBnNwFNPn5');
+const MINT_PUBKEY = new PublicKey('ESt3DoTMTSxkabcsjiqYZUuNuGJsnkT9WD1CxpaVPhzk');
+const RPC_URL = process.env.RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+
+// Known old accounts (from your analysis)
+const OLD_ACCOUNTS = [
+  // Add the 13 account addresses here once we identify them
+  // These would be the epoch_state PDAs that were created
+];
+
+async function findOldAccounts() {
+  console.log('🔍 Finding Old Epoch State Accounts');
+  console.log('=====================================');
+
+  const connection = new Connection(RPC_URL, 'confirmed');
+
+  // Get all program accounts
+  console.log('Fetching program accounts...');
+  const accounts = await connection.getProgramAccounts(PROGRAM_ID, {
+    filters: [
+      {
+        // Filter for EpochState accounts (they have a specific size pattern)
+        dataSize: 196 // Approximate size of EpochState accounts
+      }
+    ]
+  });
+
+  console.log(`Found ${accounts.length} potential epoch state accounts`);
+
+  const epochAccounts = [];
+  for (const account of accounts) {
+    // Check if it's an epoch state account by examining the data
+    // EpochState has specific structure we can identify
+    try {
+      const data = account.account.data;
+
+      // Skip if too small
+      if (data.length < 100) continue;
+
+      // Check discriminator (first 8 bytes should match EpochState)
+      // This is a heuristic - adjust based on actual data
+      epochAccounts.push({
+        pubkey: account.pubkey.toString(),
+        lamports: account.account.lamports,
+        rentRecoverable: account.account.lamports / 1e9 // Convert to SOL
+      });
+    } catch (e) {
+      // Skip malformed accounts
+    }
+  }
+
+  return epochAccounts;
+}
+
+async function closeOldAccounts() {
+  console.log('💰 Closing Old Epoch State Accounts');
+  console.log('===================================');
+
+  // Load keypair
+  const keypairPath = join(homedir(), '.config/solana/oracle-authority.json');
+  const keypair = Keypair.fromSecretKey(
+    Uint8Array.from(JSON.parse(readFileSync(keypairPath, 'utf-8')))
+  );
+
+  // Create connection and provider
+  const connection = new Connection(RPC_URL, 'confirmed');
+  const wallet = new Wallet(keypair);
+  const provider = new AnchorProvider(connection, wallet, {
+    commitment: 'confirmed',
+  });
+
+  // Load IDL and create program
+  const idl = JSON.parse(readFileSync('./target/idl/milo_2022.json', 'utf-8'));
+  const program = new Program(idl, PROGRAM_ID, provider);
+
+  console.log(`Authority: ${keypair.publicKey}`);
+
+  // First find the accounts
+  const oldAccounts = await findOldAccounts();
+
+  if (oldAccounts.length === 0) {
+    console.log('No old epoch state accounts found');
+    return;
+  }
+
+  console.log(`\nFound ${oldAccounts.length} old epoch state accounts:`);
+  let totalRent = 0;
+  for (const acc of oldAccounts) {
+    console.log(`  ${acc.pubkey.slice(0, 8)}... - ${acc.rentRecoverable.toFixed(4)} SOL`);
+    totalRent += acc.rentRecoverable;
+  }
+  console.log(`Total recoverable: ${totalRent.toFixed(4)} SOL\n`);
+
+  // Derive protocol state PDA
+  const [protocolState] = PublicKey.findProgramAddressSync(
+    [Buffer.from('protocol')],
+    PROGRAM_ID
+  );
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const account of oldAccounts) {
+    try {
+      console.log(`Closing ${account.pubkey.slice(0, 8)}...`);
+
+      // Close the account
+      const tx = await program.methods
+        .closeOldEpochState()
+        .accounts({
+          authority: keypair.publicKey,
+          epochState: new PublicKey(account.pubkey),
+          protocolState,
+        })
+        .rpc();
+
+      console.log(`✅ Closed! TX: ${tx}`);
+      console.log(`   Recovered: ${account.rentRecoverable.toFixed(4)} SOL`);
+      successCount++;
+
+      // Wait to avoid rate limits
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+    } catch (error) {
+      console.error(`❌ Failed to close ${account.pubkey.slice(0, 8)}:`, error.message);
+      errorCount++;
+    }
+  }
+
+  console.log('\n=====================================');
+  console.log('Summary:');
+  console.log(`✅ Closed: ${successCount} accounts`);
+  console.log(`❌ Failed: ${errorCount} accounts`);
+  console.log(`💰 Total recovered: ${(successCount * totalRent / oldAccounts.length).toFixed(4)} SOL`);
+}
+
+closeOldAccounts().catch(console.error);

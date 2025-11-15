@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "twzrd-sdk",
+    "twzrd-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["TWZRD Inc."]
+license = "MIT"
+repository = "https://github.com/twzrd-sol/attention-oracle-program"
+homepage = "https://twzrd.xyz"
+
+[workspace.dependencies]
+solana-sdk = "1.18"
+solana-program = "1.18"
+spl-token-2022 = "3.0"
+anchor-lang = "0.30"
+borsh = "1.5"
+thiserror = "1.0"

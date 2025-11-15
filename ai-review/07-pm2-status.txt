@@ -1,0 +1,19 @@
+┌────┬──────────────────────┬─────────────┬─────────┬─────────┬──────────┬────────┬──────┬───────────┬──────────┬──────────┬──────────┬──────────┐
+│ id │ name                 │ namespace   │ version │ mode    │ pid      │ uptime │ ↺    │ status    │ cpu      │ mem      │ user     │ watching │
+├────┼──────────────────────┼─────────────┼─────────┼─────────┼──────────┼────────┼──────┼───────────┼──────────┼──────────┼──────────┼──────────┤
+│ 33 │ cls-aggregator       │ default     │ 1.0.0   │ fork    │ 2193502  │ 6m     │ 19   │ online    │ 100%     │ 138.8mb  │ twzrd    │ disabled │
+│ 36 │ cls-discovery        │ default     │ N/A     │ fork    │ 0        │ 0      │ 0    │ stopped   │ 0%       │ 0b       │ twzrd    │ disabled │
+│ 34 │ cls-worker-s0        │ default     │ 0.1.0   │ fork    │ 2193514  │ 6m     │ 8    │ online    │ 0%       │ 79.3mb   │ twzrd    │ disabled │
+│ 35 │ cls-worker-s1        │ default     │ 0.1.0   │ fork    │ 2193524  │ 6m     │ 8    │ online    │ 0%       │ 74.2mb   │ twzrd    │ disabled │
+│ 27 │ epoch-watcher        │ default     │ 1.0.0   │ fork    │ 2193549  │ 6m     │ 4    │ online    │ 0%       │ 51.2mb   │ twzrd    │ disabled │
+│ 8  │ gateway              │ default     │ 1.0.0   │ fork    │ 2554664  │ 4D     │ 567  │ online    │ 0%       │ 102.0mb  │ twzrd    │ disabled │
+│ 16 │ off-chain-monitor    │ default     │ N/A     │ fork    │ 3868437  │ 2D     │ 2    │ online    │ 0%       │ 66.8mb   │ twzrd    │ disabled │
+│ 1  │ stream-listener      │ default     │ 1.0.0   │ fork    │ 2201305  │ 4D     │ 4    │ online    │ 0%       │ 79.4mb   │ twzrd    │ disabled │
+│ 10 │ tree-builder         │ default     │ 1.0.0   │ fork    │ 2193536  │ 6m     │ 7    │ online    │ 0%       │ 63.7mb   │ twzrd    │ disabled │
+└────┴──────────────────────┴─────────────┴─────────┴─────────┴──────────┴────────┴──────┴───────────┴──────────┴──────────┴──────────┴──────────┘
+Module
+┌────┬──────────────────────────────┬───────────────┬──────────┬──────────┬──────┬──────────┬──────────┬──────────┐
+│ id │ module                       │ version       │ pid      │ status   │ ↺    │ cpu      │ mem      │ user     │
+├────┼──────────────────────────────┼───────────────┼──────────┼──────────┼──────┼──────────┼──────────┼──────────┤
+│ 0  │ pm2-logrotate                │ 3.0.0         │ 1163     │ online   │ 0    │ 0%       │ 90.6mb   │ twzrd    │
+└────┴──────────────────────────────┴───────────────┴──────────┴──────────┴──────┴──────────┴──────────┴──────────┘

@@ -1,0 +1,146 @@
+#!/usr/bin/env tsx
+/**
+ * Initialize Bubblegum Compressed NFT Tree for TWZRD Receipt Minting
+ *
+ * Full initialization using Metaplex Bubblegum SDK (Umi framework)
+ *
+ * Usage:
+ *   tsx scripts/twzrd/init-bubblegum-tree.ts --cluster devnet
+ *
+ * Env:
+ *   RPC_URL: Solana RPC endpoint (defaults to Helius devnet)
+ *   WALLET_PATH: Path to payer wallet (defaults to ~/.config/solana/id.json)
+ */
+
+import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
+import { createTree } from '@metaplex-foundation/mpl-bubblegum';
+import { generateSigner, keypairIdentity, percentAmount } from '@metaplex-foundation/umi';
+import { fromWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
+import { Keypair } from '@solana/web3.js';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Tree configuration for TWZRD receipts
+// Devnet: Smaller tree to fit within budget
+const TREE_CONFIG = {
+  maxDepth: 14,        // 2^14 = 16K receipts (sufficient for testing)
+  maxBufferSize: 64,   // Concurrent updates buffer
+  canopyDepth: 0,      // No canopy (saves space/cost)
+};
+
+async function main() {
+  const cluster = process.argv.includes('--cluster')
+    ? process.argv[process.argv.indexOf('--cluster') + 1]
+    : 'devnet';
+
+  const rpcUrl =
+    process.env.RPC_URL ||
+    (cluster === 'devnet'
+      ? 'https://devnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+      : 'https://api.mainnet-beta.solana.com');
+
+  const walletPath = process.env.WALLET_PATH || path.join(process.env.HOME!, '.config/solana/id.json');
+
+  console.log('╔═══════════════════════════════════════════════════════╗');
+  console.log('║     TWZRD Bubblegum Tree Initialization              ║');
+  console.log('╚═══════════════════════════════════════════════════════╝\n');
+
+  console.log(`📋 Configuration:`);
+  console.log(`  Cluster: ${cluster}`);
+  console.log(`  RPC: ${rpcUrl}`);
+  console.log(`  Wallet: ${walletPath}`);
+  console.log(`  Tree Depth: ${TREE_CONFIG.maxDepth} (${(2 ** TREE_CONFIG.maxDepth).toLocaleString()} receipts)`);
+  console.log(`  Buffer Size: ${TREE_CONFIG.maxBufferSize}`);
+  console.log(`  Canopy Depth: ${TREE_CONFIG.canopyDepth}\n`);
+
+  // Initialize Umi
+  const umi = createUmi(rpcUrl);
+
+  // Load payer
+  const payerSecretKey = JSON.parse(fs.readFileSync(walletPath, 'utf8'));
+  const payerKeypair = Keypair.fromSecretKey(Uint8Array.from(payerSecretKey));
+  const umiKeypair = fromWeb3JsKeypair(payerKeypair);
+
+  umi.use(keypairIdentity(umiKeypair));
+
+  console.log(`💰 Payer: ${payerKeypair.publicKey.toBase58()}`);
+
+  // Generate tree and config signers
+  const merkleTree = generateSigner(umi);
+
+  console.log(`🌳 Tree Address: ${merkleTree.publicKey}\n`);
+
+  console.log('🔨 Creating Bubblegum tree...');
+
+  try {
+    const builder = await createTree(umi, {
+      merkleTree,
+      maxDepth: TREE_CONFIG.maxDepth,
+      maxBufferSize: TREE_CONFIG.maxBufferSize,
+      canopyDepth: TREE_CONFIG.canopyDepth,
+      public: false, // Tree authority controls minting
+    });
+
+    const result = await builder.sendAndConfirm(umi, {
+      confirm: { commitment: 'confirmed' },
+      send: { skipPreflight: false },
+    });
+
+    console.log(`✅ Tree created successfully!\n`);
+    console.log(`  Signature: ${Buffer.from(result.signature).toString('base64')}`);
+    console.log(`  Explorer: https://explorer.solana.com/tx/${Buffer.from(result.signature).toString('base64')}?cluster=${cluster}\n`);
+
+    // Save tree info
+    const treeInfo = {
+      cluster,
+      treeAddress: merkleTree.publicKey.toString(),
+      treeAuthority: payerKeypair.publicKey.toBase58(),
+      maxDepth: TREE_CONFIG.maxDepth,
+      maxBufferSize: TREE_CONFIG.maxBufferSize,
+      canopyDepth: TREE_CONFIG.canopyDepth,
+      maxReceipts: 2 ** TREE_CONFIG.maxDepth,
+      createdAt: new Date().toISOString(),
+      signature: Buffer.from(result.signature).toString('base64'),
+    };
+
+    const jsonPath = path.join(__dirname, `../../config/twzrd-tree-${cluster}.json`);
+    fs.writeFileSync(jsonPath, JSON.stringify(treeInfo, null, 2));
+
+    const envPath = path.join(__dirname, `../../.env.${cluster}`);
+    const envContent = `\n# TWZRD Bubblegum Tree (${new Date().toISOString()})\nTWZRD_TREE_ADDRESS=${merkleTree.publicKey}\nTWZRD_TREE_AUTHORITY=${payerKeypair.publicKey.toBase58()}\n`;
+
+    fs.appendFileSync(envPath, envContent);
+
+    console.log('📝 Tree info saved:');
+    console.log(`  JSON: ${jsonPath}`);
+    console.log(`  Env: ${envPath}\n`);
+
+    console.log('📋 Next Steps:');
+    console.log('  1. Initialize epoch state:');
+    console.log(`     tsx scripts/twzrd/init-epoch-state.ts \\`);
+    console.log(`       --epoch <EPOCH> \\`);
+    console.log(`       --channel xqc \\`);
+    console.log(`       --root <ROOT_FROM_AGGREGATOR> \\`);
+    console.log(`       --tree ${merkleTree.publicKey} \\`);
+    console.log(`       --cluster ${cluster}`);
+    console.log('\n  2. Test cNFT minting:');
+    console.log(`     tsx scripts/twzrd/mint-receipt.ts \\`);
+    console.log(`       --user testuser \\`);
+    console.log(`       --channel xqc \\`);
+    console.log(`       --epoch <EPOCH> \\`);
+    console.log(`       --cluster ${cluster}\n`);
+
+  } catch (error: any) {
+    console.error('❌ Error creating tree:', error.message);
+    if (error.logs) {
+      console.error('\nProgram logs:');
+      error.logs.forEach((log: string) => console.error(`  ${log}`));
+    }
+    process.exit(1);
+  }
+}
+
+main().catch((err) => {
+  console.error('Fatal error:', err);
+  process.exit(1);
+});

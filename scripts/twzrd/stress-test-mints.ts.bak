@@ -1,0 +1,226 @@
+#!/usr/bin/env tsx
+/**
+ * TWZRD Stress Test - Mint Multiple Receipts
+ *
+ * Fetches participants from aggregator and mints receipts for N users
+ *
+ * Usage:
+ *   tsx scripts/twzrd/stress-test-mints.ts --channel rubius --epoch 1760481420 --count 10 --cluster devnet
+ */
+
+import { Connection, Keypair, PublicKey, Transaction, SystemProgram, TransactionInstruction } from '@solana/web3.js';
+import * as fs from 'fs';
+import { createHash } from 'crypto';
+
+const PROGRAM_ID = new PublicKey('Gc7FSSFkL4VoJUCtY5AF4mcwpnfWDBGzNXwPeSPjPBj6');
+const MPL_BUBBLEGUM_ID = new PublicKey('BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY');
+const SPL_ACCOUNT_COMPRESSION_ID = new PublicKey('cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK');
+const SPL_NOOP_ID = new PublicKey('noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV');
+const AGGREGATOR_URL = 'http://localhost:3001';
+
+// Parse args
+const args = process.argv.slice(2);
+const getArg = (name: string) => {
+  const idx = args.indexOf(name);
+  return idx !== -1 ? args[idx + 1] : undefined;
+};
+
+const channel = getArg('--channel') || 'rubius';
+const epoch = Number(getArg('--epoch'));
+const count = Number(getArg('--count') || 10);
+const cluster = getArg('--cluster') || 'devnet';
+const treeAddress = getArg('--tree') || 'NkpKhZKZTpAoiosAKASd6J8i89AeSK98byeTzb8N8Rq';
+
+if (!epoch) {
+  console.error('❌ Missing --epoch');
+  process.exit(1);
+}
+
+console.log('╔═══════════════════════════════════════════════════════╗');
+console.log('║     TWZRD Stress Test - Multi-Receipt Minter        ║');
+console.log('╚═══════════════════════════════════════════════════════╝\n');
+
+console.log(`📋 Configuration:`);
+console.log(`  Channel: ${channel}`);
+console.log(`  Epoch: ${epoch}`);
+console.log(`  Target: ${count} receipts`);
+console.log(`  Cluster: ${cluster}`);
+console.log(`  Tree: ${treeAddress}\n`);
+
+(async () => {
+  // Setup
+  const rpc = cluster === 'devnet'
+    ? 'https://devnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+    : 'https://api.mainnet-beta.solana.com';
+
+  const connection = new Connection(rpc, 'confirmed');
+  const payer = Keypair.fromSecretKey(
+    new Uint8Array(JSON.parse(fs.readFileSync('/home/twzrd/twzrd-token/twzrd-protocol-keypair.json', 'utf8')))
+  );
+
+  console.log(`💰 Payer: ${payer.publicKey.toBase58()}`);
+  const balance = await connection.getBalance(payer.publicKey);
+  console.log(`   Balance: ${(balance / 1e9).toFixed(4)} SOL\n`);
+
+  // Fetch participants from aggregator
+  console.log('🔍 Fetching participants from aggregator...');
+
+  const statsRes = await fetch(`${AGGREGATOR_URL}/stats?channel=${channel}&epoch=${epoch}`);
+  const stats = await statsRes.json();
+
+  console.log(`   Found ${stats.participants} participants`);
+  console.log(`   Will mint ${Math.min(count, stats.participants)} receipts\n`);
+
+  // Get epoch state PDA
+  const epochBytes = Buffer.alloc(8);
+  epochBytes.writeBigUInt64LE(BigInt(epoch));
+  const channelBytes = Buffer.from(channel, 'utf8');
+
+  const [epochStatePDA] = PublicKey.findProgramAddressSync(
+    [Buffer.from('epoch_state'), epochBytes, channelBytes],
+    PROGRAM_ID
+  );
+
+  const merkleTree = new PublicKey(treeAddress);
+  const [treeConfigPDA] = PublicKey.findProgramAddressSync([merkleTree.toBuffer()], MPL_BUBBLEGUM_ID);
+
+  console.log(`🔑 Epoch State: ${epochStatePDA.toBase58()}`);
+  console.log(`🌳 Tree: ${merkleTree.toBase58()}\n`);
+
+  // Mint receipts
+  let successCount = 0;
+  let failCount = 0;
+  const costs: number[] = [];
+
+  console.log('🚀 Starting mints...\n');
+
+  for (let i = 0; i < Math.min(count, stats.participants); i++) {
+    try {
+      console.log(`[${i + 1}/${count}] Fetching proof for index ${i}...`);
+
+      // Fetch proof by index
+      const proofRes = await fetch(
+        `${AGGREGATOR_URL}/proof-by-index?channel=${channel}&epoch=${epoch}&index=${i}`
+      );
+      const proofData = await proofRes.json();
+
+      if (proofData.error) {
+        throw new Error(proofData.error);
+      }
+
+      const { user_hash, proof } = proofData;
+
+      // Derive PDAs
+      const userHashTruncated = user_hash.substring(0, 32);
+      const userHashBytes = Buffer.from(userHashTruncated, 'utf8');
+
+      const [claimRecordPDA] = PublicKey.findProgramAddressSync(
+        [Buffer.from('claim'), epochBytes, channelBytes, userHashBytes],
+        PROGRAM_ID
+      );
+
+      // Build instruction
+      const discriminator = createHash('sha256')
+        .update('global:mint_receipt')
+        .digest()
+        .slice(0, 8);
+
+      const channelLen = Buffer.alloc(4);
+      channelLen.writeUInt32LE(channelBytes.length);
+
+      const epochBytesLE = Buffer.alloc(8);
+      epochBytesLE.writeBigUInt64LE(BigInt(epoch));
+
+      const userHashFullBytes = Buffer.from(user_hash, 'utf8');
+      const userHashLen = Buffer.alloc(4);
+      userHashLen.writeUInt32LE(userHashFullBytes.length);
+
+      const proofBuffers = proof.map((p: string) => Buffer.from(p, 'hex'));
+      const proofLen = Buffer.alloc(4);
+      proofLen.writeUInt32LE(proofBuffers.length);
+
+      const instructionData = Buffer.concat([
+        discriminator,
+        channelLen,
+        channelBytes,
+        epochBytesLE,
+        userHashLen,
+        userHashFullBytes,
+        proofLen,
+        ...proofBuffers,
+      ]);
+
+      const instruction = new TransactionInstruction({
+        keys: [
+          { pubkey: claimRecordPDA, isSigner: false, isWritable: true },
+          { pubkey: epochStatePDA, isSigner: false, isWritable: false },
+          { pubkey: treeConfigPDA, isSigner: false, isWritable: true },
+          { pubkey: payer.publicKey, isSigner: false, isWritable: false },
+          { pubkey: payer.publicKey, isSigner: false, isWritable: false },
+          { pubkey: merkleTree, isSigner: false, isWritable: true },
+          { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+          { pubkey: payer.publicKey, isSigner: false, isWritable: false },
+          { pubkey: MPL_BUBBLEGUM_ID, isSigner: false, isWritable: false },
+          { pubkey: SPL_NOOP_ID, isSigner: false, isWritable: false },
+          { pubkey: SPL_ACCOUNT_COMPRESSION_ID, isSigner: false, isWritable: false },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        programId: PROGRAM_ID,
+        data: instructionData,
+      });
+
+      const tx = new Transaction().add(instruction);
+      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      tx.feePayer = payer.publicKey;
+
+      console.log(`   Minting...`);
+      const signature = await connection.sendTransaction(tx, [payer], {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
+
+      await connection.confirmTransaction(signature, 'confirmed');
+
+      // Get cost
+      const txDetails = await connection.getTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+
+      const cost = txDetails?.meta?.fee || 0;
+      costs.push(cost);
+
+      console.log(`   ✅ Minted (${signature.substring(0, 8)}...) - ${cost} lamports\n`);
+      successCount++;
+    } catch (err: any) {
+      console.error(`   ❌ Failed: ${err.message}\n`);
+      failCount++;
+    }
+
+    // Small delay to avoid RPC throttling
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  console.log('\n╔═══════════════════════════════════════════════════════╗');
+  console.log('║     Stress Test Results                              ║');
+  console.log('╚═══════════════════════════════════════════════════════╝\n');
+
+  console.log(`✅ Successful mints: ${successCount}`);
+  console.log(`❌ Failed mints: ${failCount}`);
+
+  if (costs.length > 0) {
+    const avgCost = costs.reduce((a, b) => a + b, 0) / costs.length;
+    const totalCost = costs.reduce((a, b) => a + b, 0);
+
+    console.log(`\n💸 Costs:`);
+    console.log(`   Average: ${avgCost.toFixed(0)} lamports`);
+    console.log(`   Total: ${totalCost.toFixed(0)} lamports (${(totalCost / 1e9).toFixed(6)} SOL)`);
+    console.log(`   Per-receipt: ${(avgCost / 1e9).toFixed(9)} SOL`);
+  }
+
+  console.log('\n📊 Next Steps:');
+  console.log('   1. Add /proof-by-index endpoint to aggregator');
+  console.log('   2. Rerun stress test with full minting');
+  console.log('   3. Monitor tree capacity and costs');
+  console.log('   4. Start 48-hour soak test\n');
+})();

@@ -1,0 +1,40 @@
+{
+  "name": "@twzrd/sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript SDK for TWZRD Attention Oracle on Solana",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "solana",
+    "attention",
+    "oracle",
+    "twzrd",
+    "web3",
+    "blockchain",
+    "token",
+    "spl"
+  ],
+  "author": "TWZRD Inc.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/twzrd-sol/attention-oracle-program.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/twzrd-sol/attention-oracle-program/issues"
+  },
+  "homepage": "https://twzrd.xyz",
+  "peerDependencies": {
+    "@solana/web3.js": "^1.87.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,186 @@
+#!/usr/bin/env tsx
+/**
+ * Create Bubblegum Compressed NFT Tree for TWZRD Receipt Minting
+ *
+ * Usage:
+ *   tsx scripts/twzrd/create-bubblegum-tree.ts --cluster devnet
+ *
+ * Env:
+ *   RPC_URL: Solana RPC endpoint (defaults to Helius devnet)
+ *   WALLET_PATH: Path to payer wallet (defaults to ~/.config/solana/id.json)
+ */
+
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import {
+  SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+  SPL_NOOP_PROGRAM_ID,
+  getConcurrentMerkleTreeAccountSize,
+} from '@solana/spl-account-compression';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Bubblegum Program ID (mainnet/devnet)
+const BUBBLEGUM_PROGRAM_ID = new PublicKey('BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY');
+
+// Tree configuration for TWZRD receipts
+const TREE_CONFIG = {
+  maxDepth: 20,        // 2^20 = 1M receipts per tree
+  maxBufferSize: 64,   // Concurrent updates buffer
+  canopyDepth: 14,     // Reduces proof size (free verification for 14 nodes)
+};
+
+async function main() {
+  const cluster = process.argv.includes('--cluster')
+    ? process.argv[process.argv.indexOf('--cluster') + 1]
+    : 'devnet';
+
+  const rpcUrl =
+    process.env.RPC_URL ||
+    (cluster === 'devnet'
+      ? 'https://devnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+      : 'https://api.mainnet-beta.solana.com');
+
+  const walletPath = process.env.WALLET_PATH || path.join(process.env.HOME!, '.config/solana/id.json');
+
+  console.log('╔═══════════════════════════════════════════════════════╗');
+  console.log('║     TWZRD Bubblegum Tree Creation                    ║');
+  console.log('╚═══════════════════════════════════════════════════════╝\n');
+
+  console.log(`📋 Configuration:`);
+  console.log(`  Cluster: ${cluster}`);
+  console.log(`  RPC: ${rpcUrl}`);
+  console.log(`  Wallet: ${walletPath}`);
+  console.log(`  Tree Depth: ${TREE_CONFIG.maxDepth} (${2 ** TREE_CONFIG.maxDepth} receipts)`);
+  console.log(`  Buffer Size: ${TREE_CONFIG.maxBufferSize}`);
+  console.log(`  Canopy Depth: ${TREE_CONFIG.canopyDepth}\n`);
+
+  // Load payer
+  const connection = new Connection(rpcUrl, 'confirmed');
+  const payerSecretKey = JSON.parse(fs.readFileSync(walletPath, 'utf8'));
+  const payer = Keypair.fromSecretKey(Uint8Array.from(payerSecretKey));
+
+  console.log(`💰 Payer: ${payer.publicKey.toBase58()}`);
+  const balance = await connection.getBalance(payer.publicKey);
+  console.log(`   Balance: ${(balance / 1e9).toFixed(4)} SOL\n`);
+
+  if (balance < 0.1 * 1e9) {
+    console.error('❌ Insufficient balance. Need at least 0.1 SOL for tree creation.');
+    process.exit(1);
+  }
+
+  // Generate tree keypair
+  const treeKeypair = Keypair.generate();
+  const treeAddress = treeKeypair.publicKey;
+
+  console.log(`🌳 Generated Tree Address: ${treeAddress.toBase58()}\n`);
+
+  // Calculate space required
+  const space = getConcurrentMerkleTreeAccountSize(
+    TREE_CONFIG.maxDepth,
+    TREE_CONFIG.maxBufferSize,
+    TREE_CONFIG.canopyDepth
+  );
+
+  const rentExemption = await connection.getMinimumBalanceForRentExemption(space);
+
+  console.log(`📦 Tree Account:`);
+  console.log(`  Space: ${(space / 1024).toFixed(2)} KB`);
+  console.log(`  Rent: ${(rentExemption / 1e9).toFixed(6)} SOL\n`);
+
+  // Derive tree config PDA (authority for the tree)
+  const [treeConfig] = PublicKey.findProgramAddressSync(
+    [Buffer.from('tree_config'), treeAddress.toBuffer()],
+    BUBBLEGUM_PROGRAM_ID
+  );
+
+  console.log(`🔑 Tree Config PDA: ${treeConfig.toBase58()}\n`);
+
+  // Build transaction
+  console.log('🔨 Building transaction...');
+
+  const allocTreeIx = SystemProgram.createAccount({
+    fromPubkey: payer.publicKey,
+    newAccountPubkey: treeAddress,
+    lamports: rentExemption,
+    space,
+    programId: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+  });
+
+  // Initialize Merkle tree (via spl-account-compression)
+  // Note: This is a simplified version. Full implementation requires:
+  // 1. CPI to spl-account-compression:init_empty_merkle_tree
+  // 2. CPI to Bubblegum:create_tree_config
+  // For now, we'll create the account and document manual initialization
+
+  const tx = new Transaction().add(allocTreeIx);
+
+  console.log('🚀 Sending transaction...\n');
+
+  try {
+    const signature = await connection.sendTransaction(tx, [payer, treeKeypair], {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+
+    console.log(`  Signature: ${signature}`);
+    console.log(`  Explorer: https://explorer.solana.com/tx/${signature}?cluster=${cluster}\n`);
+
+    // Wait for confirmation
+    const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+
+    if (confirmation.value.err) {
+      console.error('❌ Transaction failed:', confirmation.value.err);
+      process.exit(1);
+    }
+
+    console.log('✅ Tree account created!\n');
+
+    // Save tree info
+    const treeInfo = {
+      cluster,
+      treeAddress: treeAddress.toBase58(),
+      treeConfig: treeConfig.toBase58(),
+      authority: payer.publicKey.toBase58(),
+      maxDepth: TREE_CONFIG.maxDepth,
+      maxBufferSize: TREE_CONFIG.maxBufferSize,
+      canopyDepth: TREE_CONFIG.canopyDepth,
+      maxReceipts: 2 ** TREE_CONFIG.maxDepth,
+      createdAt: new Date().toISOString(),
+      signature,
+    };
+
+    const outputPath = path.join(__dirname, `../../.env.${cluster}`);
+    const envContent = `\n# TWZRD Bubblegum Tree (${new Date().toISOString()})\nTWZRD_TREE_ADDRESS=${treeAddress.toBase58()}\nTWZRD_TREE_CONFIG=${treeConfig.toBase58()}\n`;
+
+    fs.appendFileSync(outputPath, envContent);
+
+    console.log('📝 Tree info saved to:', outputPath);
+    console.log('\n📋 Next Steps:');
+    console.log('  1. Initialize tree with Bubblegum (requires Metaplex CLI or custom script)');
+    console.log('  2. Initialize epoch state:');
+    console.log(`     tsx scripts/twzrd/init-epoch-state.ts \\`);
+    console.log(`       --epoch <EPOCH> \\`);
+    console.log(`       --channel xqc \\`);
+    console.log(`       --root <ROOT_FROM_AGGREGATOR> \\`);
+    console.log(`       --tree ${treeAddress.toBase58()} \\`);
+    console.log(`       --cluster ${cluster}`);
+    console.log('  3. Test cNFT minting with TWZRD proof\n');
+
+    console.log('⚠️  Important:');
+    console.log('  This script created the tree account. Full Bubblegum initialization requires:');
+    console.log('  - Metaplex Sugar CLI: `sugar create-tree --max-depth 20 --max-buffer-size 64`');
+    console.log('  - Or custom initialization via @metaplex-foundation/mpl-bubblegum SDK\n');
+
+  } catch (error: any) {
+    console.error('❌ Error creating tree:', error.message);
+    if (error.logs) {
+      console.error('Program logs:', error.logs);
+    }
+    process.exit(1);
+  }
+}
+
+main().catch((err) => {
+  console.error('Fatal error:', err);
+  process.exit(1);
+});

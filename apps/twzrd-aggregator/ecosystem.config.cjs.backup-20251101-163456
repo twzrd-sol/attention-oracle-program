@@ -1,0 +1,29 @@
+module.exports = {
+  apps: [{
+    name: 'milo-aggregator',
+    script: 'dist/server.js',
+    cwd: '/home/twzrd/milo-token/apps/twzrd-aggregator',
+    env: {
+      NODE_ENV: 'production',
+      ENABLE_AUTO_PUBLISH: 'true',
+      AUTO_FINALIZE: 'true',
+      // Enable MILO on-chain auto-publish (CLS publisher remains separate)
+      PUBLISH_ON_SEAL: 'true',
+      ANOMALY_GUARD: '0',
+      ANOMALY_MIN_EPOCHS: '5',
+      ANOMALY_LOWER_MULT: '0.3',
+      ANOMALY_UPPER_MULT: '5.0',
+      EPOCH_SECONDS: '3600',
+      PUBLISH_INTERVAL_MS: '300000',
+      PUBLISH_PER_TICK: '10',
+      MILO2022_PROGRAM: 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop',
+      MINT_PUBKEY: 'AAHd7u22jCMgmbF7ATkiY3BhkifD4MN3Vbsy4eYQGWN5',
+      PROGRAM_ID: 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop',
+      RPC_URL: 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+      PAYER_KEYPAIR: '/home/twzrd/milo-token/keys/twzrd-admin.json',
+      PORT: '8080',
+      MAX_PARTICIPANTS: '50000',
+      DB_CLEANUP_DAYS: '30'
+    }
+  }]
+};

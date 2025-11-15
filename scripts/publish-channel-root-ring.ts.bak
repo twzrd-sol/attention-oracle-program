@@ -1,0 +1,160 @@
+#!/usr/bin/env npx tsx
+/**
+ * Publish merkle root using ring buffer (NEW VERSION)
+ * This uses the 10-slot circular buffer instead of creating new accounts
+ *
+ * Usage: npx tsx scripts/publish-channel-root-ring.ts <channel> <epoch> <root> <network>
+ * Example: npx tsx scripts/publish-channel-root-ring.ts stableronaldo 1760886000 0xabcd... mainnet
+ */
+
+import { Connection, PublicKey, Keypair, SystemProgram } from '@solana/web3.js';
+import { Program, AnchorProvider, Wallet, BN } from '@coral-xyz/anchor';
+import { readFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+if (args.length < 4) {
+  console.error('Usage: npx tsx publish-channel-root-ring.ts <channel> <epoch> <root> <network>');
+  console.error('Example: npx tsx publish-channel-root-ring.ts stableronaldo 1760886000 0xabcd... mainnet');
+  process.exit(1);
+}
+
+const [channel, epochStr, rootHex, network] = args;
+const epoch = parseInt(epochStr);
+
+// Validate root format
+if (!rootHex.startsWith('0x') || rootHex.length !== 66) {
+  console.error('Root must be a 0x-prefixed 32-byte hex string (66 chars total)');
+  process.exit(1);
+}
+
+// Convert hex root to byte array
+const rootBytes = Buffer.from(rootHex.slice(2), 'hex');
+if (rootBytes.length !== 32) {
+  console.error('Invalid root length');
+  process.exit(1);
+}
+
+// Configuration
+const PROGRAM_ID = new PublicKey('4rArjoSZKrYkoE7hkvZNBP2Wpxovr78cfkxBnNwFNPn5');
+const MINT_PUBKEY = new PublicKey('ESt3DoTMTSxkabcsjiqYZUuNuGJsnkT9WD1CxpaVPhzk');
+
+// Network configuration
+const RPC_URLS = {
+  mainnet: 'https://mainnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+  devnet: 'https://api.devnet.solana.com',
+  localnet: 'http://localhost:8899'
+};
+
+const RPC_URL = process.env.RPC_URL || RPC_URLS[network] || RPC_URLS.mainnet;
+
+// Channel pubkey mapping
+const channelSeeds = {
+  'stableronaldo': 'BpMjQhWKKyzqgDCCxPYWCHhkC3YMKZqKeL3LjeJLKJNy',
+  'lacy': '3aDPjCVMJCPYhNcUNxY6gXKVBNefBfLj1SWnHBMKgLmk',
+  'yourragegaming': '8oQY5VvY1gNKBjz7wUTPzJQMfvHLMvJQ9aKVfC5YvgBz',
+  'kaicenat': 'EZqVqVBBBvR6xsftGzqQfszhmud6osGfCpo4eX6z5S5c',
+  'silky': '4vRJQzfPbjVCcBYFQVJmJbVfDPFMqvGzBLDzLqNBhcTX',
+  'jasontheween': 'G5abwCtRn9WF7YVHJBV8hPwbhJPQFRYZeWSPKvtkcfnt',
+  'adapt': '2LbZZ6WgE1jUmFUqzFJQpA5hCCQ7DkqEH8F5qKcWNuUE'
+};
+
+const streamerKey = new PublicKey(channelSeeds[channel] || channelSeeds['stableronaldo']);
+
+async function publishRoot() {
+  console.log('🚀 Publishing Merkle Root (Ring Buffer Version)');
+  console.log('===============================================');
+  console.log(`Channel: ${channel}`);
+  console.log(`Epoch: ${epoch}`);
+  console.log(`Root: ${rootHex}`);
+  console.log(`Streamer Key: ${streamerKey}`);
+  console.log(`Network: ${network}`);
+  console.log(`RPC: ${RPC_URL}`);
+  console.log('');
+
+  // Load keypair
+  const keypairPath = join(homedir(), '.config/solana/oracle-authority.json');
+  const keypair = Keypair.fromSecretKey(
+    Uint8Array.from(JSON.parse(readFileSync(keypairPath, 'utf-8')))
+  );
+
+  // Create connection and provider
+  const connection = new Connection(RPC_URL, 'confirmed');
+  const wallet = new Wallet(keypair);
+  const provider = new AnchorProvider(connection, wallet, {
+    commitment: 'confirmed',
+  });
+
+  // Load IDL and create program
+  const idl = JSON.parse(readFileSync('./target/idl/milo_2022.json', 'utf-8'));
+  const program = new Program(idl, PROGRAM_ID, provider);
+
+  console.log(`Authority: ${keypair.publicKey}`);
+
+  try {
+    // Derive PDAs
+    const [protocolState] = PublicKey.findProgramAddressSync(
+      [Buffer.from('protocol'), MINT_PUBKEY.toBuffer()],
+      PROGRAM_ID
+    );
+
+    const [channelState] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from('channel_state'),
+        streamerKey.toBuffer(),
+        MINT_PUBKEY.toBuffer()
+      ],
+      PROGRAM_ID
+    );
+
+    // Calculate which slot this will use
+    const slotIndex = epoch % 10;
+    console.log(`Will use slot ${slotIndex} in ring buffer`);
+
+    // Check if channel is initialized
+    const channelAccount = await connection.getAccountInfo(channelState);
+    if (!channelAccount) {
+      console.error('❌ Channel not initialized! Run initialize-channels.ts first.');
+      process.exit(1);
+    }
+
+    // Publish the root using ring buffer
+    console.log('Publishing root to chain...');
+
+    const tx = await program.methods
+      .setMerkleRootRing(
+        Array.from(rootBytes),
+        new BN(epoch),
+        100, // claim_count (adjust as needed)
+        streamerKey
+      )
+      .accounts({
+        updateAuthority: keypair.publicKey,
+        protocolState,
+        channelState,
+      })
+      .rpc();
+
+    console.log('✅ Root published using ring buffer!');
+    console.log(`Transaction: ${tx}`);
+    console.log(`Explorer: https://explorer.solana.com/tx/${tx}`);
+    console.log('');
+    console.log('Summary:');
+    console.log(`- Channel: ${channel}`);
+    console.log(`- Epoch: ${epoch}`);
+    console.log(`- Slot: ${slotIndex}`);
+    console.log(`- Cost: ~0.0005 SOL (transaction fee only)`);
+    console.log(`- No new account created! Reused existing slot ${slotIndex}`);
+
+  } catch (error) {
+    console.error('❌ Error publishing root:', error);
+    if (error.logs) {
+      console.error('Program logs:', error.logs);
+    }
+    process.exit(1);
+  }
+}
+
+publishRoot().catch(console.error);

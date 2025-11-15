@@ -1,0 +1,50 @@
+        tablename        | columns |  size   
+-------------------------+---------+---------
+ user_signals            |       6 | 2887 MB
+ channel_participation   |       4 | 752 MB
+ sealed_participants     |       5 | 182 MB
+ l2_tree_cache           |       6 | 105 MB
+ claimable_allocations   |      11 | 4344 kB
+ user_mapping            |       3 | 2352 kB
+ twitch_events_raw       |      10 | 2336 kB
+ sealed_epochs           |       5 | 272 kB
+ chatter_snapshots       |       6 | 80 kB
+ streams                 |       7 | 80 kB
+ payout_logs             |       8 | 80 kB
+ attention_index         |       6 | 64 kB
+ twitch_users            |       4 | 64 kB
+ cls_discovered_channels |       7 | 64 kB
+ processed_payouts       |       6 | 48 kB
+ user_wallets            |       5 | 40 kB
+ twitch_epoch_stats      |       9 | 40 kB
+ system_config           |       3 | 32 kB
+ reward_epochs           |      10 | 32 kB
+ twitch_minute_stats     |       7 | 32 kB
+ viewer_activity         |       6 | 16 kB
+ twitch_tokens           |       7 | 16 kB
+ twitch_events           |       4 | 16 kB
+(23 rows)
+
+ERROR:  syntax error at or near "''"
+LINE 1: SELECT '' as '';
+                     ^
+ERROR:  syntax error at or near "''"
+LINE 1: SELECT 'CURRENT ROW COUNTS:' as '';
+                                        ^
+ERROR:  column "sealed_participants.*" must appear in the GROUP BY clause or be used in an aggregate function
+LINE 1: SELECT sealed_participants as table_name, COUNT(*) as rows F...
+               ^
+ERROR:  syntax error at or near "''"
+LINE 1: SELECT '' as '';
+                     ^
+ERROR:  syntax error at or near "''"
+LINE 1: SELECT 'ALLOCATION DISTRIBUTION:' as '';
+                                             ^
+ metric | value 
+--------+-------
+ min    | 100
+ max    | 1000
+ p50    | 100
+ avg    | 100
+(4 rows)
+

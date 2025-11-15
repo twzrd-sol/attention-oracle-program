@@ -1,0 +1,33 @@
+// PM2 example config for milo-aggregator (no secrets)
+// Copy to `apps/twzrd-aggregator/ecosystem.config.cjs` and fill in your values.
+
+module.exports = {
+  apps: [{
+    name: 'milo-aggregator',
+    script: 'dist/server.js',
+    cwd: '/home/twzrd/milo-token/apps/twzrd-aggregator',
+    env: {
+      NODE_ENV: 'production',
+      ENABLE_AUTO_PUBLISH: 'true',
+      AUTO_FINALIZE: 'true',
+      PUBLISH_ON_SEAL: 'true',
+      ANOMALY_GUARD: '0',
+      ANOMALY_MIN_EPOCHS: '5',
+      ANOMALY_LOWER_MULT: '0.3',
+      ANOMALY_UPPER_MULT: '5.0',
+      EPOCH_SECONDS: '3600',
+      PUBLISH_INTERVAL_MS: '300000',
+      PUBLISH_PER_TICK: '10',
+      // Public mainnet program id (Token-2022)
+      MILO2022_PROGRAM: 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop',
+      PROGRAM_ID: 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop',
+      // Fill in your RPC and payer keypair path
+      RPC_URL: '<YOUR_MAINNET_RPC_URL>',
+      PAYER_KEYPAIR: '/absolute/path/to/your/payer.json',
+      PORT: '8080',
+      MAX_PARTICIPANTS: '50000',
+      DB_CLEANUP_DAYS: '30'
+    }
+  }]
+};
+

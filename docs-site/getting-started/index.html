@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Getting Started - TWZRD Documentation</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Getting Started</h1>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <div class="container">
+      <a href="../">Home</a>
+      <a href="./">Getting Started</a>
+      <a href="../api/">API Reference</a>
+      <a href="../cli/">CLI Docs</a>
+      <a href="../guides/">Guides</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <section>
+      <h2>Installation</h2>
+
+      <h3>TypeScript/JavaScript</h3>
+      <pre><code>npm install @twzrd/sdk
+# or
+yarn add @twzrd/sdk
+# or
+pnpm add @twzrd/sdk</code></pre>
+
+      <h3>Rust</h3>
+      <pre><code>cargo add twzrd-sdk</code></pre>
+
+      <h3>CLI Tool</h3>
+      <pre><code>cargo install twzrd-cli</code></pre>
+    </section>
+
+    <section>
+      <h2>Basic Usage</h2>
+
+      <h3>Connect to TWZRD</h3>
+      <pre><code>import { TwzrdClient } from '@twzrd/sdk';
+import { Connection, PublicKey } from '@solana/web3.js';
+
+// Connect to Solana mainnet
+const connection = new Connection('https://api.mainnet-beta.solana.com');
+const client = new TwzrdClient(connection);
+
+// Get channel information
+const streamerPubkey = new PublicKey('YOUR_STREAMER_PUBKEY');
+const channelState = await client.getChannelState(streamerPubkey);
+
+console.log('Channel epoch:', channelState.currentEpoch);
+console.log('Total minted:', channelState.totalMinted);</code></pre>
+    </section>
+
+    <section>
+      <h2>Core Concepts</h2>
+
+      <h3>Channels</h3>
+      <p>Each streamer has a channel represented on-chain. Channels manage their own mint and distribute tokens to verified viewers.</p>
+
+      <h3>Epochs</h3>
+      <p>Time is divided into 5-minute epochs. Viewers can claim tokens once per epoch if they're present during that time window.</p>
+
+      <h3>Claims</h3>
+      <p>Viewers authenticate via Twitch OAuth and submit claims to receive tokens. The program verifies presence and mints tokens to the user's Solana wallet.</p>
+    </section>
+
+    <section>
+      <h2>Next Steps</h2>
+      <ul>
+        <li><a href="../api/">Explore the API Reference</a></li>
+        <li><a href="../guides/">Read Integration Guides</a></li>
+        <li><a href="../cli/">Learn CLI Commands</a></li>
+        <li><a href="https://github.com/twzrd-sol/attention-oracle-program">View Source Code</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>Built in Houston, TX · MIT License · <a href="mailto:dev@twzrd.xyz">dev@twzrd.xyz</a></p>
+      <p>TWZRD™ is a trademark of TWZRD Inc.</p>
+    </div>
+  </footer>
+</body>
+</html>

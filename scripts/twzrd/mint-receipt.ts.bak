@@ -1,0 +1,196 @@
+#!/usr/bin/env tsx
+/**
+ * Mint a TWZRD participation receipt (cNFT placeholder) by submitting a merkle proof.
+ *
+ * Usage:
+ *   tsx scripts/twzrd/mint-receipt.ts \
+ *     --user testuser \
+ *     --channel xqc \
+ *     --epoch 1760240880 \
+ *     --tree Efn4hrQKxwH5GCFBzvtwPa4KuxycNN4PztWEPz2jCauC \
+ *     --cluster devnet
+ */
+
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from '@solana/web3.js';
+import { keccak256 } from 'js-sha3';
+import crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const PROGRAM_ID = new PublicKey('Gc7FSSFkL4VoJUCtY5AF4mcwpnfWDBGzNXwPeSPjPBj6');
+
+function getArg(flag: string, required = false): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) {
+    if (required) {
+      console.error(`Missing required flag ${flag}`);
+      process.exit(1);
+    }
+    return undefined;
+  }
+  return process.argv[idx + 1];
+}
+
+function toDiscriminator(name: string): Buffer {
+  return crypto.createHash('sha256').update(`global:${name}`).digest().slice(0, 8);
+}
+
+async function fetchProof(baseUrl: string, channel: string, epoch: string, user: string) {
+  const url = `${baseUrl.replace(/\/$/, '')}/receipt-proof?channel=${encodeURIComponent(channel)}&epoch=${epoch}&user=${encodeURIComponent(user)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Aggregator proof request failed (${res.status}): ${body}`);
+  }
+  return res.json() as Promise<{
+    channel: string;
+    epoch: number;
+    user_hash: string;
+    index: number;
+    proof: string[];
+    root: string;
+    total_participants: number;
+  }>;
+}
+
+async function main() {
+  const user = getArg('--user', true)!;
+  const channel = (getArg('--channel', true) || '').toLowerCase();
+  const epochArg = getArg('--epoch', true)!;
+  const treeArg = getArg('--tree', false);
+  const aggregator = getArg('--aggregator', false) || 'http://localhost:3001';
+  const cluster = getArg('--cluster', false) || 'devnet';
+  const recipientArg = getArg('--recipient', false);
+  const skipAggregator = process.argv.includes('--skip-aggregator');
+
+  const epoch = BigInt(epochArg);
+
+  const rpcUrl = process.env.RPC_URL
+    || (cluster === 'devnet'
+      ? 'https://devnet.helius-rpc.com/?api-key=1fc5da66-dd53-4041-9069-7300d1787973
+      : 'https://api.mainnet-beta.solana.com');
+
+  const walletPath = process.env.WALLET_PATH || path.join(process.env.HOME!, '.config/solana/id.json');
+  const payer = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(walletPath, 'utf8'))));
+  const recipientPubkey = recipientArg ? new PublicKey(recipientArg) : payer.publicKey;
+
+  // Load tree info from config if not provided
+  let treeAddress: PublicKey;
+  if (treeArg) {
+    treeAddress = new PublicKey(treeArg);
+  } else {
+    const configPath = path.join('config', `twzrd-tree-${cluster}.json`);
+    if (!fs.existsSync(configPath)) {
+      throw new Error('Tree address not provided and config file not found. Pass --tree <PUBKEY>.');
+    }
+    const treeInfo = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    treeAddress = new PublicKey(treeInfo.treeAddress);
+  }
+
+  console.log('╔═══════════════════════════════════════════════════════╗');
+  console.log('║                TWZRD Receipt Minting                 ║');
+  console.log('╚═══════════════════════════════════════════════════════╝\n');
+  console.log(`RPC: ${rpcUrl}`);
+  console.log(`Aggregator: ${aggregator}`);
+  console.log(`User: ${user}`);
+  console.log(`Channel: ${channel}`);
+  console.log(`Epoch: ${epoch}`);
+  console.log(`Tree: ${treeAddress.toBase58()}`);
+  console.log(`Recipient: ${recipientPubkey.toBase58()}\n`);
+
+  let proofResponse;
+  if (skipAggregator) {
+    // Offline mode: generate proof locally for single-user tree
+    const userHash = keccak256(user.toLowerCase());
+    console.log('⚠️  Skip aggregator mode: Using local proof generation\n');
+    proofResponse = {
+      channel,
+      epoch: Number(epoch),
+      user_hash: userHash,
+      index: 0,
+      proof: [], // Empty proof for single-leaf tree
+      root: '877cdde9d71a4be1785ee4b02b2694a248d26035b45ccb936b978ef26ab7c55f',
+      total_participants: 1,
+    };
+  } else {
+    proofResponse = await fetchProof(aggregator, channel, epoch.toString(), user);
+  }
+
+  console.log('Proof fetched from TWZRD aggregator:');
+  console.log(`  Participants: ${proofResponse.total_participants}`);
+  console.log(`  Root: ${proofResponse.root}`);
+  console.log(`  Index: ${proofResponse.index}`);
+
+  const userHash = proofResponse.user_hash;
+  if (userHash.length !== 64) {
+    throw new Error(`Unexpected user_hash length (${userHash.length}), expected 64 hex chars`);
+  }
+
+  const connection = new Connection(rpcUrl, 'confirmed');
+
+  const epochBuf = Buffer.alloc(8);
+  epochBuf.writeBigUInt64LE(epoch);
+  const channelBytes = Buffer.from(channel);
+
+  const [epochState] = PublicKey.findProgramAddressSync(
+    [Buffer.from('epoch_state'), epochBuf, channelBytes],
+    PROGRAM_ID,
+  );
+
+  const discriminator = toDiscriminator('mint_receipt');
+
+  const channelLen = Buffer.alloc(4);
+  channelLen.writeUInt32LE(channelBytes.length);
+
+  const epochBytes = Buffer.alloc(8);
+  epochBytes.writeBigUInt64LE(epoch);
+
+  const userHashBytes = Buffer.from(userHash, 'utf8');
+  const userHashLen = Buffer.alloc(4);
+  userHashLen.writeUInt32LE(userHashBytes.length);
+
+  const proofBuffers = proofResponse.proof.map((hex) => Buffer.from(hex, 'hex'));
+  const proofLen = Buffer.alloc(4);
+  proofLen.writeUInt32LE(proofBuffers.length);
+  const proofBytes = Buffer.concat(proofBuffers);
+
+  const data = Buffer.concat([
+    discriminator,
+    channelLen,
+    channelBytes,
+    epochBytes,
+    userHashLen,
+    userHashBytes,
+    proofLen,
+    proofBytes,
+  ]);
+
+  const ix = new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: epochState, isSigner: false, isWritable: false },
+      { pubkey: treeAddress, isSigner: false, isWritable: true },
+      { pubkey: recipientPubkey, isSigner: false, isWritable: false },
+      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+
+  const tx = new Transaction().add(ix);
+  tx.feePayer = payer.publicKey;
+  const { blockhash } = await connection.getLatestBlockhash();
+  tx.recentBlockhash = blockhash;
+
+  const sig = await connection.sendTransaction(tx, [payer]);
+
+  console.log('\n✅ Receipt mint transaction submitted');
+  console.log('Signature:', sig);
+  console.log(`Explorer: https://explorer.solana.com/tx/${sig}?cluster=${cluster}`);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+
