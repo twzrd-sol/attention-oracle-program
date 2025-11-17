@@ -32,6 +32,25 @@ function ensureAuth(token?: string) {
   }
 }
 
+function requireTwitchHeaders(req: Request, res: Response, next: NextFunction) {
+  const headerId = String(req.headers['x-twitch-user-id'] || '').trim()
+  const headerLogin = String(req.headers['x-twitch-login'] || '').trim()
+  if (!headerId || !headerLogin) {
+    return res.status(401).json({ error: 'missing_twitch_auth' })
+  }
+  const bodyId = normalizeTwitchId(req.body)
+  const bodyLogin = normalizeUsername(req.body)
+  if (bodyId && bodyId !== headerId) {
+    return res.status(403).json({ error: 'twitch_id_mismatch' })
+  }
+  if (bodyLogin && bodyLogin.toLowerCase() !== headerLogin.toLowerCase()) {
+    return res.status(403).json({ error: 'twitch_login_mismatch' })
+  }
+  req.body.twitch_id = bodyId || headerId
+  req.body.login = bodyLogin || headerLogin
+  next()
+}
+
 function ensureWalletFormat(wallet: string) {
   try {
     const decoded = bs58.decode(wallet)
@@ -54,7 +73,7 @@ export function createWalletBindingRouter({ db, apiToken }: RouterOptions) {
     legacyHeaders: false,
   })
 
-  router.post('/bind-wallet', bindLimiter, auth, async (req, res) => {
+  router.post('/bind-wallet', bindLimiter, auth, requireTwitchHeaders, async (req, res) => {
     const twitchId = normalizeTwitchId(req.body)
     if (!twitchId) return res.status(400).json({ error: 'missing_twitch_id' })
     const wallet = String(req.body?.wallet || '').trim()

@@ -8,6 +8,8 @@ export function getChannelMaxClaims(): number {
 
 /** Env gate for ring-claim API exposure */
 export function isRingEnabled(): boolean {
-  return String(process.env.RING_CLAIMS_ENABLED || 'false').toLowerCase() === 'true'
+  if (typeof process.env.RING_CLAIMS_ENABLED === 'string') {
+    return process.env.RING_CLAIMS_ENABLED.toLowerCase() === 'true'
+  }
+  return (process.env.NODE_ENV || '').toLowerCase() === 'staging'
 }
-

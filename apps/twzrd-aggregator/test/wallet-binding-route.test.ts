@@ -20,7 +20,7 @@ class InMemoryBindingStore implements WalletBindingStore {
 }
 
 const TEST_TOKEN = 'test-secret'
-const TEST_WALLET = '11111111111111111111111111111111' // base58 zero pubkey (32 bytes)
+const TEST_WALLET = bs58.encode(Buffer.from(Array.from({ length: 32 }, (_, i) => i % 256)))
 
 const db = new InMemoryBindingStore()
 const app = express()
@@ -34,6 +34,8 @@ async function run() {
   const bindResp = await request(app)
     .post('/bind-wallet')
     .set('x-bind-token', TEST_TOKEN)
+    .set('x-twitch-user-id', twitchId)
+    .set('x-twitch-login', username)
     .send({ twitch_id: twitchId, login: username, wallet: TEST_WALLET })
     .expect(200)
 
