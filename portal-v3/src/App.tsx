@@ -2,150 +2,57 @@ import React from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import ClaimCLS from './components/ClaimCLS';
 import { PasswordProtect } from './components/PasswordProtect';
+import ErrorBoundary from './components/ErrorBoundary';
 import { getClusterName, isMainnet } from './lib/solana';
 
 export const App: React.FC = () => {
   return (
     <PasswordProtect>
-      <div style={styles.appContainer}>
+      <div className="min-h-screen flex flex-col bg-gray-50">
         {/* Header */}
-        <header style={styles.header}>
-        <div style={styles.headerContent}>
-          <div style={styles.headerBrand}>
-            <h1 style={styles.brandName}>TWZRD</h1>
-            <p style={styles.brandTagline}>Attention Oracle Portal</p>
+        <header className="bg-white border-b border-gray-200 shadow-sm">
+          <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div className="flex flex-col gap-1">
+              <h1 className="text-3xl font-extrabold text-gray-800 tracking-tight">TWZRD</h1>
+              <p className="text-xs text-gray-500 font-medium">Attention Oracle Portal</p>
+            </div>
+            <WalletMultiButton />
           </div>
-          <WalletMultiButton />
-        </div>
-        {!isMainnet() && (
-          <div style={styles.networkBanner}>
-                    ⚠️ {getClusterName()} Network
+          {!isMainnet() && (
+            <div className="bg-amber-200 text-amber-800 py-2 text-center text-sm font-medium border-t border-amber-300">
+              ⚠️ {getClusterName()} Network
+            </div>
+          )}
+        </header>
+
+        {/* Main Content */}
+        <main className="flex-1 max-w-7xl mx-auto w-full px-6 py-8">
+          <ErrorBoundary>
+            <ClaimCLS />
+          </ErrorBoundary>
+        </main>
+
+        {/* Footer */}
+        <footer className="bg-white border-t border-gray-200 py-8 mt-auto">
+          <div className="max-w-7xl mx-auto text-center">
+            <p className="text-sm text-gray-500 mb-2">
+              Learn more about{' '}
+              <a href="https://github.com/twzrd-sol/attention-oracle-program" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-medium">
+                Attention Oracle
+              </a>
+              {' '}| Join the{' '}
+              <a href="https://discord.gg/twzrd" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-medium">
+                Discord Community
+              </a>
+            </p>
+            <p className="text-xs text-gray-400">
+              Running on <strong>{getClusterName()}</strong>
+            </p>
           </div>
-        )}
-      </header>
-
-      {/* Main Content */}
-      <main style={styles.main}>
-        <ClaimCLS />
-      </main>
-
-      {/* Footer */}
-      <footer style={styles.footer}>
-        <div style={styles.footerContent}>
-          <p style={styles.footerText}>
-            Learn more about{' '}
-            <a href="https://github.com/twzrd-sol/attention-oracle-program" target="_blank" rel="noopener noreferrer" style={styles.footerLink}>
-              Attention Oracle
-            </a>
-            {' '}| Join the{' '}
-            <a href="https://discord.gg/twzrd" target="_blank" rel="noopener noreferrer" style={styles.footerLink}>
-              Discord Community
-            </a>
-          </p>
-          <p style={styles.footerMeta}>
-            Running on{' '}
-            <strong>{getClusterName()}</strong>
-          </p>
-        </div>
-      </footer>
-    </div>
+        </footer>
+      </div>
     </PasswordProtect>
   );
-};
-
-const styles = {
-  appContainer: {
-    minHeight: '100vh',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    backgroundColor: '#f9fafb',
-  },
-
-  header: {
-    backgroundColor: '#ffffff',
-    borderBottom: '1px solid #e5e7eb',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-  } as React.CSSProperties,
-
-  headerContent: {
-    maxWidth: '1200px',
-    margin: '0 auto',
-    padding: '1rem 1.5rem',
-    width: '100%',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  } as React.CSSProperties,
-
-  headerBrand: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '0.25rem',
-  } as React.CSSProperties,
-
-  brandName: {
-    fontSize: '1.5rem',
-    fontWeight: '800',
-    margin: '0',
-    color: '#1f2937',
-    letterSpacing: '-0.5px',
-  } as React.CSSProperties,
-
-  brandTagline: {
-    fontSize: '0.8rem',
-    color: '#6b7280',
-    margin: '0',
-    fontWeight: '500',
-  } as React.CSSProperties,
-
-  networkBanner: {
-    backgroundColor: '#fef3c7',
-    color: '#92400e',
-    padding: '0.5rem 1.5rem',
-    textAlign: 'center' as const,
-    fontSize: '0.85rem',
-    fontWeight: '500',
-    borderTop: '1px solid #fcd34d',
-  } as React.CSSProperties,
-
-  main: {
-    flex: 1,
-    maxWidth: '1200px',
-    margin: '0 auto',
-    width: '100%',
-    padding: '2rem 1.5rem',
-  } as React.CSSProperties,
-
-  footer: {
-    backgroundColor: '#ffffff',
-    borderTop: '1px solid #e5e7eb',
-    padding: '2rem 1.5rem',
-    marginTop: 'auto',
-  } as React.CSSProperties,
-
-  footerContent: {
-    maxWidth: '1200px',
-    margin: '0 auto',
-    textAlign: 'center' as const,
-  } as React.CSSProperties,
-
-  footerText: {
-    fontSize: '0.9rem',
-    color: '#6b7280',
-    margin: '0 0 0.5rem 0',
-  } as React.CSSProperties,
-
-  footerMeta: {
-    fontSize: '0.85rem',
-    color: '#9ca3af',
-    margin: '0',
-  } as React.CSSProperties,
-
-  footerLink: {
-    color: '#3b82f6',
-    textDecoration: 'none',
-    fontWeight: '500',
-  } as React.CSSProperties,
 };
 
 export default App;
