@@ -21,7 +21,7 @@ export const TOKEN_2022_PROGRAM_ID = new PublicKey(
 );
 
 export const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
-  'ATokenGPvbdGVxr1B9Ad56N8mtXfbNvfnZyodm3Rtn'
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
 );
 
 /**
