@@ -1,202 +1,206 @@
-# ATTENTION ORACLE - Quick Reference (Cheat Sheet)
+# Quick Reference - Off-Chain Operations
 
-**Read this first. Then read CLAUDE.md for details.**
-
----
-
-## 🎯 TL;DR
-
-| What | Answer |
-|------|--------|
-| **Project Name** | Attention Oracle (never "milo" publicly) |
-| **What is it?** | Solana oracle that distributes creator tokens based on verifiable engagement |
-| **Program ID** | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` |
-| **GitHub** | https://github.com/twzrd-sol/attention-oracle-program |
-| **Status** | Mainnet live, grant application ready, hybrid fees implemented |
-| **Tech Stack** | Anchor (Rust), Token-2022, Solana |
-| **Temperature** | 0 (deterministic), Top_P 0.2 (focused) |
+**For daily use**: Copy these commands to your terminal as needed.
 
 ---
 
-## 🏗️ Architecture (One Sentence Each)
+## 📊 System Health Check (60 seconds)
 
-| Component | What It Does |
-|-----------|-------------|
-| **PassportRegistry** | Tiers (0-6) track user engagement; tied to Twitch verification |
-| **Transfer Hook** | Observes transfers, looks up passport tier, calculates fees, emits event |
-| **Harvest Instruction** | Keeper-invoked; withdraws withheld fees and distributes to treasury/creators |
-| **Ring Buffer** | Stores 10 epochs of merkle roots per channel (1024 claims each) |
-| **Merkle Claims** | Viewers claim tokens with zero-knowledge proofs (gas-efficient) |
-
----
-
-## 💰 Fee Structure
-
-```
-Total Fee: 0.1% (10 basis points)
-├── Treasury: 0.05% (fixed)
-└── Creator: 0.05% × Tier Multiplier
-    ├── Tier 0: 0.0x (no passport) → 0%
-    ├── Tier 1: 0.2x (emerging) → 0.01%
-    ├── Tier 2: 0.4x (active) → 0.02%
-    ├── Tier 3: 0.6x (established) → 0.03%
-    ├── Tier 4: 0.8x (featured) → 0.04%
-    └── Tier 5: 1.0x (elite) → 0.05%
-```
-
----
-
-## 🚀 Solana Grant ($45k, 4 Milestones)
-
-| Milestone | Funding | Deliverable |
-|-----------|---------|------------|
-| 1. Devnet | $12k | Security audit, gas optimization, docs |
-| 2. Mainnet | $10k | Keeper bot, monitoring, SLA |
-| 3. Creators | $13k | Onboard 15 streamers, tools, dashboard |
-| 4. Users | $10k | Marketing, 10K MAU, 50K claims |
-
-**Status**: Ready to submit (all code done, security.txt embedded)
-
----
-
-## ⚡ Critical Decisions
-
-| Decision | Choice | Why |
-|----------|--------|-----|
-| Fee Distribution | Hook observes + Harvest distributes | Token-2022 respects authority constraints |
-| Tier Lookup | remaining_accounts | Flexible, caller provides context |
-| Multiplier Storage | u32 fixed-point | Borsh-serializable, no float precision issues |
-| Gas Budget | +1.5k CU per transfer | Acceptable vs. transparency value |
-| Harvest | Keeper-invoked (not automatic) | Allows batching, respects Token-2022 authority |
-| Open Source | MIT license | Public good, ecosystem > lock-in |
-
----
-
-## 🔒 Security & Constraints
-
-### Token-2022 Rules
-- ❌ DON'T: CPI transfers from hook (no authority)
-- ❌ DON'T: Mutate program state in hook
-- ✅ DO: Emit events from hook
-- ✅ DO: Harvest in separate instruction (admin-signed)
-
-### Sybil Resistance
-- Passport tier = verifiable engagement (not self-reported)
-- Tier 0 = no fees (prevents bots from claiming)
-- Admin controls passport issuance
-
----
-
-## 📝 Key Files (Read Order)
-
-1. **CLAUDE.md** — Canonical reference (this session + future)
-2. **DECISION_LOG.md** — Why each choice was made
-3. **GitHub README** — User-facing explanation
-4. **programs/token-2022/src/lib.rs** — Program entrypoints
-5. **SECURITY.md** — Vulnerability disclosure
-
----
-
-## 🎓 "First Principles" Checklist
-
-Before any code change, verify:
-
-- [ ] Does it respect Token-2022 (no forbidden CPI patterns)?
-- [ ] Is it sybil-resistant (can't be exploited by fakes)?
-- [ ] Is it composable (can other projects fork this)?
-- [ ] Is it gas-efficient (<150k CU)?
-- [ ] Is it user-friendly (<10 clicks, explainable)?
-
-If all ✅, implement. If any ❌, escalate to user.
-
----
-
-## 🛠️ Common Tasks
-
-### Check Build Status
 ```bash
-cargo build-sbf 2>&1 | tail -5
+# All-in-one dashboard
+watch -n 1 'echo "=== SWAP ===" && free -h | grep Swap && echo "=== LOAD ===" && uptime && echo "=== PM2 ===" && pm2 list | head -12'
 ```
 
-### Verify Security.txt in Binary
+**What to watch for**:
+- Swap: Should be < 20% (alert if > 20%)
+- Load: Should be < 8 on 8-core system (alert if > 8)
+- PM2: All services should show `online`
+
+---
+
+## 🔧 Daily Operations
+
+### Check Alert Logs
 ```bash
-strings target/deploy/token_2022.so | sed -n '/=======BEGIN SECURITY.TXT/,/=======END SECURITY.TXT/p'
+# View latest hourly alerts
+tail -20 /var/log/twzrd-daily-alerts.log
+
+# Follow alerts in real-time
+tail -f /var/log/twzrd-daily-alerts.log
 ```
 
-### Check Git Status
+### Check Service Logs
 ```bash
-git status --short | grep -E "\.rs|\.toml"
+# View all PM2 logs
+pm2 logs
+
+# Follow specific service
+pm2 logs milo-aggregator -f
+
+# Last 50 lines of errors
+pm2 logs --lines 100 | grep -i error
 ```
 
-### Initialize Devnet (Post-Grant)
+### Verify Services
 ```bash
-tsx scripts/initialize-devnet.ts
-# Then test with Tier 0, 1, 6 passports
+# Quick status
+pm2 list
+
+# Detailed status
+pm2 info <service-name>
+
+# Recent restarts
+pm2 list | grep -E "↺|restart"
 ```
 
 ---
 
-## 🚨 DO NOT EVER
+## 🚨 Emergency Actions
 
-- [ ] Use "milo" in public communications
-- [ ] Hardcode credentials (use env vars)
-- [ ] Break sybil-resistance (gates must be real)
-- [ ] Ignore Token-2022 authority constraints
-- [ ] Implement features not in DECISION_LOG
+### Swap Thrashing (> 50%)
+```bash
+# Clear swap immediately
+sudo swapoff -a && sudo swapon -a
+free -h
 
----
+# If continues, identify memory hogs
+ps aux --sort=-%mem | head -10
+```
 
-## 📊 Success Metrics (North Star)
+### High Load (> 10)
+```bash
+# Check what's consuming CPU
+top -b -n 1 | head -20
 
-**By End 2025**:
-- ✅ Mainnet deployed (DONE)
-- ⏳ Grant awarded
-- ⏳ Security audit passed
+# Check for error spikes
+pm2 logs --lines 100 | grep -i error
 
-**By End 2026**:
-- ⏳ 50+ creator channels
-- ⏳ 10K MAU (Monthly Active Users)
-- ⏳ 100K+ claims executed
-- ⏳ $50K distributed to creators
+# Restart specific service if stuck
+pm2 restart <service-name>
+```
 
----
+### Service Crash Loop
+```bash
+# Stop the crashing service
+pm2 stop <service-name>
 
-## 🔗 Quick Links
+# Check error logs
+pm2 logs <service-name> --lines 100
 
-| What | Link |
-|------|------|
-| GitHub | https://github.com/twzrd-sol/attention-oracle-program |
-| Program | https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop |
-| Security | https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md |
-| Solana Grants | https://solana.org/grants |
-| This Repo (Internal) | /home/twzrd/milo-token/ |
+# View config
+grep -A 10 <service-name> ecosystem.config.js
 
----
-
-## 🎭 Role Clarity
-
-| Role | Person | Responsibility |
-|------|--------|-----------------|
-| **Product** | User (twzrd-sol) | Vision, milestone selection, go/no-go decisions |
-| **Architecture** | Claude Code | First-principles decisions, code review, documentation |
-| **Implementation** | Both | Code + testing |
-| **Verification** | Claude Code | Build validation, security checks, git history |
+# Restart when ready
+pm2 restart <service-name>
+```
 
 ---
 
-## ⏭️ Next Immediate Actions
+## 📅 Scheduled Maintenance
 
-1. **Submit Solana Grant** (use template provided)
-2. **Post-Award** (if funded):
-   - Week 1: Devnet deployment
-   - Week 2-3: Security audit
-   - Week 4-8: Keeper bot + onboarding
-   - Month 2: Creator & user adoption
+**Monday 00:00 UTC** - Weekly health check (automated)
+```bash
+# Or run manually anytime:
+bash /home/twzrd/milo-token/scripts/ops/weekly-health-check.sh
+```
+
+**Wednesday 02:00 UTC** - System updates (manual, low-traffic window)
+```bash
+sudo apt update && sudo apt upgrade -y && sudo apt autoclean
+# Then reboot during window
+```
+
+**Friday 01:00 UTC** - Service restart (automated)
+```bash
+# Or run manually anytime:
+pm2 restart all
+sleep 2
+curl -s http://localhost:8080/health | jq .
+```
 
 ---
 
-**Version**: 1.0
-**Last Updated**: November 13, 2025, 19:05 UTC
-**Next Review**: After Solana Foundation feedback (expected Dec 2025)
+## 📋 Installation (One-Time Setup)
 
-*This is the quick reference. Details are in CLAUDE.md.*
+### Install Automated Maintenance Cron Jobs
+
+```bash
+# Interactive setup (recommended)
+sudo bash /home/twzrd/milo-token/scripts/ops/CRONTAB_SETUP.sh
+
+# Verify installation
+crontab -l | grep twzrd
+```
+
+This installs three automation tasks:
+- **Mon 00:00 UTC**: Weekly health check → `/var/log/twzrd-health.log`
+- **Every hour**: Daily alerts → `/var/log/twzrd-daily-alerts.log`
+- **Fri 01:00 UTC**: Service restart + verification → `/var/log/twzrd-restart.log`
+
+---
+
+## 📂 Important Files & Locations
+
+### Automation Scripts
+```
+/home/twzrd/milo-token/scripts/ops/
+├── weekly-health-check.sh       (Mon health check)
+├── daily-alerts.sh              (Hourly alerts)
+└── CRONTAB_SETUP.sh            (Cron installer)
+```
+
+### Configuration
+```
+/home/twzrd/milo-token/
+├── ecosystem.config.js          (PM2 config + env vars)
+├── .env                         (Local environment vars)
+└── apps/twzrd-aggregator/      (Off-chain aggregator code)
+```
+
+### Documentation
+```
+/home/twzrd/milo-token/
+├── OPERATIONAL_PROCEDURES.md    (Weekly tasks, emergencies)
+├── MAINTENANCE_SCHEDULE.md      (Full schedule + checklists)
+├── AUTOMATION_STATUS.md         (This automation's status)
+├── SOURCE_OF_TRUTH.md          (Canonical file locations)
+└── VPS_HEALTH_REPORT.md        (System baseline)
+```
+
+---
+
+## 🎯 Success Indicators
+
+**System is healthy when**:
+- ✅ Swap < 20%
+- ✅ Load < 8 (on 8-core system)
+- ✅ All PM2 services `online`
+- ✅ No ERROR spikes in logs (< 5 per hour)
+- ✅ Restart counts stable (< 1 per day per service)
+
+**Alert conditions**:
+- 🚨 Swap > 20% → Review memory usage
+- 🚨 Load > 8 → Check CPU, restart if stuck
+- 🚨 Crashes > 0 → Review service logs, check config
+
+---
+
+## 📞 Getting Help
+
+**Check the full guides**:
+```bash
+# Emergency procedures
+cat /home/twzrd/milo-token/OPERATIONAL_PROCEDURES.md | grep "🚨 Emergency"
+
+# Weekly schedule details
+cat /home/twzrd/milo-token/MAINTENANCE_SCHEDULE.md
+
+# Current automation status
+cat /home/twzrd/milo-token/AUTOMATION_STATUS.md
+```
+
+---
+
+**Last Updated**: 2025-11-15 08:52 UTC
+**Temperature**: Deterministic (0.0) - Follow procedures exactly
+**Owner**: Agent B (Off-Chain Infrastructure)

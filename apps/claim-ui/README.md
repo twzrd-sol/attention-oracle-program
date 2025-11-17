@@ -1,27 +1,38 @@
-# CLS Claim UI
+# Attention Oracle Claim Portal
 
-**A minimal, trustless interface for claiming CLS tokens on Solana mainnet.**
+**A trustless, Anchor-powered interface for claiming creator tokens from Twitch channel rewards.**
+
+**Status**: ✅ Phase 2 Complete - 4-component claim flow with Anchor integration
 
 ## Quick Links
 
-- **Full Guide**: See `CLS_CLAIM_UI.md`
-- **Sample Proof**: See `sample-proof.json`
+- **Architecture**: See `ANCHOR_HOOKS_STRUCTURE.md`
 - **Program Source**: `../../programs/token-2022/src/instructions/merkle_ring.rs`
+- **Program ID**: `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` (mainnet)
 
 ## What Is This?
 
-A standalone React + Vite application for submitting token claims using Merkle tree proofs. No backend required—all verification happens on-chain.
+A React + TypeScript + Anchor application implementing a 4-step claim flow for Attention Oracle tokens:
+
+1. **ProofUpload** - Load merkle proof from file or JSON
+2. **WalletConnect** - Connect Phantom/Solflare/Torus wallet
+3. **ClaimReview** - Review claim details and fee breakdown
+4. **ClaimExecution** - Sign and submit on-chain claim transaction
+
+All verification happens on-chain via Anchor IDL-driven program calls. No backend required.
 
 ## Features
 
-- ✅ Upload or paste proof JSON
-- ✅ Phantom wallet integration
-- ✅ Live balance tracking (before/after)
-- ✅ Direct on-chain verification (Merkle + bitmap guard)
-- ✅ Clear error handling
-- ✅ Transaction explorer link
+- ✅ **Anchor Integration**: IDL-driven instruction calls
+- ✅ **4-Step Flow**: Intuitive multi-step wizard with progress stepper
+- ✅ **Multi-Wallet Support**: Phantom, Solflare, Torus
+- ✅ **Comprehensive Validation**: Proof format, address matching, fee calculations
+- ✅ **Real-time Fee Breakdown**: Treasury (0.05%) + Creator (0.05% × tier) display
+- ✅ **Transaction Explorer Link**: View claim on Solscan
+- ✅ **Address Verification**: Prevents claiming with wrong wallet
+- ✅ **Error Handling**: Detailed messages for all failure modes
 
-## Get Started
+## Quick Start
 
 ### Run Locally
 
@@ -30,100 +41,185 @@ npm install
 npm run dev
 ```
 
-Then open `http://localhost:5173`
+Opens at `http://localhost:3000`
 
 ### Build for Production
 
 ```bash
 npm install
 npm run build
+npm run preview
 ```
 
-Output is in `dist/`.
+Output is in `dist/`
 
 ## Usage
 
-1. **Get Your Proof**: Contact the CLS team for your proof JSON
-2. **Load Proof**: Upload the file or paste JSON
-3. **Connect Wallet**: Click "Connect Wallet" → Phantom
-4. **Submit**: Click "Submit Claim" and sign in Phantom
-5. **Confirm**: Wait for transaction confirmation (~30s)
+### Step 1: Load Proof
+- Upload a `.json` file **or** paste JSON directly
+- Proof is validated for required fields
+- See "Proof JSON Format" below
+
+### Step 2: Connect Wallet
+- Click "Connect Wallet"
+- Select Phantom, Solflare, or Torus
+- Wallet address must match proof's `claimer` field
+
+### Step 3: Review Claim
+- Verify claim details (channel, epoch, amount)
+- See fee breakdown:
+  - **Gross**: Your claim amount
+  - **Treasury Fee**: 0.05% (fixed)
+  - **Creator Fee**: 0.05% × tier multiplier
+  - **Net**: Amount after fees
+- Address must match to proceed
+
+### Step 4: Execute
+- Click "Execute Claim"
+- Sign transaction in your wallet
+- Watch for on-chain confirmation
+- View transaction on Solscan
+- Tokens arrive in your wallet
 
 ## Environment Variables
 
-Optional `.env.local`:
+Optional `.env`:
 
-```
+```bash
 VITE_SOLANA_RPC=https://api.mainnet-beta.solana.com
+VITE_SOLANA_NETWORK=mainnet-beta
+VITE_PROGRAM_ID=GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 ```
 
-## Architecture
+## Project Structure
 
 ```
 src/
-├── App.tsx          (Entry point → ClaimCLS)
-├── ClaimCLS.tsx     (Main claim component, ~400 lines)
-├── App.css          (Styling)
-└── main.tsx         (React init)
+├── hooks/                    # Anchor hooks
+│   ├── useAnchorProgram.ts  # Program initialization
+│   ├── useWallet.ts         # Wallet adapter
+│   └── useMerkleProof.ts    # Proof validation
+│
+├── components/              # 4-step flow components
+│   ├── ProofUpload.tsx      # Step 1
+│   ├── WalletConnect.tsx    # Step 2
+│   ├── ClaimReview.tsx      # Step 3
+│   └── ClaimExecution.tsx   # Step 4
+│
+├── lib/                      # Utilities
+│   ├── constants.ts         # Program IDs, tiers
+│   └── instructions.ts      # Instruction builders
+│
+├── context/
+│   └── WalletProvider.tsx   # Solana wallet adapter setup
+│
+├── App.tsx                  # 4-step orchestrator + stepper UI
+├── main.tsx                 # Vite entry point
+└── index.css                # Global styles
+
+idl/
+└── token-2022.json          # Anchor IDL
+
+index.html                   # HTML entry point
+package.json
+tsconfig.json
+vite.config.ts
 ```
 
 ### Key Dependencies
 
-- `@solana/web3.js` — Solana blockchain interaction
-- `@solana/spl-token` — Token account operations
-- `js-sha3` — keccak256 for streamer key derivation
-- `react` + `vite` — UI framework & bundler
+- `@coral-xyz/anchor` — Anchor framework
+- `@solana/web3.js` — Solana blockchain
+- `@solana/spl-token` — Token operations
+- `@solana/wallet-adapter-react` — Wallet integration
+- `react` + `vite` — UI framework
 
-## How It Works
+## Proof JSON Format
 
-1. **Load Proof**: Parse and validate proof JSON
-2. **Verify Wallet**: Ensure your wallet matches the `claimer` field
-3. **Derive PDAs**: Compute protocol and channel state addresses
-4. **Check Balance**: Fetch account balance before claim
-5. **Build Instruction**: Manually construct `claim_with_ring` instruction
-   - Discriminator: SHA256(`global:claim_with_ring`)
-   - Args: epoch, index, amount, proof[], id, streamer_key
-6. **Sign & Submit**: Send transaction via Phantom
-7. **Confirm**: Wait for on-chain confirmation
-8. **Display Result**: Show balance delta and explorer link
+Required fields in proof JSON:
+
+```json
+{
+  "claimer": "9B5X...",          // Your Solana wallet address (base58)
+  "mint": "GngzN...",            // Token mint address (base58)
+  "channel": "twitch_channel",   // Twitch channel name
+  "epoch": 42,                   // Epoch number (integer)
+  "index": 100,                  // Claim index (integer)
+  "amount": "1000000000",        // Tokens (as string, >0)
+  "root": "aabbccdd...",         // 32-byte hex string
+  "proof": ["0x1234...", "..."], // Array of 32-byte hex strings
+  "id": "claim_id_hex"           // 32-byte hex string
+}
+```
+
+### Field Validation
+
+- `claimer`: Valid Solana PublicKey (base58 format)
+- `mint`: Valid Solana PublicKey
+- `channel`: Non-empty string
+- `epoch`: Positive integer
+- `index`: Non-negative integer
+- `amount`: Valid BigInt string (>0)
+- `root`: 64-character hex string (32 bytes)
+- `proof`: Array of 64-character hex strings
+- `id`: 64-character hex string (32 bytes)
 
 ## Important Notes
 
-- **Wallet Requirement**: Must have Phantom installed and connected
+- **Wallet Requirement**: Phantom, Solflare, or Torus must be installed
 - **Mainnet Only**: Currently configured for Solana mainnet
-- **Transfer Fee**: Token-2022 applies 1% transfer fee on token transfers
-- **One Claim Per Epoch**: Double-claiming is rejected by the program
+- **Address Matching**: Wallet address must match proof's `claimer` field
+- **One Claim Per Epoch**: Attempting to claim twice is rejected
+- **Fee Breakdown**: Displayed before execution (0.05% treasury + creator)
 
 ## Error Handling
 
-| Error | Cause | Fix |
-|-------|-------|-----|
-| "Proof is for X, but you're using Y" | Wallet mismatch | Switch wallets in Phantom |
-| "You already claimed this epoch" | Double-claim attempt | Wait for next epoch |
-| "Invalid proof JSON: missing required fields" | Malformed JSON | Check all required fields are present |
-| "AlreadyClaimed" | On-chain claim guard | Proof was already used |
+| Error | Cause | Solution |
+|-------|-------|----------|
+| "Wallet address does not match proof" | Connected wallet ≠ claimer | Switch to correct wallet |
+| "Missing required program, provider, wallet, or proof" | Incomplete setup | Wait for all to load |
+| "Failed to build claim instruction" | Invalid proof data | Verify proof JSON format |
+| "Failed to submit transaction" | Wallet rejection or network issue | Check wallet & retry |
+| "AlreadyClaimed" | Proof already used | Get a new proof |
+
+## Hooks Reference
+
+### `useAnchorProgram()`
+Initializes Anchor program with wallet and RPC connection.
+
+```typescript
+const { program, provider, isReady, error } = useAnchorProgram();
+```
+
+### `useWallet()`
+Wraps wallet adapter, provides connection state.
+
+```typescript
+const { address, connected, connect, disconnect } = useWallet();
+```
+
+### `useMerkleProof()`
+Loads, validates, and parses merkle proof JSON.
+
+```typescript
+const { proof, loading, error, loadProofFromFile, getSummary } = useMerkleProof();
+```
+
+See `ANCHOR_HOOKS_STRUCTURE.md` for detailed hook documentation.
 
 ## Development
 
-### Adding Tests
-
-Create `src/__tests__/ClaimCLS.test.tsx`:
-
-```typescript
-import { describe, it, expect } from 'vitest';
-// Add tests here
-```
-
 ### Modifying for Devnet
 
-In `src/ClaimCLS.tsx`:
+In `src/lib/constants.ts`:
 
 ```typescript
-const PROGRAM_ID = new PublicKey('YOUR_DEVNET_PROGRAM_ID');
-const RPC_URL = 'https://api.devnet.solana.com';
+export const RPC_URL = 'https://api.devnet.solana.com';
+export const NETWORK = 'devnet';
+export const PROGRAM_ID = new PublicKey('YOUR_DEVNET_PROGRAM_ID');
 ```
 
-Then test with devnet proofs.
+Then rebuild and test with devnet proofs.
 
 ## Deployment
 
@@ -139,7 +235,7 @@ npm run build
 ```bash
 npm run build
 npm run preview  # Test locally
-# Serve dist/ folder with any static web server
+# Serve dist/ with any static web server (nginx, Apache, etc.)
 ```
 
 ## License

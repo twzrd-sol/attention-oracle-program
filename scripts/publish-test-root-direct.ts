@@ -51,9 +51,9 @@ async function main() {
     PROGRAM_ID
   );
 
-  // Derive streamer key from channel
+  // Derive streamer key from channel (MUST match program: twitch: prefix)
   const channelBytes = Buffer.from(channel.toLowerCase());
-  const keccakHash = keccak_256(Buffer.concat([Buffer.from('channel:'), channelBytes]));
+  const keccakHash = keccak_256(Buffer.concat([Buffer.from('twitch:'), channelBytes]));
   const streamerKey = new PublicKey(keccakHash);
 
   const [channelState] = PublicKey.findProgramAddressSync(

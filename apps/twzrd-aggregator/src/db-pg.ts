@@ -19,6 +19,7 @@ export class TwzrdDBPostgres {
       max: Number(process.env.DB_POOL_INGEST_MAX || 40),
       idleTimeoutMillis: Number(process.env.DB_POOL_INGEST_IDLE || 30000),
       connectionTimeoutMillis: Number(process.env.DB_POOL_INGEST_TIMEOUT || 5000),
+      ssl: { rejectUnauthorized: false }, // Option A: quick SSL workaround for managed DB
     })
 
     // Maintenance pool: dedicated for publisher and other critical operations
@@ -27,6 +28,7 @@ export class TwzrdDBPostgres {
       max: Number(process.env.DB_POOL_MAINT_MAX || 8),
       idleTimeoutMillis: Number(process.env.DB_POOL_MAINT_IDLE || 30000),
       connectionTimeoutMillis: Number(process.env.DB_POOL_MAINT_TIMEOUT || 10000),
+      ssl: { rejectUnauthorized: false }, // Option A: quick SSL workaround for managed DB
     })
   }
 
