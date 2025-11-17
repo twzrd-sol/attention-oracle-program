@@ -11,6 +11,7 @@ export class TwzrdDBPostgres {
   private hasTokenGroup = false
   private hasCategory = false
   private ensuredWalletBindingTable = false
+  private ensuredTwitchWalletBindingsTable = false
   private schemaInfoPromise: Promise<void> | null = null
 
   constructor(connectionString?: string) {
@@ -83,6 +84,20 @@ export class TwzrdDBPostgres {
         CREATE INDEX IF NOT EXISTS idx_uwb_wallet ON user_wallet_bindings(wallet);
       `)
       this.ensuredWalletBindingTable = true
+    }
+
+    if (!this.ensuredTwitchWalletBindingsTable) {
+      await this.maintenancePool.query(`
+        CREATE TABLE IF NOT EXISTS twitch_wallet_bindings (
+          twitch_id TEXT PRIMARY KEY,
+          login TEXT NOT NULL,
+          wallet TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_unique ON twitch_wallet_bindings (wallet);
+      `)
+      this.ensuredTwitchWalletBindingsTable = true
     }
   }
 
