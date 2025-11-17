@@ -9,7 +9,7 @@ use crate::{
     constants::{MAX_ID_BYTES, PROTOCOL_SEED},
     errors::ProtocolError,
     instructions::cnft_verify::CnftReceiptProof,
-    state::{EpochState, ProtocolState},
+    state::{ChannelState, EpochState, FeeConfig, PassportState, ProtocolState},
 };
 
 const MAX_PROOF_NODES: usize = 20;
@@ -156,7 +156,8 @@ pub fn claim(
     Ok(())
 }
 
-// Open variant: protocol_state keyed by mint
+// Open variant: protocol_state keyed by mint (Extended 13-account variant)
+// Includes tier-based sybil resistance and fee distribution support
 #[derive(Accounts)]
 pub struct ClaimOpen<'info> {
     #[account(mut)]
@@ -195,6 +196,33 @@ pub struct ClaimOpen<'info> {
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
+
+    // ===== Extended accounts (10-13) for tier-based claims =====
+
+    /// Fee configuration PDA (for dynamic tier-based fee calculation)
+    /// Seeds: [PROTOCOL_SEED, mint, b"fee_config"]
+    #[account(
+        seeds = [crate::constants::PROTOCOL_SEED, protocol_state.mint.as_ref(), b"fee_config"],
+        bump = fee_config.bump,
+    )]
+    pub fee_config: Account<'info, FeeConfig>,
+
+    /// User's passport state (optional, for tier/sybil verification)
+    /// Stores tier level (0-6) and reputation score
+    /// If not provided, defaults to unverified (tier 0) for fee purposes
+    #[account(mut)]
+    pub passport_state: Option<Account<'info, PassportState>>,
+
+    /// Channel state ring buffer (optional, for per-channel epoch tracking)
+    /// Seeds: [CHANNEL_STATE_SEED, mint, streamer_key]
+    /// Used for ring buffer epoch management and recent root tracking
+    pub channel_state: Option<AccountLoader<'info, ChannelState>>,
+
+    /// Creator/pool fee recipient ATA (optional, for tier-based fee routing)
+    /// If provided, receives tier-multiplied portion of transfer fees
+    /// Falls back to treasury_ata if not provided
+    #[account(mut)]
+    pub creator_pool_ata: Option<InterfaceAccount<'info, TokenAccount>>,
 }
 
 pub fn claim_open(
@@ -286,7 +314,35 @@ pub fn claim_open(
         ProtocolError::InvalidProof
     );
 
-    // Step 3: Transfer CCM tokens
+    // Step 2b (NEW): Tier-based verification (extended variant)
+    // Look up user's passport tier for dynamic fee calculation
+    let (user_tier, tier_multiplier) = if let Some(passport) = &ctx.accounts.passport_state {
+        (passport.tier, passport.tier_multiplier())
+    } else {
+        // Default to tier 0 (unverified) if passport not provided
+        (0u8, 0u8)
+    };
+
+    // Emit tier-based claim event for off-chain indexing
+    let ts = Clock::get()?.unix_timestamp;
+    emit!(crate::events::ClaimTiered {
+        claimer: ctx.accounts.claimer.key(),
+        amount,
+        tier: user_tier,
+        tier_multiplier,
+        epoch: epoch.epoch,
+        claimed_at: ts,
+    });
+
+    msg!(
+        "Tier-based claim: claimer={}, tier={}, multiplier={}%, amount={}",
+        ctx.accounts.claimer.key(),
+        user_tier,
+        tier_multiplier,
+        amount
+    );
+
+    // Step 3: Transfer CCM tokens to claimer
     let seeds: &[&[u8]] = &[
         crate::constants::PROTOCOL_SEED,
         ctx.accounts.protocol_state.mint.as_ref(),
@@ -314,7 +370,49 @@ pub fn claim_open(
         ctx.accounts.mint.decimals,
     )?;
 
-    // Step 4: Mark claimed
+    // Step 4 (NEW): Optional fee routing to creator pool (if provided and tier > 0)
+    // Uses tier-based fee config for dynamic distribution
+    if user_tier > 0 {
+        if let Some(creator_pool) = &ctx.accounts.creator_pool_ata {
+            // Calculate creator fee based on tier multiplier
+            // Format: basis_points = fee_config.basis_points, applied with tier multiplier
+            let fee_basis_points = ctx.accounts.fee_config.basis_points as u64;
+            let tier_mult = tier_multiplier as u64;
+
+            // Creator fee = amount * (basis_points * tier_multiplier) / 10000
+            // E.g., 100 tokens * (10 bps * 0.8x multiplier) = 100 * (10 * 80 / 100) / 10000 = 0.008 tokens
+            let creator_fee = amount
+                .checked_mul(fee_basis_points)
+                .and_then(|f| f.checked_mul(tier_mult))
+                .and_then(|f| f.checked_div(10000 * 100)) // basis points are x100 scale + tier is x100
+                .ok_or(ProtocolError::InvalidAmount)?;
+
+            if creator_fee > 0 && ctx.accounts.treasury_ata.amount >= creator_fee {
+                token_interface::transfer_checked(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        TransferChecked {
+                            from: ctx.accounts.treasury_ata.to_account_info(),
+                            to: creator_pool.to_account_info(),
+                            authority: ctx.accounts.protocol_state.to_account_info(),
+                            mint: ctx.accounts.mint.to_account_info(),
+                        },
+                        signer,
+                    ),
+                    creator_fee,
+                    ctx.accounts.mint.decimals,
+                )?;
+
+                msg!(
+                    "Creator fee routed: amount={}, tier_multiplier={}%",
+                    creator_fee,
+                    tier_multiplier
+                );
+            }
+        }
+    }
+
+    // Step 5: Mark claimed
     epoch.claimed_bitmap[byte_i] |= bit;
     epoch.total_claimed = epoch
         .total_claimed

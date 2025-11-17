@@ -36,3 +36,13 @@ pub struct PassportRevoked {
     pub owner: Pubkey,
     pub updated_at: i64,
 }
+
+#[event]
+pub struct ClaimTiered {
+    pub claimer: Pubkey,
+    pub amount: u64,
+    pub tier: u8,
+    pub tier_multiplier: u8, // 0-100 representing 0.0x to 1.0x
+    pub epoch: u64,
+    pub claimed_at: i64,
+}

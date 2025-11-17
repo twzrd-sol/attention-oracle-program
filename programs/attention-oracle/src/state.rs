@@ -212,3 +212,59 @@ impl ChannelSlot {
         Ok(())
     }
 }
+
+// ===== Passport State (Tier-based Sybil Resistance) =====
+
+/// User's passport state for sybil-resistant tier-based verification
+/// Tracks engagement level and reputation tier (0-6)
+/// Referenced in claim_open for dynamic fee multipliers
+#[account]
+pub struct PassportState {
+    /// User's wallet address
+    pub owner: Pubkey,
+
+    /// Current tier level (0-6)
+    /// Tier 0: Unverified (0.0x fee multiplier)
+    /// Tier 1-5: Incremental tiers with 0.2x-0.8x multipliers
+    /// Tier 6+: Elite tier (1.0x multiplier)
+    pub tier: u8,
+
+    /// Reputation score (used for tier calculation)
+    pub score: u64,
+
+    /// Cumulative engagement (e.g., watch time, interactions)
+    pub weighted_presence: u64,
+
+    /// Badges earned (bitmask for sybil signals)
+    pub badges: u32,
+
+    /// Last updated timestamp (for tier degradation checks)
+    pub updated_at: i64,
+
+    /// Bump seed for PDA
+    pub bump: u8,
+}
+
+impl PassportState {
+    pub const LEN: usize = 8 +    // discriminator
+        32 +   // owner
+        1 +    // tier
+        8 +    // score
+        8 +    // weighted_presence
+        4 +    // badges
+        8 +    // updated_at
+        1;     // bump
+
+    /// Calculate tier-based fee multiplier (0.0x to 1.0x)
+    /// Used in claim_open for dynamic fee calculation per CLAUDE.md
+    pub fn tier_multiplier(&self) -> u8 {
+        match self.tier {
+            0 => 0,    // Unverified: 0.0x (no fee)
+            1 => 20,   // Emerging: 0.2x
+            2 => 40,   // Active: 0.4x
+            3 => 60,   // Established: 0.6x
+            4 => 80,   // Featured: 0.8x
+            _ => 100,  // Elite (5+): 1.0x
+        }
+    }
+}
