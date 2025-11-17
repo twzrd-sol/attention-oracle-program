@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg'
+import fs from 'fs'
 import { hashUser, ParticipationRow, SignalRow, WeightedParticipant } from './db-types.js'
 
 export class TwzrdDBPostgres {
@@ -13,13 +14,21 @@ export class TwzrdDBPostgres {
   constructor(connectionString?: string) {
     const connString = connectionString || process.env.DATABASE_URL || 'postgresql://twzrd:twzrd_password_2025@localhost:5432/twzrd'
 
+    // TLS Option C: CA-validated SSL for managed Postgres
+    // Uses explicit CA file (default path provided by ops); override with PG_CA_CERT_PATH if needed.
+    const caCertPath = process.env.PG_CA_CERT_PATH || '/home/twzrd/certs/do-managed-db-ca.crt'
+    const sslConfig = {
+      ca: fs.readFileSync(caCertPath, 'utf8'),
+      rejectUnauthorized: true,
+    }
+
     // Ingestion pool: higher capacity for high-volume participation/signal recording
     this.ingestPool = new Pool({
       connectionString: connString,
       max: Number(process.env.DB_POOL_INGEST_MAX || 40),
       idleTimeoutMillis: Number(process.env.DB_POOL_INGEST_IDLE || 30000),
       connectionTimeoutMillis: Number(process.env.DB_POOL_INGEST_TIMEOUT || 5000),
-      ssl: { rejectUnauthorized: false }, // Option A: quick SSL workaround for managed DB
+      ssl: sslConfig, // Option C: CA-validated TLS
     })
 
     // Maintenance pool: dedicated for publisher and other critical operations
@@ -28,7 +37,7 @@ export class TwzrdDBPostgres {
       max: Number(process.env.DB_POOL_MAINT_MAX || 8),
       idleTimeoutMillis: Number(process.env.DB_POOL_MAINT_IDLE || 30000),
       connectionTimeoutMillis: Number(process.env.DB_POOL_MAINT_TIMEOUT || 10000),
-      ssl: { rejectUnauthorized: false }, // Option A: quick SSL workaround for managed DB
+      ssl: sslConfig, // Option C: CA-validated TLS
     })
   }
 

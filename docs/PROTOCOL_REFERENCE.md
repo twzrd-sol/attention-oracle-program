@@ -35,6 +35,22 @@ The Attention Oracle protocol enables verifiable token distribution for creator 
 
 ---
 
+## IDL Instruction Summary
+
+IDL: `token_2022` v0.1.0 (source: apps/claim-ui/idl/token-2022.json)
+
+| Instruction | Accounts | Args |
+|---|---:|---:|
+| `initialize_mint` | 5 | 1 |
+| `initialize_channel` | 4 | 1 |
+| `set_merkle_root_ring` | 4 | 4 |
+| `claim_with_ring` | 9 | 5 |
+| `transfer_hook` | 3 | 1 |
+| `harvest_fees` | 6 | 0 |
+| `update_tier_multipliers` | 2 | 1 |
+
+For full account/arg details, see Appendix A: IDL Tables.
+
 ## Instructions
 
 ### 1. `initialize_mint`
@@ -611,3 +627,214 @@ pub fn build_merkle_leaf(
 **Last Updated**: 2025-11-17
 **Maintainer**: twzrd
 **Version**: 0.1.0 (Production)
+
+
+
+
+## Appendix A: IDL Tables
+
+### Accounts and Args (from IDL)
+
+
+#### `initialize_mint`
+
+Accounts (5)
+
+| # | Name | Signer | Writable |
+|---:|------|:-----:|:-------:|
+| 0 | `payer` | ✅ | ✅ |
+| 1 | `mint` | ✅ | ✅ |
+| 2 | `protocol_state` | ❌ | ✅ |
+| 3 | `token_program` | ❌ | ❌ |
+| 4 | `system_program` | ❌ | ❌ |
+
+Args (1)
+
+| Name | Type |
+|------|------|
+| `fee_bps` | ``u16`` |
+
+
+## Appendix A: IDL Tables
+
+### Accounts and Args (from IDL)
+
+
+#### `initialize_channel`
+
+Accounts (4)
+
+| # | Name | Signer | Writable |
+|---:|------|:-----:|:-------:|
+| 0 | `payer` | ✅ | ✅ |
+| 1 | `protocol_state` | ❌ | ❌ |
+| 2 | `channel_state` | ❌ | ✅ |
+| 3 | `system_program` | ❌ | ❌ |
+
+Args (1)
+
+| Name | Type |
+|------|------|
+| `streamer_key` | ``publicKey`` |
+
+
+## Appendix A: IDL Tables
+
+### Accounts and Args (from IDL)
+
+
+#### `set_merkle_root_ring`
+
+Accounts (4)
+
+| # | Name | Signer | Writable |
+|---:|------|:-----:|:-------:|
+| 0 | `update_authority` | ✅ | ❌ |
+| 1 | `protocol_state` | ❌ | ✅ |
+| 2 | `channel_state` | ❌ | ✅ |
+| 3 | `system_program` | ❌ | ❌ |
+
+Args (4)
+
+| Name | Type |
+|------|------|
+| `root` | ``{"array":["u8",32]}`` |
+| `epoch` | ``u64`` |
+| `claim_count` | ``u16`` |
+| `streamer_key` | ``publicKey`` |
+
+
+## Appendix A: IDL Tables
+
+### Accounts and Args (from IDL)
+
+
+#### `claim_with_ring`
+
+Accounts (9)
+
+| # | Name | Signer | Writable |
+|---:|------|:-----:|:-------:|
+| 0 | `claimer` | ✅ | ✅ |
+| 1 | `protocol_state` | ❌ | ✅ |
+| 2 | `channel_state` | ❌ | ✅ |
+| 3 | `mint` | ❌ | ❌ |
+| 4 | `treasury_ata` | ❌ | ✅ |
+| 5 | `claimer_ata` | ❌ | ✅ |
+| 6 | `token_program` | ❌ | ❌ |
+| 7 | `associated_token_program` | ❌ | ❌ |
+| 8 | `system_program` | ❌ | ❌ |
+
+Args (5)
+
+| Name | Type |
+|------|------|
+| `epoch` | ``u64`` |
+| `index` | ``u32`` |
+| `amount` | ``u64`` |
+| `proof` | ``{"vec":{"array":["u8",32]}}`` |
+| `streamer_key` | ``publicKey`` |
+
+
+## Appendix A: IDL Tables
+
+### Accounts and Args (from IDL)
+
+
+#### `claim_open`
+
+Accounts (13)
+
+| # | Name | Signer | Writable |
+|---:|------|:-----:|:-------:|
+| 0 | `claimer` | ✅ | ✅ |
+| 1 | `protocol_state` | ❌ | ✅ |
+| 2 | `epoch_state` | ❌ | ✅ |
+| 3 | `mint` | ❌ | ❌ |
+| 4 | `treasury_ata` | ❌ | ✅ |
+| 5 | `claimer_ata` | ❌ | ✅ |
+| 6 | `token_program` | ❌ | ❌ |
+| 7 | `associated_token_program` | ❌ | ❌ |
+| 8 | `system_program` | ❌ | ❌ |
+| 9 | `fee_config` | ❌ | ❌ |
+| 10 | `channel_state` | ❌ | ❌ |
+| 11 | `passport_state` | ❌ | ✅ |
+| 12 | `creator_pool_ata` | ❌ | ✅ |
+
+Args (7)
+
+| Name | Type |
+|------|------|
+| `index` | ``u32`` |
+| `amount` | ``u64`` |
+| `id` | ``string`` |
+| `proof` | ``{"vec":{"array":["u8",32]}}`` |
+| `channel` | ``{"option":"string"}`` |
+| `twzrd_epoch` | ``{"option":"u64"}`` |
+| `receipt_proof` | ``{"option":{"defined":"CnftReceiptProof"}}`` |
+
+
+## Appendix A: IDL Tables
+
+### Accounts and Args (from IDL)
+
+
+#### `transfer_hook`
+
+Accounts (3)
+
+| # | Name | Signer | Writable |
+|---:|------|:-----:|:-------:|
+| 0 | `source` | ❌ | ✅ |
+| 1 | `mint` | ❌ | ❌ |
+| 2 | `destination` | ❌ | ✅ |
+
+Args (1)
+
+| Name | Type |
+|------|------|
+| `token_amount` | ``u64`` |
+
+
+## Appendix A: IDL Tables
+
+### Accounts and Args (from IDL)
+
+
+#### `harvest_fees`
+
+Accounts (6)
+
+| # | Name | Signer | Writable |
+|---:|------|:-----:|:-------:|
+| 0 | `admin` | ✅ | ❌ |
+| 1 | `protocol_state` | ❌ | ✅ |
+| 2 | `mint` | ❌ | ✅ |
+| 3 | `treasury_ata` | ❌ | ✅ |
+| 4 | `token_program` | ❌ | ❌ |
+| 5 | `system_program` | ❌ | ❌ |
+
+Args (0)
+
+(none)
+
+
+## Appendix A: IDL Tables
+
+### Accounts and Args (from IDL)
+
+
+#### `update_tier_multipliers`
+
+Accounts (2)
+
+| # | Name | Signer | Writable |
+|---:|------|:-----:|:-------:|
+| 0 | `admin` | ✅ | ❌ |
+| 1 | `protocol_state` | ❌ | ✅ |
+
+Args (1)
+
+| Name | Type |
+|------|------|
+| `multipliers` | ``{"array":["u8",6]}`` |
