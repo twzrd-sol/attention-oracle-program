@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { Transaction, VersionedTransaction } from '@solana/web3.js';
-import { getVerificationStatus, requestClaimTransaction, getTwitterUrl, getDiscordInviteUrl, type VerificationStatus } from '@/lib/api';
+import { getVerificationStatus, requestClaimTransaction, getTwitterUrl, getDiscordInviteUrl, type VerificationStatus, bindWalletWithTwitch, fetchBoundWallet } from '@/lib/api';
 import { getExplorerUrl } from '@/lib/solana';
+import { PassportBadge } from './PassportBadge';
+import { EpochTable } from './EpochTable';
+import { ClaimHistory } from './ClaimHistory';
+import { buildTwitchAuthUrl, extractTokenFromHash, storeTwitchToken, getStoredTwitchToken, removeTokenFromUrl, clearTwitchToken } from '@/lib/twitch';
 
 interface ClaimState {
   status: 'idle' | 'loading' | 'verifying' | 'claiming' | 'confirming' | 'success' | 'error';
@@ -18,6 +22,10 @@ export const ClaimCLS: React.FC = () => {
   const [state, setState] = useState<ClaimState>({ status: 'idle' });
   const [epochId, setEpochId] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [twitchToken, setTwitchToken] = useState<string | null>(null);
+  const [bindingState, setBindingState] = useState<'idle' | 'checking' | 'binding' | 'bound' | 'error'>('idle');
+  const [boundWallet, setBoundWallet] = useState<string | null>(null);
+  const [bindingError, setBindingError] = useState<string | null>(null);
 
   /**
    * Fetch and update verification status
@@ -56,6 +64,43 @@ export const ClaimCLS: React.FC = () => {
       fetchVerificationStatus();
     }
   }, [connected, publicKey, fetchVerificationStatus]);
+
+  useEffect(() => {
+    const tokenFromHash = extractTokenFromHash(window.location.hash);
+    if (tokenFromHash) {
+      storeTwitchToken(tokenFromHash);
+      removeTokenFromUrl();
+      setTwitchToken(tokenFromHash);
+      return;
+    }
+    setTwitchToken(getStoredTwitchToken());
+  }, []);
+
+  useEffect(() => {
+    if (!twitchToken) {
+      setBoundWallet(null);
+      setBindingState('idle');
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        setBindingState('checking');
+        const result = await fetchBoundWallet(twitchToken);
+        if (cancelled) return;
+        setBoundWallet(result.wallet ?? null);
+        setBindingState(result.wallet ? 'bound' : 'idle');
+        setBindingError(null);
+      } catch (err) {
+        if (cancelled) return;
+        setBindingState('error');
+        setBindingError(err instanceof Error ? err.message : 'Failed to load Twitch binding');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [twitchToken]);
 
   /**
    * Handle claim transaction
@@ -113,6 +158,46 @@ export const ClaimCLS: React.FC = () => {
     }
   };
 
+  const handleTwitchConnect = () => {
+    try {
+      window.location.href = buildTwitchAuthUrl();
+    } catch (err) {
+      setBindingState('error');
+      setBindingError(err instanceof Error ? err.message : 'Unable to start Twitch auth');
+    }
+  };
+
+  const handleTwitchDisconnect = () => {
+    clearTwitchToken();
+    setTwitchToken(null);
+    setBoundWallet(null);
+    setBindingError(null);
+    setBindingState('idle');
+  };
+
+  const handleBindWallet = async () => {
+    if (!publicKey) {
+      setBindingState('error');
+      setBindingError('Connect a Solana wallet first');
+      return;
+    }
+    if (!twitchToken) {
+      setBindingState('error');
+      setBindingError('Connect your Twitch account first');
+      return;
+    }
+    try {
+      setBindingState('binding');
+      setBindingError(null);
+      await bindWalletWithTwitch(twitchToken, publicKey.toBase58());
+      setBoundWallet(publicKey.toBase58());
+      setBindingState('bound');
+    } catch (err) {
+      setBindingState('error');
+      setBindingError(err instanceof Error ? err.message : 'Failed to bind wallet');
+    }
+  };
+
   const canClaim =
     connected &&
     state.verification?.twitterFollowed &&
@@ -120,15 +205,74 @@ export const ClaimCLS: React.FC = () => {
     state.status === 'idle';
 
   const isLoading = ['claiming', 'confirming'].includes(state.status);
+  const twitchConnected = Boolean(twitchToken);
+  const twitchStatusLabel = twitchConnected ? 'Connected' : 'Not Connected';
+  const isWalletBound = Boolean(publicKey && boundWallet && boundWallet === publicKey.toBase58());
+  const bindingBusy = bindingState === 'binding' || bindingState === 'checking';
 
   return (
     <div style={styles.container}>
+      {/* Passport Badge - Show tier and multiplier */}
+      {connected && publicKey && state.verification && (
+        <PassportBadge
+          tier={state.verification.passportTier ?? 0}
+          score={0}
+          nextTierScore={10000}
+        />
+      )}
+
       {/* Main Content */}
       <div style={styles.card}>
         <h2 style={styles.title}>Claim CLS Tokens</h2>
         <p style={styles.subtitle}>
           Verify your identity and claim your creator tokens from Twitch channel rewards.
         </p>
+
+        {/* Verification Status Section */}
+        <div style={styles.section}>
+          <h3 style={styles.sectionTitle}>Twitch Identity Binding</h3>
+          <p style={styles.sectionDescription}>
+            Bind your Twitch identity to this Solana wallet to enable ring claims. You’ll be redirected to Twitch to approve access.
+          </p>
+          <div style={styles.twitchRow}>
+            <div>
+              <strong>Status:</strong> {twitchStatusLabel}
+              {twitchConnected && boundWallet && (
+                <span style={styles.twitchSubtext}>
+                  {' '}— Bound wallet: {boundWallet.slice(0, 4)}…{boundWallet.slice(-4)}
+                </span>
+              )}
+            </div>
+            <div>
+              {!twitchConnected ? (
+                <button style={styles.twitchButton} onClick={handleTwitchConnect}>
+                  Connect Twitch
+                </button>
+              ) : (
+                <button style={styles.secondaryButton} onClick={handleTwitchDisconnect}>
+                  Disconnect
+                </button>
+              )}
+            </div>
+          </div>
+          {twitchConnected && (
+            <div style={styles.twitchActions}>
+              <button
+                style={{
+                  ...styles.twitchButton,
+                  opacity: bindingBusy ? 0.6 : 1,
+                  cursor: bindingBusy ? 'not-allowed' : 'pointer',
+                }}
+                disabled={bindingBusy || !publicKey}
+                onClick={handleBindWallet}
+              >
+                {bindingBusy ? 'Binding…' : isWalletBound ? 'Wallet Bound' : 'Bind This Wallet'}
+              </button>
+              {!publicKey && <p style={styles.twitchSubtext}>Connect your Solana wallet to bind.</p>}
+              {bindingError && <p style={styles.errorText}>{bindingError}</p>}
+            </div>
+          )}
+        </div>
 
         {/* Verification Status Section */}
         {connected && (
@@ -168,10 +312,22 @@ export const ClaimCLS: React.FC = () => {
           </div>
         )}
 
-        {/* Epoch Selector Section */}
+        {/* Epoch Browser - Browse and select epochs */}
         {connected && (
           <div style={styles.section}>
-            <h3 style={styles.sectionTitle}>Select Epoch</h3>
+            <EpochTable onSelectEpoch={(selectedEpochId) => {
+              setEpochId(selectedEpochId);
+              // Scroll to claim button
+              const claimSection = document.getElementById('claim-section');
+              claimSection?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }} />
+          </div>
+        )}
+
+        {/* Epoch Selector Section - Keep manual input as fallback */}
+        {connected && (
+          <div style={styles.section} id="claim-section">
+            <h3 style={styles.sectionTitle}>Selected Epoch</h3>
             <div style={styles.epochInputGroup}>
               <label style={styles.label}>Epoch ID</label>
               <input
@@ -182,7 +338,7 @@ export const ClaimCLS: React.FC = () => {
                 disabled={isLoading}
                 style={styles.input}
               />
-              <p style={styles.hint}>Enter the epoch number for which you want to claim tokens.</p>
+              <p style={styles.hint}>Selected from table above, or enter manually.</p>
             </div>
           </div>
         )}
@@ -262,6 +418,14 @@ export const ClaimCLS: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Claim History - Show past claims */}
+      {connected && publicKey && (
+        <>
+          <div style={styles.divider} />
+          <ClaimHistory />
+        </>
+      )}
     </div>
   );
 };
@@ -353,6 +517,48 @@ const styles = {
     color: '#1f2937',
     margin: '0 0 1rem 0',
   } as React.CSSProperties,
+
+  sectionDescription: {
+    fontSize: '0.95rem',
+    color: '#4b5563',
+    margin: '0 0 0.75rem 0',
+  } as React.CSSProperties,
+
+  twitchRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '1rem',
+    flexWrap: 'wrap' as const,
+  } as React.CSSProperties,
+
+  twitchSubtext: {
+    color: '#6b7280',
+    fontSize: '0.9rem',
+  } as React.CSSProperties,
+
+  twitchButton: {
+    backgroundColor: '#7c3aed',
+    color: '#fff',
+    border: 'none',
+    padding: '0.5rem 1rem',
+    borderRadius: '9999px',
+    fontWeight: 600,
+  } as React.CSSProperties,
+
+  secondaryButton: {
+    backgroundColor: '#e5e7eb',
+    color: '#111827',
+    border: 'none',
+    padding: '0.5rem 1rem',
+    borderRadius: '9999px',
+    fontWeight: 600,
+  } as React.CSSProperties,
+
+  twitchActions: {
+    marginTop: '0.75rem',
+  } as React.CSSProperties,
+
 
   verificationTile: {
     padding: '1rem',
@@ -549,6 +755,13 @@ const styles = {
     fontSize: '0.9rem',
     fontFamily: 'monospace',
     wordBreak: 'break-all' as const,
+  } as React.CSSProperties,
+
+  divider: {
+    height: '1px',
+    width: '100%',
+    backgroundColor: '#e5e7eb',
+    margin: '2rem 0',
   } as React.CSSProperties,
 };
 
