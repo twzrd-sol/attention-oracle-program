@@ -6,14 +6,14 @@ import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
  */
 
 // Network (mainnet-beta, devnet, testnet)
-export const NETWORK = (process.env.VITE_SOLANA_NETWORK || 'mainnet-beta') as WalletAdapterNetwork;
+export const NETWORK = (import.meta.env.VITE_SOLANA_NETWORK ?? 'mainnet-beta') as WalletAdapterNetwork;
 
 // RPC Endpoint
-export const RPC_URL = process.env.VITE_SOLANA_RPC || clusterApiUrl(NETWORK);
+export const RPC_URL = import.meta.env.VITE_SOLANA_RPC ?? clusterApiUrl(NETWORK);
 
 // Program IDs
 export const PROGRAM_ID = new PublicKey(
-  process.env.VITE_PROGRAM_ID || 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop'
+  import.meta.env.VITE_PROGRAM_ID ?? 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop'
 );
 
 export const TOKEN_2022_PROGRAM_ID = new PublicKey(

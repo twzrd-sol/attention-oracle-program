@@ -7,6 +7,18 @@
  * - Error handling with detailed messages
  */
 
+/**
+ * API base URL - supports separate domain deployments
+ * Falls back to relative paths if VITE_GATEWAY_URL not set
+ */
+const API_BASE = import.meta.env.VITE_GATEWAY_URL?.replace(/\/+$/, '') || '';
+
+const api = (path: string): string => {
+  if (!API_BASE) return path;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${API_BASE}${normalizedPath}`;
+};
+
 export interface VerificationStatus {
   twitterFollowed: boolean;
   discordJoined: boolean;
@@ -50,7 +62,7 @@ function authHeaders(token?: string): Record<string, string> {
  */
 export async function getVerificationStatus(wallet: string): Promise<VerificationStatus> {
   try {
-    const response = await fetch(`/api/verification-status?wallet=${encodeURIComponent(wallet)}`);
+    const response = await fetch(api(`/api/verification-status?wallet=${encodeURIComponent(wallet)}`));
 
     if (!response.ok) {
       const error = (await response.json()) as ApiError;
@@ -72,7 +84,7 @@ export async function requestClaimTransaction(
   epochId: number
 ): Promise<ClaimResponse> {
   try {
-    const response = await fetch('/api/claim-cls', {
+    const response = await fetch(api('/api/claim-cls'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -96,7 +108,7 @@ export async function requestClaimTransaction(
 }
 
 export async function bindWalletWithTwitch(token: string, wallet: string): Promise<BindingResponse> {
-  const response = await fetch('/api/bindings/bind-wallet', {
+  const response = await fetch(api('/api/bindings/bind-wallet'), {
     method: 'POST',
     headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders(token)),
     body: JSON.stringify({ wallet }),
@@ -111,7 +123,7 @@ export async function bindWalletWithTwitch(token: string, wallet: string): Promi
 }
 
 export async function fetchBoundWallet(token: string): Promise<BoundWalletResponse> {
-  const response = await fetch('/api/bindings/bound-wallet', {
+  const response = await fetch(api('/api/bindings/bound-wallet'), {
     headers: authHeaders(token),
   });
 
@@ -189,7 +201,7 @@ export async function getEpochs(limit = 50, offset = 0): Promise<EpochsResponse>
       offset: offset.toString(),
     });
 
-    const response = await fetch(`/api/epochs?${params.toString()}`);
+    const response = await fetch(api(`/api/epochs?${params.toString()}`));
 
     if (!response.ok) {
       const error = (await response.json()) as ApiError;
@@ -208,7 +220,7 @@ export async function getEpochs(limit = 50, offset = 0): Promise<EpochsResponse>
  */
 export async function getEpoch(epochId: number): Promise<Epoch> {
   try {
-    const response = await fetch(`/api/epochs/${epochId}`);
+    const response = await fetch(api(`/api/epochs/${epochId}`));
 
     if (!response.ok) {
       const error = (await response.json()) as ApiError;
@@ -237,7 +249,7 @@ export async function getClaimHistory(
       offset: offset.toString(),
     });
 
-    const response = await fetch(`/api/claims/history?${params.toString()}`);
+    const response = await fetch(api(`/api/claims/history?${params.toString()}`));
 
     if (!response.ok) {
       const error = (await response.json()) as ApiError;

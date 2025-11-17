@@ -19,6 +19,7 @@ export function buildTwitchAuthUrl(state = 'twzrd-binding'): string {
   url.searchParams.set('response_type', 'token')
   url.searchParams.set('scope', getScopes())
   url.searchParams.set('state', state)
+  url.searchParams.set('force_verify', 'true')
   return url.toString()
 }
 
@@ -43,6 +44,6 @@ export function clearTwitchToken() {
 
 export function removeTokenFromUrl() {
   if (window.location.hash.includes('access_token')) {
-    history.replaceState(null, document.title, window.location.pathname + window.location.search)
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
   }
 }
