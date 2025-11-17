@@ -159,15 +159,12 @@ pub struct ClaimWithRingArgs {
 #### Merkle Leaf Format
 
 ```rust
-// Leaf hash = keccak256(claimer_pubkey || index || amount)
-// NOTE: No 'id' field (simpler than legacy claim_open)
-let leaf_preimage = [
-    claimer.to_bytes(),           // 32 bytes
-    index.to_le_bytes(),          // 4 bytes (u32)
-    amount.to_le_bytes(),         // 8 bytes (u64)
-].concat();
-
-let leaf = keccak256(leaf_preimage);
+// Current (ring) leaf format used on-chain:
+// keccak256( claimer_pubkey || index || amount || id_bytes )
+// - claimer_pubkey: 32 bytes (wallet)
+// - index: u32 LE
+// - amount: u64 LE
+// - id_bytes: UTF-8 ("twitch:<channel>:<username>") max 32 bytes
 ```
 
 #### On-Chain Verification
@@ -457,8 +454,8 @@ graph LR
 ## Program Constants
 
 ```rust
-// Maximum claims per epoch slot (bitmap supports 1024)
-pub const MAX_CLAIMS_PER_SLOT: u16 = 1024;
+// Maximum claims per epoch slot (bitmap supports 8192)
+pub const MAX_CLAIMS_PER_SLOT: u16 = 8192;
 
 // Ring buffer size (number of epoch slots per channel)
 pub const RING_BUFFER_SIZE: usize = 10;

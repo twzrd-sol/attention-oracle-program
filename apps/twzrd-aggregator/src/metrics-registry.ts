@@ -125,7 +125,7 @@ export const treeParticipantsHistogram = new client.Histogram({
   name: 'tree_participants',
   help: 'Distribution of participant counts in merkle trees.',
   labelNames: ['channel'],
-  buckets: [0, 10, 50, 100, 250, 500, 1000, 1024, 2000, 5000],
+  buckets: [0, 10, 50, 100, 250, 500, 1000, 2048, 4096, 8192],
   registers: [register],
 })
 
