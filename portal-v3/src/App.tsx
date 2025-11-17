@@ -1,13 +1,15 @@
 import React from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import ClaimCLS from './components/ClaimCLS';
+import { PasswordProtect } from './components/PasswordProtect';
 import { getClusterName, isMainnet } from './lib/solana';
 
 export const App: React.FC = () => {
   return (
-    <div style={styles.appContainer}>
-      {/* Header */}
-      <header style={styles.header}>
+    <PasswordProtect>
+      <div style={styles.appContainer}>
+        {/* Header */}
+        <header style={styles.header}>
         <div style={styles.headerContent}>
           <div style={styles.headerBrand}>
             <h1 style={styles.brandName}>TWZRD</h1>
@@ -47,6 +49,7 @@ export const App: React.FC = () => {
         </div>
       </footer>
     </div>
+    </PasswordProtect>
   );
 };
 
