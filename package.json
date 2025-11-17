@@ -16,4 +16,8 @@
   "devDependencies": {
     "tsx": "^4.20.6"
   }
+  ,
+  "scripts": {
+    "test": "set -e; for f in apps/twzrd-aggregator/test/*.test.ts; do npx tsx \"$f\"; done"
+  }
 }

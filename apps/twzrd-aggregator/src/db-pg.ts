@@ -1,6 +1,7 @@
 import { Pool, PoolClient } from 'pg'
 import fs from 'fs'
 import { hashUser, ParticipationRow, SignalRow, WeightedParticipant } from './db-types.js'
+import { canonicalUserHash } from './util/hashing.js'
 
 export class TwzrdDBPostgres {
   private ingestPool: Pool // High-volume ingestion (recordParticipation, recordSignals)
@@ -9,6 +10,7 @@ export class TwzrdDBPostgres {
   private schemaInfoLoaded = false
   private hasTokenGroup = false
   private hasCategory = false
+  private ensuredWalletBindingTable = false
   private schemaInfoPromise: Promise<void> | null = null
 
   constructor(connectionString?: string) {
@@ -64,6 +66,24 @@ export class TwzrdDBPostgres {
       })()
     }
     await this.schemaInfoPromise
+    // Ensure wallet-binding table exists (idempotent)
+    if (!this.ensuredWalletBindingTable) {
+      await this.maintenancePool.query(`
+        CREATE TABLE IF NOT EXISTS user_wallet_bindings (
+          user_hash TEXT NOT NULL,
+          username TEXT,
+          wallet TEXT NOT NULL,
+          verified BOOLEAN DEFAULT FALSE,
+          source TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_hash, wallet)
+        );
+        CREATE INDEX IF NOT EXISTS idx_uwb_user_hash ON user_wallet_bindings(user_hash);
+        CREATE INDEX IF NOT EXISTS idx_uwb_wallet ON user_wallet_bindings(wallet);
+      `)
+      this.ensuredWalletBindingTable = true
+    }
   }
 
 
@@ -338,16 +358,18 @@ export class TwzrdDBPostgres {
       // Insert sealed epoch - dynamic schema
       const epochCols = ['epoch', 'channel', 'root', 'sealed_at']
       const epochVals: any[] = [epoch, channel, root, sealedAt]
+      // NOTE: conflictCols must match the actual PK constraint (epoch, channel)
+      // Do NOT add token_group/category here even if columns exist
       const conflictCols = ['epoch', 'channel']
       if (this.hasTokenGroup) {
         epochCols.push('token_group')
         epochVals.push(tokenGroup)
-        conflictCols.push('token_group')
+        // conflictCols.push('token_group') // ← REMOVED: not part of PK
       }
       if (this.hasCategory) {
         epochCols.push('category')
         epochVals.push(category)
-        conflictCols.push('category')
+        // conflictCols.push('category') // ← REMOVED: not part of PK
       }
       const epochPlaceholders = epochVals.map((_, i) => `$${i + 1}`).join(', ')
 
@@ -697,6 +719,53 @@ export class TwzrdDBPostgres {
     } finally {
       client.release()
     }
+  }
+
+  /**
+   * Wallet binding: attach a claimer wallet to a user_hash for ring claims.
+   * - Upserts (user_hash, wallet) with latest timestamps; verified flag optional
+   */
+  async bindWallet(params: { userId?: string; username?: string; wallet: string; verified?: boolean; source?: string }): Promise<void> {
+    const user_hash = canonicalUserHash({ userId: params.userId, user: params.username })
+    const username = params.username || null
+    const wallet = params.wallet
+    const verified = params.verified === true
+    const source = params.source || null
+    const ts = Math.floor(Date.now() / 1000)
+    await this.maintenancePool.query(
+      `INSERT INTO user_wallet_bindings (user_hash, username, wallet, verified, source, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $6)
+       ON CONFLICT (user_hash, wallet) DO UPDATE SET
+         username = COALESCE(EXCLUDED.username, user_wallet_bindings.username),
+         verified = user_wallet_bindings.verified OR EXCLUDED.verified,
+         source = COALESCE(EXCLUDED.source, user_wallet_bindings.source),
+         updated_at = EXCLUDED.updated_at`,
+      [user_hash, username, wallet, verified, source, ts]
+    )
+  }
+
+  /** Preferred wallet for a user_hash: verified first, else most-recent */
+  async getWalletForUserHash(user_hash: string): Promise<string | null> {
+    const q = await this.maintenancePool.query(
+      `SELECT wallet FROM user_wallet_bindings
+       WHERE user_hash = $1
+       ORDER BY verified DESC, updated_at DESC
+       LIMIT 1`,
+      [user_hash]
+    )
+    return q.rows[0]?.wallet || null
+  }
+
+  /** Lookup user_hash by wallet (latest binding) */
+  async getUserHashForWallet(wallet: string): Promise<string | null> {
+    const q = await this.maintenancePool.query(
+      `SELECT user_hash FROM user_wallet_bindings
+       WHERE wallet = $1
+       ORDER BY verified DESC, updated_at DESC
+       LIMIT 1`,
+      [wallet]
+    )
+    return q.rows[0]?.user_hash || null
   }
 
   /**
