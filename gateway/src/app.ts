@@ -1,7 +1,9 @@
 /**
  * Gateway Application Setup
  *
- * Main Express app with:
+ * Main Expreå\
+ * 
+ * \\\ss app with:
  * - Portal v3 static serving
  * - API routes (/api/verification-status, /api/claim-cls)
  * - CORS, error handling, logging
@@ -15,6 +17,7 @@ import { dirname } from 'path';
 import { setupApiRoutes } from './api/routes.js';
 import { metricsHandler, updateEpochMetrics, updateViewerMetrics } from './metrics.js';
 import { db } from './db.js';
+import bindingsRouter from './routes/bindings.js';
 
 // ES module polyfill for __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -31,10 +34,54 @@ export function createApp(): Express {
   // CORS (adjust origins as needed)
   app.use(
     cors({
-      origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'],
+      origin: (origin, callback) => {
+        const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
+        const defaultAllowed = [
+          'http://localhost:3000',
+          'https://twzrd.xyz'
+        ];
+
+        // Allow requests with no origin (e.g., mobile apps, curl)
+        if (!origin) {
+          return callback(null, true);
+        }
+
+        // Check if origin is explicitly allowed
+        if (allowedOrigins.includes(origin) || defaultAllowed.includes(origin)) {
+          return callback(null, true);
+        }
+
+        // Allow all Cloudflare Pages preview URLs
+        if (origin.endsWith('.attention-oracle-portal.pages.dev')) {
+          return callback(null, true);
+        }
+
+        callback(new Error('Not allowed by CORS'));
+      },
       credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization'],
     })
   );
+
+  // Wildcard preflight fallback (catches any missed sub-router OPTIONS)
+  app.options('/api/*', (req, res) => {
+    const origin = req.headers.origin as string | undefined;
+
+    const allowed = !origin ||
+      origin === 'https://twzrd.xyz' ||
+      origin.startsWith('http://localhost:') ||
+      origin.endsWith('.attention-oracle-portal.pages.dev');
+
+    if (allowed) {
+      res.setHeader('Access-Control-Allow-Origin', origin || 'https://twzrd.xyz');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+
+    res.status(204).end();
+  });
 
   // JSON parser
   app.use(express.json());
@@ -83,6 +130,27 @@ export function createApp(): Express {
   app.use(express.static(portalPath));
 
   // ===== API Routes =====
+
+  // Explicit preflight handler for bind-wallet (fixes 405 when cors() alone fails to catch)
+  app.options('/api/bindings/bind-wallet', (req: Request, res: Response) => {
+    const origin = req.headers.origin as string | undefined;
+
+    const allowed = !origin ||
+      origin === 'https://twzrd.xyz' ||
+      origin.startsWith('http://localhost:') ||
+      origin.endsWith('.attention-oracle-portal.pages.dev');
+
+    if (allowed) {
+      res.setHeader('Access-Control-Allow-Origin', origin || 'https://twzrd.xyz');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+
+    res.status(204).end();
+  });
+
+  app.use('/api/bindings', bindingsRouter);
 
   const apiRouter = setupApiRoutes();
   app.use('/api', apiRouter);
