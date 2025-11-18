@@ -65,7 +65,6 @@ Thumbs.db
 .DS_Store
 
 # Repo hygiene (avoid committing internal or binary artifacts)
-archive/
 backups/
 claim-ui-export/
 verify-snapshot/

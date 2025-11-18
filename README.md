@@ -1,86 +1,66 @@
 # Attention Oracle (Open Core)
 
-Builder‑neutral implementation of a Solana program for verifiable claims using Merkle proofs and Token‑2022.
-
-Repository scope is two core components:
-- Solana program (Rust, Anchor) in `programs/`
-- Minimal x402 + Switchboard example in `oracles/x402-switchboard/`
-
-UI and deployment infrastructure are intentionally out of scope.
+Builder-neutral implementation of a Solana Token‑2022 program plus the helpers that surround it.
 
 ## Environment
 
-Safe defaults are provided via a tracked template at `.env.example` with placeholders only (no secrets). Create your local file once and keep it out of Git:
-
+Use the tracked `.env.example` to create a local `.env` (never commit `.env`).
 ```bash
-./scripts/bootstrap-env.sh     # copies .env.example -> .env if missing
+./scripts/bootstrap-env.sh  # copies .env.example -> .env if missing
 # or: cp .env.example .env
 ```
-
 Fill these values as needed:
 
-- `ANCHOR_PROVIDER_URL` — Solana RPC URL (e.g. https://api.devnet.solana.com)
-- `ANCHOR_WALLET` — path to your keypair (e.g. ~/.config/solana/id.json)
-- `AO_PROGRAM_ID` — Attention Oracle program id (defaults to current ref)
+- `ANCHOR_PROVIDER_URL` — Anchor RPC URL (e.g. `https://api.devnet.solana.com`).
+- `AO_RPC_URL` — Optional override for CLI/SDK RPC (falls back to Anchor URL).
+- `ANCHOR_WALLET` — Path to your deploy keypair (e.g. `~/.config/solana/id.json`).
+- `AO_PROGRAM_ID` — Defaults to the public program `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` (v0.2.1-clean).
+- `SB_CLUSTER`, `SB_FEED`, `PORT` — For the optional `oracles/x402-switchboard` reference implementation.
 
-Oracle example (optional):
+`dotenv` is loaded automatically in tests and the oracle demo.
 
-- `PORT` — HTTP port for `oracles/x402-switchboard`
-- `SB_CLUSTER` — devnet | mainnet-beta | testnet
-- `SB_FEED` — Switchboard aggregator public key
+## Architecture
 
-Notes:
+```
+programs/token_2022/     # Active Solana Token-2022 program (GnGz...)
+sdk/                     # TypeScript + Rust clients that share the same IDL
+cli/                     # Admin CLI wired to AO_PROGRAM_ID and AO_RPC_URL
+oracles/x402-switchboard/ # Minimal Switchboard + x402 demo (env-driven)
+archive/                 # Legacy source/binaries kept only for audit
+docs/                    # Public docs (open-core scope + pitch deck outline)
+```
 
-- `.env` files are ignored by default; `.env.example` files are tracked.
-- `mocha` and the Switchboard oracle auto-load `.env` via `dotenv`.
-- Anchor also respects `ANCHOR_PROVIDER_URL` and `ANCHOR_WALLET` when set.
+### Active vs. Archived
 
-## What It Does
-
-- Verifiable distribution via Merkle roots committed per epoch/channel
-- Token‑2022 mint support and transfer hook entrypoint
-- Gas‑efficient claim bitmaps to prevent double claims
-
-Program ID (current deployment reference): `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
-
-## Stack
-
-- Language: Rust
-- Program framework: Anchor ≥ 0.30
-- Runtime: Solana mainnet, validator / CLI v2.3.x
-- Token standard: Token‑2022 (transfer hooks)
+- **Active:** `programs/token_2022` is the only program built/tested via CI. It is the single source of truth for the on-chain logic.
+- **Archived:** Other `programs/*` directories are now moved to `archive/` (attention-oracle, milo-2022) and contain only historical artifacts. They are not part of builds or release flows.
 
 ## Build
 
 ```bash
-cd programs/attention-oracle
+cd programs/token_2022
+cargo build-sbf
 anchor build
 ```
 
 ## Test
 
 ```bash
-cd programs/attention-oracle
+cd programs/token_2022
 anchor test
 ```
 
-## Directory Map (high level)
+## Documentation
 
-- `programs/attention-oracle/` — on‑chain program
-- `clients/` — optional helpers and examples
-- `packages/, rust-packages/` — shared libs (if present)
-
-## Documents
-
-- `OPEN_CORE_DOCUMENTATION_COMPLETE.md` — Open‑core scope and guidelines
-- `PITCH_DECK.md` — Project overview deck
-- `PROGRAMS_OVERVIEW.md` — Program ID mapping, repo scope, env/key policy
+- `docs/OPEN_CORE_DOCS.md` — Open-core scope, contribution notes, and governance guidance.
+- `docs/PITCH_DECK.md` — Public-safe pitch deck outline without proprietary links or claims.
 
 ## Security & Secrets
 
-- No private keys, .env files, or credentials are tracked. `.gitignore` blocks common secret patterns. Use environment variables and secret stores.
-- Report any security concerns to the maintainers via private channels; do not open public issues for sensitive findings.
+- Private keys stay local (e.g. `~/.config/solana/id.json`, HashiCorp Vault, or a secure key manager). Paths alone are referenced in code.
+- `.env` files and `.json` keypairs are ignored by Git.
+- Report vulnerabilities via `security@twzrd.xyz`; see `docs/OPEN_CORE_DOCS.md` for the disclosure policy.
 
 ## License
 
-Open‑core: core protocol and program are open; proprietary extensions live out of tree.
+Dual MIT / Apache-2.0 (see `LICENSE` / `LICENSE-APACHE`).
