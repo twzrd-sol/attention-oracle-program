@@ -1,0 +1,58 @@
+name: Verify Build
+
+on:
+  push:
+    branches: [ main, chore/anchor-0.32-upgrade ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-sbf:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Solana CLI (v3.0.0)
+        uses: anza-labs/setup-solana@v1
+        with:
+          version: v3.0.0
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Anchor CLI 0.32.1
+        run: |
+          cargo install --locked anchor-cli --version 0.32.1
+          anchor --version
+
+      - name: Build SBF
+        working-directory: programs
+        run: |
+          cargo build-sbf
+
+      - name: Compute SHA256
+        id: sha
+        run: |
+          echo "sha256=$(sha256sum programs/target/deploy/token_2022.so | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          ls -lh programs/target/deploy/token_2022.so
+
+      - name: Extract IDL (best-effort)
+        continue-on-error: true
+        run: |
+          mkdir -p target/idl
+          anchor idl parse -f programs/src/lib.rs -o target/idl/token_2022.json || true
+          test -f target/idl/token_2022.json && jq length target/idl/token_2022.json || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbf-artifacts
+          path: |
+            programs/target/deploy/token_2022.so
+            target/idl/token_2022.json
+
+      - name: Summary
+        run: |
+          echo "Binary SHA256: ${{ steps.sha.outputs.sha256 }}" | tee -a $GITHUB_STEP_SUMMARY
+
