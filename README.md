@@ -1,6 +1,6 @@
 # Attention Oracle (Open Core)
 
-Builder‑neutral, first‑principles implementation of a modern Solana program for verifiable claims using Merkle proofs and Token‑2022.
+Builder‑neutral implementation of a Solana program for verifiable claims using Merkle proofs and Token‑2022.
 
 Repository scope is two core components:
 - Solana program (Rust, Anchor) in `programs/`
@@ -19,8 +19,9 @@ Program ID (current deployment reference): `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjN
 ## Stack
 
 - Language: Rust
-- Framework: Anchor ≥ 0.30
-- Cluster toolchain: Solana ≥ 1.18
+- Program framework: Anchor ≥ 0.30
+- Runtime: Solana mainnet, 1.18+ toolchain
+- Token standard: Token‑2022 (transfer hooks)
 
 ## Build
 
@@ -46,7 +47,7 @@ anchor test
 
 - `OPEN_CORE_DOCUMENTATION_COMPLETE.md` — Open‑core scope and guidelines
 - `OPEN_CORE_EXCELLENCE_PLAN.md` — Quality bars and contribution expectations
-For pitch materials, contact the maintainers.
+- `PITCH_DECK.md` — Project overview deck
 
 ## Security & Secrets
 
