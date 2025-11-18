@@ -4,6 +4,7 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+package-lock.json
 
 # Next.js
 .next/
@@ -11,9 +12,12 @@ out/
 build/
 dist/
 
-# Exclude UI/demo apps (only include listener)
-apps/!
-!apps/stream-listener-ts/
+# Exclude UI/demo apps; keep only listener README public
+apps/*
+!apps/stream-listener-ts
+!apps/stream-listener-ts/**
+!apps/twzrd-aggregator-rs
+!apps/twzrd-aggregator-rs/**
 portal-v3/
 x402-api-server/
 
