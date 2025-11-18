@@ -289,7 +289,7 @@ pub struct ChannelState {
     pub bump: u8,
     pub mint: Pubkey,
     pub streamer: Pubkey,
-    pub _padding: [u8; 6],  // Explicit padding for u64 alignment
+    pub _padding: [u8; 6], // Explicit padding for u64 alignment
     pub latest_epoch: u64,
     pub slots: [ChannelSlot; CHANNEL_RING_SLOTS],
 }
@@ -316,7 +316,7 @@ pub struct ChannelSlot {
     pub epoch: u64,
     pub root: [u8; 32],
     pub claim_count: u16,
-    pub _padding: [u8; 6],  // Explicit padding to maintain 8-byte alignment
+    pub _padding: [u8; 6], // Explicit padding to maintain 8-byte alignment
     pub claimed_bitmap: [u8; CHANNEL_BITMAP_BYTES],
 }
 

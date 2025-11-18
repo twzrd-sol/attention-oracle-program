@@ -1,33 +1,30 @@
 # Attention Oracle (Open Core)
 
-Builder-neutral implementation of a Solana Token‑2022 program plus the helpers that surround it.
+Builder-neutral Solana Token-2022 program plus a single oracle demo. Every other service (listener, aggregator, UI, CLI, SDK) now lives in private repos while we rebuild from first principles.
+
+## Scope
+
+- `programs/token_2022/` — Anchor 0.32.1 program deployed as `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`.
+- `oracles/x402-switchboard/` — Minimal x402 + Switchboard server that demonstrates off-chain settlement.
+
+All other components are intentionally absent from the public tree until they are production-ready again.
 
 ## Environment
 
-Use the tracked `.env.example` to create a local `.env` (never commit `.env`).
+Copy the template and fill the values you need (never commit `.env`).
+
 ```bash
-./scripts/bootstrap-env.sh  # copies .env.example -> .env if missing
-# or: cp .env.example .env
+cp .env.example .env
 ```
-Fill these values as needed:
 
-- `ANCHOR_PROVIDER_URL` — Anchor RPC URL (e.g. `https://api.devnet.solana.com`).
-- `AO_RPC_URL` — Optional override for CLI/SDK RPC (falls back to Anchor URL).
-- `ANCHOR_WALLET` — Path to your deploy keypair (e.g. `~/.config/solana/id.json`).
-- `AO_PROGRAM_ID` — Defaults to the public program `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` (v0.2.1-clean).
-- `SB_CLUSTER`, `SB_FEED`, `PORT` — For the optional `oracles/x402-switchboard` reference implementation.
+Key fields:
 
-`dotenv` is loaded automatically in tests and the oracle demo.
+- `ANCHOR_PROVIDER_URL` — RPC for Anchor builds/tests.
+- `ANCHOR_WALLET` — Path to your deploy keypair.
+- `AO_PROGRAM_ID` — Defaults to the public deployment.
+- `SB_CLUSTER`, `SB_FEED`, `PORT` — Inputs for the oracle demo.
 
-## Architecture
-
-```
-programs/token_2022/     # Active Solana Token-2022 program (GnGz...)
-sdk/                     # TypeScript + Rust clients that share the same IDL
-cli/                     # Admin CLI wired to AO_PROGRAM_ID and AO_RPC_URL
-oracles/x402-switchboard/ # Minimal Switchboard + x402 demo (env-driven)
-docs/                    # Public docs (open-core scope + pitch deck outline)
-```
+`dotenv` is loaded automatically where required.
 
 ## Build
 
@@ -37,23 +34,39 @@ cargo build-sbf
 anchor build
 ```
 
+## Build Notes (Rust 1.89 vs current SBF toolchain)
+
+The on-chain crate pins `rust-version = "1.89"`. Today’s Solana SBF toolchain (CLI 3.0.0) still ships `rustc 1.84.1`, so `anchor build/test` fails unless you either:
+
+1. Install a Solana toolchain that bundles rustc 1.89+ (once available, preferred), or
+2. Temporarily relax the crate’s `rust-version` to `1.84` for local testing, then restore it before tagging releases.
+
+We keep the source on 1.89 and document the mismatch instead of downgrading the program.
+
 ## Test
 
 ```bash
 cd programs/token_2022
-anchor test
+anchor test   # requires rustc 1.89 per Build Notes
 ```
 
-## Documentation
+## Oracle Demo (x402 + Switchboard)
 
-- `docs/OPEN_CORE_DOCS.md` — Open-core scope, contribution notes, and governance guidance.
-- `docs/PITCH_DECK.md` — Public-safe pitch deck outline without proprietary links or claims.
+```bash
+cd oracles/x402-switchboard
+npm install
+cp ../../.env.example .env   # populate SB_CLUSTER/SB_FEED/PORT
+npm run dev
+curl http://localhost:3000/price
+```
 
-## Security & Secrets
+The demo is stateless and provided strictly for reference.
 
-- Private keys stay local (e.g. `~/.config/solana/id.json`, HashiCorp Vault, or a secure key manager). Paths alone are referenced in code.
-- `.env` files and `.json` keypairs are ignored by Git.
-- Report vulnerabilities via `security@twzrd.xyz`; see `docs/OPEN_CORE_DOCS.md` for the disclosure policy.
+## Security
+
+- Keep private keys outside the repo (e.g. `~/.config/solana/id.json`, Vault).
+- `.env` files and keypairs stay gitignored.
+- Report vulnerabilities to `security@twzrd.xyz`.
 
 ## License
 

@@ -110,7 +110,10 @@ pub fn claim(
     // Check bitmap not already claimed
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
-    require!(byte_i < epoch.claimed_bitmap.len(), OracleError::InvalidIndex);
+    require!(
+        byte_i < epoch.claimed_bitmap.len(),
+        OracleError::InvalidIndex
+    );
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
         OracleError::AlreadyClaimed
@@ -267,7 +270,10 @@ pub fn claim_open(
     // Step 2: Verify merkle proof for CCM claim
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
-    require!(byte_i < epoch.claimed_bitmap.len(), OracleError::InvalidIndex);
+    require!(
+        byte_i < epoch.claimed_bitmap.len(),
+        OracleError::InvalidIndex
+    );
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
         OracleError::AlreadyClaimed

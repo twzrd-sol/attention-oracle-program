@@ -1,8 +1,6 @@
 [workspace]
 members = [
-    "programs/token_2022",
-    "sdk/rust",
-    "apps/twzrd-aggregator-rs"
+    "programs/token_2022"
 ]
 resolver = "2"
 
