@@ -3,6 +3,7 @@ name: Verify Build
 on:
   push:
     branches: [ main, chore/anchor-0.32-upgrade ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -76,3 +77,38 @@ jobs:
         if: matrix.solana == '2.3.0'
         run: |
           echo "Binary SHA256: ${{ steps.sha.outputs.sha256 }}" | tee -a $GITHUB_STEP_SUMMARY
+
+  publish-release:
+    name: Publish Release Artifacts
+    needs: build-sbf
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download 2.3.0 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sbf-artifacts
+          path: dist
+
+      - name: Prepare files
+        id: prep
+        run: |
+          SO=$(find dist -name token_2022.so -type f | head -n1)
+          IDL=$(find dist -name token_2022.json -type f | head -n1 || true)
+          echo "so=$SO" >> $GITHUB_OUTPUT
+          echo "idl=$IDL" >> $GITHUB_OUTPUT
+          echo "Binary:" $SO
+          test -n "$IDL" && echo "IDL:" $IDL || echo "IDL not found (skipping)"
+
+      - name: Create or update release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" -t "$TAG" -n "Automated release from CI"
+          gh release upload "$TAG" "${{ steps.prep.outputs.so }}" --clobber
+          if [ -n "${{ steps.prep.outputs.idl }}" ]; then
+            gh release upload "$TAG" "${{ steps.prep.outputs.idl }}" --clobber
+          fi
