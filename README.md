@@ -2,7 +2,7 @@
 
 Builder‑neutral, first‑principles implementation of a modern Solana program for verifiable claims using Merkle proofs and Token‑2022. No IP, no secrets, no hype.
 
-— Keep: open‑core docs and pitch deck for context
+— Keep: open‑core docs
 — Remove: internal checklists, ops runbooks, incident logs, and environment files (scrubbed from history)
 
 Repository scope is the on‑chain program and minimal client helpers. UI and infra are intentionally out of scope.
@@ -45,9 +45,8 @@ anchor test
 
 - `OPEN_CORE_DOCUMENTATION_COMPLETE.md` — Open‑core scope and guidelines
 - `OPEN_CORE_EXCELLENCE_PLAN.md` — Quality bars and contribution expectations
-- `PITCH_DECK.md` / `pitch-deck.html` — Project overview deck
 
-All other internal docs were removed and scrubbed from git history.
+Pitch materials are maintained off‑repo and shared on request. All other internal docs were removed and scrubbed from git history.
 
 ## Security & Secrets
 
@@ -57,4 +56,3 @@ All other internal docs were removed and scrubbed from git history.
 ## License
 
 Open‑core: core protocol and program are open; proprietary extensions live out of tree.
-
