@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::keccak;
+use sha3::{Digest, Keccak256};
 
 /// Verify cNFT receipt from TWZRD L1
 /// Production implementation would integrate with mpl-bubblegum
@@ -54,8 +54,12 @@ fn compute_metadata_hash(channel: &str, epoch: u64) -> [u8; 32] {
     preimage.extend_from_slice(channel.as_bytes());
     preimage.extend_from_slice(b":");
     preimage.extend_from_slice(&epoch.to_le_bytes());
-
-    keccak::hash(&preimage).to_bytes()
+    let mut hasher = Keccak256::new();
+    hasher.update(&preimage);
+    let out = hasher.finalize();
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&out[..32]);
+    arr
 }
 
 /// Verify merkle proof (used for Bubblegum tree verification)
@@ -70,11 +74,13 @@ pub fn verify_merkle_proof(leaf: &[u8; 32], proof: &[[u8; 32]], root: &[u8; 32])
         } else {
             (*sibling, current)
         };
-
-        let mut combined = Vec::new();
-        combined.extend_from_slice(&first);
-        combined.extend_from_slice(&second);
-        current = keccak::hash(&combined).to_bytes();
+        let mut hasher = Keccak256::new();
+        hasher.update(&first);
+        hasher.update(&second);
+        let out = hasher.finalize();
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&out[..32]);
+        current = arr;
     }
 
     current == *root
