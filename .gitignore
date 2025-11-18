@@ -83,3 +83,12 @@ tmp_channels.txt
 # Internal deployment docs (keep private)
 DEPLOYMENT_STATUS.md
 **/DEPLOYMENT_STATUS.md
+
+# Private apps – never commit
+apps/twzrd-aggregator/
+apps/portal-*/
+apps/claim-ui/
+apps/worker-v2/
+apps/ctw-*/
+apps/_deprecated-*/
+apps/_archive/
