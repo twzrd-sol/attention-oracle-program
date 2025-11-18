@@ -1,0 +1,29 @@
+[metadata]
+name = "Attention Oracle"
+version = "1.0.0"
+description = "Open-source token distribution protocol for creator economies on Solana"
+repository = "https://github.com/twzrd-sol/attention-oracle-program"
+license = "MIT OR Apache-2.0"
+
+[programs.mainnet]
+GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop = "programs"
+
+[build]
+solana_version = "1.18.17"
+anchor_version = "0.30.1"
+
+[[dependencies]]
+name = "anchor-lang"
+version = "0.30.1"
+
+[[dependencies]]
+name = "anchor-spl"
+version = "0.30.1"
+
+[[dependencies]]
+name = "spl-token-2022"
+version = "1.0.0"
+
+[verify]
+mountPath = "programs"
+buildCommand = ["cargo", "build-sbf"]
