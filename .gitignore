@@ -16,6 +16,10 @@ dist/
 apps/*
 !apps/stream-listener-ts
 !apps/stream-listener-ts/**
+# Re-ignore build artifacts and deps inside the allowed subtree
+apps/stream-listener-ts/node_modules/
+apps/stream-listener-ts/dist/
+apps/stream-listener-ts/package-lock.json
 !apps/twzrd-aggregator-rs
 !apps/twzrd-aggregator-rs/**
 portal-v3/
