@@ -283,7 +283,7 @@ impl PassportRegistry {
 /// Per-channel ring buffer state (stores recent epoch merkle roots)
 /// Uses zero_copy to avoid stack overflow (1.7KB struct)
 #[account(zero_copy)]
-#[repr(C, packed)]
+#[repr(C)]
 pub struct ChannelState {
     pub version: u8,
     pub bump: u8,
@@ -294,13 +294,7 @@ pub struct ChannelState {
 }
 
 impl ChannelState {
-    pub const LEN: usize = 8 /* disc */
-        + 1 /* version */
-        + 1 /* bump */
-        + 32 /* mint */
-        + 32 /* streamer */
-        + 8 /* latest_epoch */
-        + (ChannelSlot::LEN * CHANNEL_RING_SLOTS);
+    pub const LEN: usize = 8 /* disc */ + core::mem::size_of::<ChannelState>();
 
     pub fn slot_index(epoch: u64) -> usize {
         (epoch as usize) % CHANNEL_RING_SLOTS
@@ -316,7 +310,7 @@ impl ChannelState {
 }
 
 #[zero_copy]
-#[repr(C, packed)]
+#[repr(C)]
 pub struct ChannelSlot {
     pub epoch: u64,
     pub root: [u8; 32],
@@ -325,10 +319,7 @@ pub struct ChannelSlot {
 }
 
 impl ChannelSlot {
-    pub const LEN: usize = 8 /* epoch */
-        + 32 /* root */
-        + 2 /* claim_count */
-        + CHANNEL_BITMAP_BYTES;
+    pub const LEN: usize = core::mem::size_of::<ChannelSlot>();
 
     pub fn reset(&mut self, epoch: u64, root: [u8; 32]) {
         self.epoch = epoch;

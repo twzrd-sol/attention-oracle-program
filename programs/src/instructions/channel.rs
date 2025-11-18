@@ -52,9 +52,9 @@ pub struct SetChannelMerkleRoot<'info> {
     pub protocol_state: Account<'info, ProtocolState>,
 
     /// PDA derived from (mint, channel) - zero_copy account
-    /// CHECK: Validated via PDA derivation in handler
+    /// CHECK: PDA is validated via derivation in handler
     #[account(mut)]
-    pub channel_state: AccountInfo<'info>,
+    pub channel_state: AccountLoader<'info, ChannelState>,
 
     pub system_program: Program<'info, System>,
 }
@@ -81,12 +81,13 @@ pub fn set_channel_merkle_root(
     let (expected_pda, bump) = Pubkey::find_program_address(&seeds, ctx.program_id);
     require_keys_eq!(
         expected_pda,
-        ctx.accounts.channel_state.key(),
+        ctx.accounts.channel_state.to_account_info().key(),
         MiloError::InvalidChannelState
     );
 
     // Create account if needed
-    if ctx.accounts.channel_state.owner != ctx.program_id {
+    let channel_state_info = ctx.accounts.channel_state.to_account_info();
+    if channel_state_info.owner != ctx.program_id {
         msg!("Creating channel state account");
         let rent = Rent::get()?;
         let space = 8 + std::mem::size_of::<ChannelState>();
@@ -101,7 +102,7 @@ pub fn set_channel_merkle_root(
             ),
             &[
                 ctx.accounts.payer.to_account_info(),
-                ctx.accounts.channel_state.clone(),
+                channel_state_info.clone(),
                 ctx.accounts.system_program.to_account_info(),
             ],
             &[&[
@@ -113,25 +114,14 @@ pub fn set_channel_merkle_root(
         )?;
 
         // Initialize zero_copy account with discriminator
-        let mut data = ctx.accounts.channel_state.try_borrow_mut_data()?;
+        let mut data = channel_state_info.try_borrow_mut_data()?;
         use anchor_lang::Discriminator;
         data[0..8].copy_from_slice(&ChannelState::DISCRIMINATOR);
         msg!("Account created and initialized");
     }
 
-    // Load via zero_copy (direct bytemuck cast)
-    let mut data = ctx.accounts.channel_state.try_borrow_mut_data()?;
-    let total_len = data.len();
-    msg!("channel_state raw len {}", total_len);
-    let (_disc_bytes, rest) = data.split_at_mut(8);
-    msg!("channel_state body len {}", rest.len());
-    msg!(
-        "ChannelState sizeof {}",
-        core::mem::size_of::<ChannelState>()
-    );
-    let channel_state = bytemuck::try_from_bytes_mut::<ChannelState>(rest)
-        .map_err(|_| MiloError::InvalidChannelState)?;
-    msg!("channel_state cast ok");
+    // Load via Anchor's zero_copy loader
+    let mut channel_state = ctx.accounts.channel_state.load_mut()?;
 
     // Initialize fields if new
     if channel_state.version == 0 {
@@ -187,9 +177,9 @@ pub struct ClaimChannel<'info> {
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    /// CHECK: Validated via PDA derivation in handler
+    /// CHECK: PDA is validated via derivation in handler
     #[account(mut)]
-    pub channel_state: AccountInfo<'info>,
+    pub channel_state: AccountLoader<'info, ChannelState>,
 
     pub mint: InterfaceAccount<'info, Mint>,
 
@@ -234,15 +224,12 @@ pub fn claim_channel_open(
     let (expected_pda, _) = Pubkey::find_program_address(&seeds, ctx.program_id);
     require_keys_eq!(
         expected_pda,
-        ctx.accounts.channel_state.key(),
+        ctx.accounts.channel_state.to_account_info().key(),
         MiloError::InvalidChannelState
     );
 
-    // Load via zero_copy (direct bytemuck cast)
-    let mut data = ctx.accounts.channel_state.try_borrow_mut_data()?;
-    let (_disc_bytes, rest) = data.split_at_mut(8);
-    let channel_state = bytemuck::try_from_bytes_mut::<ChannelState>(rest)
-        .map_err(|_| MiloError::InvalidChannelState)?;
+    // Load via Anchor's zero_copy loader
+    let mut channel_state = ctx.accounts.channel_state.load_mut()?;
 
     require!(
         channel_state.version == CHANNEL_STATE_VERSION,
@@ -329,9 +316,9 @@ pub struct ClaimChannelWithReceipt<'info> {
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    /// CHECK: Validated via PDA derivation in handler
+    /// CHECK: PDA is validated via derivation in handler
     #[account(mut)]
-    pub channel_state: AccountInfo<'info>,
+    pub channel_state: AccountLoader<'info, ChannelState>,
 
     pub mint: InterfaceAccount<'info, Mint>,
 
@@ -400,15 +387,12 @@ pub fn claim_channel_open_with_receipt(
     let (expected_pda, _) = Pubkey::find_program_address(&seeds, ctx.program_id);
     require_keys_eq!(
         expected_pda,
-        ctx.accounts.channel_state.key(),
+        ctx.accounts.channel_state.to_account_info().key(),
         MiloError::InvalidChannelState
     );
 
-    // Load via zero_copy (direct bytemuck cast)
-    let mut data = ctx.accounts.channel_state.try_borrow_mut_data()?;
-    let (_disc_bytes, rest) = data.split_at_mut(8);
-    let channel_state = bytemuck::try_from_bytes_mut::<ChannelState>(rest)
-        .map_err(|_| MiloError::InvalidChannelState)?;
+    // Load via Anchor's zero_copy loader
+    let mut channel_state = ctx.accounts.channel_state.load_mut()?;
 
     require!(
         channel_state.version == CHANNEL_STATE_VERSION,
