@@ -5,7 +5,11 @@ Builder‑neutral, first‑principles implementation of a modern Solana program 
 — Keep: open‑core docs
 — Remove: internal checklists, ops runbooks, incident logs, and environment files (scrubbed from history)
 
-Repository scope is the on‑chain program and minimal client helpers. UI and infra are intentionally out of scope.
+Repository scope is two core components:
+- Solana program (Rust, Anchor) in `programs/`
+- Minimal x402 + Switchboard example in `oracles/x402-switchboard/`
+
+UI and deployment infrastructure are intentionally out of scope.
 
 ## What It Does
 
