@@ -48,6 +48,9 @@ jobs:
       - name: Build SBF
         working-directory: programs
         run: |
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          solana --version || true
+          which cargo-build-sbf || true
           cargo build-sbf
 
       - name: Compute SHA256 (2.3.0 only)
