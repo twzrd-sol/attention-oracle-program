@@ -23,7 +23,7 @@ points = []
 [dependencies]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
 anchor-spl = { version = "0.32.1", features = ["token_2022"] }
-bytemuck = "1.14"
+bytemuck = "1.14" # required by Anchor's zero_copy derive
 # Anchor >= 0.32 re-exports `solana_program`; keep imports via `anchor_lang::solana_program`
 # to avoid version skew. No direct `solana-program` dependency is needed here.
 mpl-bubblegum = "2.1.0"
