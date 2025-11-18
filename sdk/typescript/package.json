@@ -1,0 +1,49 @@
+{
+  "name": "@attention-oracle/sdk",
+  "version": "0.2.0",
+  "description": "TypeScript SDK for Attention Oracle - Verifiable token distribution on Solana",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/twzrd-sol/attention-oracle-program.git",
+    "directory": "sdk/typescript"
+  },
+  "keywords": [
+    "solana",
+    "web3",
+    "blockchain",
+    "token-2022",
+    "attention-oracle",
+    "merkle-proof",
+    "claims"
+  ],
+  "author": "twzrd-sol",
+  "license": "MIT OR Apache-2.0",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "generate": "anchor idl parse -f ../../programs/src/lib.rs -o idl/token_2022.json && npx @coral-xyz/anchor ts-generate-from-idl --program-id GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --idl-path idl/token_2022.json --out-path src/generated",
+    "test": "ts-node test/index.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/web3.js": "^1.95.0",
+    "@solana/spl-token": "^0.4.0",
+    "bn.js": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.1",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0"
+  },
+  "peerDependencies": {
+    "@coral-xyz/anchor": "^0.32.0",
+    "@solana/web3.js": "^1.90.0"
+  }
+}
