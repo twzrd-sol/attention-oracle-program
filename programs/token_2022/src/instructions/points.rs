@@ -6,7 +6,7 @@ use anchor_spl::{
 
 use crate::{
     constants::PROTOCOL_SEED,
-    errors::MiloError,
+    errors::OracleError,
     state::{EpochState, ProtocolState},
 };
 
@@ -20,7 +20,7 @@ pub struct ClaimPointsOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -58,7 +58,7 @@ pub fn claim_points_open(
     let epoch = &mut ctx.accounts.epoch_state;
 
     // Guards
-    require!(!epoch.closed, MiloError::EpochClosed);
+    require!(!epoch.closed, OracleError::EpochClosed);
 
     // Optional: ensure points are for the same protocol instance by convention
     // (we allow any points mint as long as authority signs via PDA)
@@ -66,17 +66,17 @@ pub fn claim_points_open(
     // Check bitmap not already claimed
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
-    require!(byte_i < epoch.claimed_bitmap.len(), MiloError::InvalidIndex);
+    require!(byte_i < epoch.claimed_bitmap.len(), OracleError::InvalidIndex);
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
-        MiloError::AlreadyClaimed
+        OracleError::AlreadyClaimed
     );
 
     // Verify proof
     let leaf = super::claim::compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         super::claim::verify_proof(&proof, leaf, epoch.root),
-        MiloError::InvalidProof
+        OracleError::InvalidProof
     );
 
     // Mint points to claimer using PDA authority
@@ -125,6 +125,6 @@ pub struct RequirePoints<'info> {
 /// Require that `owner` has at least `min` points
 pub fn require_points_ge(ctx: Context<RequirePoints>, min: u64) -> Result<()> {
     let balance = ctx.accounts.points_ata.amount;
-    require!(balance >= min, MiloError::InsufficientPoints);
+    require!(balance >= min, OracleError::InsufficientPoints);
     Ok(())
 }

@@ -33,7 +33,7 @@ docs/                    # Public docs (open-core scope + pitch deck outline)
 ### Active vs. Archived
 
 - **Active:** `programs/token_2022` is the only program built/tested via CI. It is the single source of truth for the on-chain logic.
-- **Archived:** Other `programs/*` directories are now moved to `archive/` (attention-oracle, milo-2022) and contain only historical artifacts. They are not part of builds or release flows.
+- **Archived:** Legacy iterations now live under `archive/` (e.g., early attention-oracle prototypes). They remain for audit/traceability but are not built or deployed.
 
 ## Build
 

@@ -3,7 +3,7 @@ use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::{
     constants::{PASSPORT_SEED, PROTOCOL_SEED},
-    errors::MiloError,
+    errors::OracleError,
     events::TransferFeeEvent,
     state::{FeeConfig, PassportRegistry, ProtocolState},
 };
@@ -50,7 +50,7 @@ pub struct TransferHook<'info> {
 /// with fee breakdown. Treasury receives fixed 0.05%, creator receives 0.05% * tier multiplier.
 /// Fees are withheld by Token-2022's transfer fee extension and harvested separately.
 pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
-    require!(amount > 0, MiloError::InvalidAmount);
+    require!(amount > 0, OracleError::InvalidAmount);
 
     let ts = Clock::get()?.unix_timestamp;
     let fee_config = &ctx.accounts.fee_config;

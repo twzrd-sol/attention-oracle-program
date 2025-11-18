@@ -1,6 +1,6 @@
 use crate::{
     constants::{ADMIN_AUTHORITY, PROTOCOL_SEED},
-    errors::MiloError,
+    errors::OracleError,
     state::{FeeConfig, ProtocolState},
 };
 use anchor_lang::prelude::*;
@@ -10,12 +10,12 @@ use anchor_spl::token_interface::Mint as SplMint;
 pub struct InitializeMint<'info> {
     #[account(
         mut,
-        constraint = admin.key() == ADMIN_AUTHORITY @ MiloError::Unauthorized
+        constraint = admin.key() == ADMIN_AUTHORITY @ OracleError::Unauthorized
     )]
     pub admin: Signer<'info>,
 
-    /// CCM Token-2022 mint (created externally with spl-token CLI)
-    pub milo_mint: InterfaceAccount<'info, SplMint>,
+    /// Token-2022 mint (created externally with spl-token CLI)
+    pub token_mint: InterfaceAccount<'info, SplMint>,
 
     /// Protocol state PDA
     #[account(
@@ -43,13 +43,13 @@ pub struct InitializeMint<'info> {
 pub fn handler(ctx: Context<InitializeMint>, fee_basis_points: u16, max_fee: u64) -> Result<()> {
     require!(
         fee_basis_points as u16 <= crate::constants::MAX_FEE_BASIS_POINTS,
-        MiloError::InvalidFeeBps
+        OracleError::InvalidFeeBps
     );
 
     let protocol_state = &mut ctx.accounts.protocol_state;
     require!(
         !protocol_state.is_initialized,
-        MiloError::AlreadyInitialized
+        OracleError::AlreadyInitialized
     );
 
     protocol_state.is_initialized = true;
@@ -57,7 +57,7 @@ pub fn handler(ctx: Context<InitializeMint>, fee_basis_points: u16, max_fee: u64
     protocol_state.admin = ctx.accounts.admin.key();
     protocol_state.publisher = ctx.accounts.admin.key();
     protocol_state.treasury = protocol_state.key();
-    protocol_state.mint = ctx.accounts.milo_mint.key();
+    protocol_state.mint = ctx.accounts.token_mint.key();
     protocol_state.paused = false;
     protocol_state.bump = ctx.bumps.protocol_state;
 
@@ -84,14 +84,14 @@ pub struct InitializeMintOpen<'info> {
     pub admin: Signer<'info>,
 
     /// Token-2022 mint (created externally)
-    pub milo_mint: InterfaceAccount<'info, SplMint>,
+    pub token_mint: InterfaceAccount<'info, SplMint>,
 
     /// Protocol state PDA (keyed by mint)
     #[account(
         init,
         payer = admin,
         space = ProtocolState::LEN,
-        seeds = [PROTOCOL_SEED, milo_mint.key().as_ref()],
+        seeds = [PROTOCOL_SEED, token_mint.key().as_ref()],
         bump
     )]
     pub protocol_state: Account<'info, ProtocolState>,
@@ -101,7 +101,7 @@ pub struct InitializeMintOpen<'info> {
         init,
         payer = admin,
         space = FeeConfig::LEN,
-        seeds = [PROTOCOL_SEED, milo_mint.key().as_ref(), b"fee_config"],
+        seeds = [PROTOCOL_SEED, token_mint.key().as_ref(), b"fee_config"],
         bump
     )]
     pub fee_config: Account<'info, FeeConfig>,
@@ -116,13 +116,13 @@ pub fn handler_open(
 ) -> Result<()> {
     require!(
         fee_basis_points as u16 <= crate::constants::MAX_FEE_BASIS_POINTS,
-        MiloError::InvalidFeeBps
+        OracleError::InvalidFeeBps
     );
 
     let protocol_state = &mut ctx.accounts.protocol_state;
     require!(
         !protocol_state.is_initialized,
-        MiloError::AlreadyInitialized
+        OracleError::AlreadyInitialized
     );
 
     protocol_state.is_initialized = true;
@@ -130,7 +130,7 @@ pub fn handler_open(
     protocol_state.admin = ctx.accounts.admin.key();
     protocol_state.publisher = ctx.accounts.admin.key();
     protocol_state.treasury = protocol_state.key();
-    protocol_state.mint = ctx.accounts.milo_mint.key();
+    protocol_state.mint = ctx.accounts.token_mint.key();
     protocol_state.paused = false;
     protocol_state.bump = ctx.bumps.protocol_state;
 

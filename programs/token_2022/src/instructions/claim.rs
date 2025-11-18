@@ -17,7 +17,7 @@ fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
 
 use crate::{
     constants::{EPOCH_STATE_SEED, PROTOCOL_SEED},
-    errors::MiloError,
+    errors::OracleError,
     instructions::cnft_verify::CnftReceiptProof,
     state::{EpochState, ProtocolState},
 };
@@ -32,7 +32,7 @@ pub struct Claim<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -84,11 +84,11 @@ pub fn claim(
     let epoch = &mut ctx.accounts.epoch_state;
 
     // Basic guards
-    require!(!epoch.closed, MiloError::EpochClosed);
-    require!(index < epoch.claim_count, MiloError::InvalidIndex);
+    require!(!epoch.closed, OracleError::EpochClosed);
+    require!(index < epoch.claim_count, OracleError::InvalidIndex);
     require!(
         epoch.mint == ctx.accounts.mint.key(),
-        MiloError::InvalidMint
+        OracleError::InvalidMint
     );
 
     // Prevent spoofed epoch_state accounts
@@ -104,23 +104,23 @@ pub fn claim(
     require_keys_eq!(
         expected_epoch_state,
         epoch_state_key,
-        MiloError::InvalidEpochState
+        OracleError::InvalidEpochState
     );
 
     // Check bitmap not already claimed
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
-    require!(byte_i < epoch.claimed_bitmap.len(), MiloError::InvalidIndex);
+    require!(byte_i < epoch.claimed_bitmap.len(), OracleError::InvalidIndex);
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
-        MiloError::AlreadyClaimed
+        OracleError::AlreadyClaimed
     );
 
     // Verify proof against on-chain root
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, epoch.root),
-        MiloError::InvalidProof
+        OracleError::InvalidProof
     );
 
     // Transfer CCM from treasury PDA to claimer (use transfer_checked for Token-2022)
@@ -159,7 +159,7 @@ pub struct ClaimOpen<'info> {
         mut,
         seeds = [crate::constants::PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -216,11 +216,11 @@ pub fn claim_open(
 ) -> Result<()> {
     let epoch_state_key = ctx.accounts.epoch_state.key();
     let epoch = &mut ctx.accounts.epoch_state;
-    require!(!epoch.closed, MiloError::EpochClosed);
-    require!(index < epoch.claim_count, MiloError::InvalidIndex);
+    require!(!epoch.closed, OracleError::EpochClosed);
+    require!(index < epoch.claim_count, OracleError::InvalidIndex);
     require!(
         epoch.mint == ctx.accounts.mint.key(),
-        MiloError::InvalidMint
+        OracleError::InvalidMint
     );
 
     let expected_epoch_state = Pubkey::find_program_address(
@@ -236,14 +236,14 @@ pub fn claim_open(
     require_keys_eq!(
         expected_epoch_state,
         epoch_state_key,
-        MiloError::InvalidEpochState
+        OracleError::InvalidEpochState
     );
 
     // Step 1: If receipt required, verify TWZRD L1 participation
     if ctx.accounts.protocol_state.require_receipt {
         require!(
             channel.is_some() && twzrd_epoch.is_some() && receipt_proof.is_some(),
-            MiloError::ReceiptRequired
+            OracleError::ReceiptRequired
         );
 
         let receipt = receipt_proof.as_ref().unwrap();
@@ -267,16 +267,16 @@ pub fn claim_open(
     // Step 2: Verify merkle proof for CCM claim
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
-    require!(byte_i < epoch.claimed_bitmap.len(), MiloError::InvalidIndex);
+    require!(byte_i < epoch.claimed_bitmap.len(), OracleError::InvalidIndex);
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
-        MiloError::AlreadyClaimed
+        OracleError::AlreadyClaimed
     );
 
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, epoch.root),
-        MiloError::InvalidProof
+        OracleError::InvalidProof
     );
 
     // Step 3: Transfer CCM tokens

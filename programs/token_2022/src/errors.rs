@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 #[error_code]
-pub enum MiloError {
+pub enum OracleError {
     #[msg("Unauthorized")]
     Unauthorized,
 

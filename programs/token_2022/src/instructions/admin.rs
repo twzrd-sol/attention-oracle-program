@@ -1,4 +1,4 @@
-use crate::{constants::PROTOCOL_SEED, errors::MiloError, state::ProtocolState};
+use crate::{constants::PROTOCOL_SEED, errors::OracleError, state::ProtocolState};
 use anchor_lang::prelude::*;
 
 /// Update the allowlisted publisher (singleton protocol_state)
@@ -11,7 +11,7 @@ pub struct UpdatePublisher<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -32,7 +32,7 @@ pub struct UpdatePublisherOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -56,7 +56,7 @@ pub struct SetPolicy<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -77,7 +77,7 @@ pub struct SetPolicyOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -98,7 +98,7 @@ pub struct SetPaused<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -119,7 +119,7 @@ pub struct SetPausedOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -141,7 +141,7 @@ pub struct UpdateAdminOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
@@ -162,7 +162,7 @@ pub struct UpdateAdmin<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 }
