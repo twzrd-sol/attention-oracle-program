@@ -32,7 +32,7 @@ spl-pod = "0.2.0"
 bytemuck = "1.19"
 sha3 = "0.10"
 solana-security-txt = "1.1"
-mpl-bubblegum = { version = "2.1.0", features = ["no-entrypoint"] }
+mpl-bubblegum = "2.1.0"
 
 [profile.release]
 opt-level = "z"
