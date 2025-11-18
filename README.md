@@ -26,14 +26,8 @@ programs/token_2022/     # Active Solana Token-2022 program (GnGz...)
 sdk/                     # TypeScript + Rust clients that share the same IDL
 cli/                     # Admin CLI wired to AO_PROGRAM_ID and AO_RPC_URL
 oracles/x402-switchboard/ # Minimal Switchboard + x402 demo (env-driven)
-archive/                 # Legacy source/binaries kept only for audit
 docs/                    # Public docs (open-core scope + pitch deck outline)
 ```
-
-### Active vs. Archived
-
-- **Active:** `programs/token_2022` is the only program built/tested via CI. It is the single source of truth for the on-chain logic.
-- **Archived:** Legacy iterations now live under `archive/` (e.g., early attention-oracle prototypes). They remain for audit/traceability but are not built or deployed.
 
 ## Build
 
