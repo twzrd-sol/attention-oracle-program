@@ -225,18 +225,5 @@ These are targets, not current claims; they should only be presented as achieved
 - Impact: Users claim once and churn.
 - Mitigation: Design focuses on status/access and cross‑creator utility; iteration will be driven by observed cohorts.
 
----
-
-## Slide 9: Optional Seed Round Outline (Placeholder)
-
-This slide is intentionally high‑level; specific round size, valuation, and allocation should only be filled in once numbers are agreed and supported by data.
-
-- Target: seed financing to harden Oracle, expand creator integrations, and complete audits.
-- Use of proceeds: creator integrations, product/engineering, audits, and legal/ops.
-- Milestones: concrete creator count, claims volume, and retention targets to be added once baselines exist.
-
-Team and detailed terms are best covered in a separate, up‑to‑date memo rather than fixed in this deck.
-
-
 **Questions?**
-dev@twzrd.xyz | [GitHub](https://github.com/twzrd-sol/attention-oracle-program) | [Mainnet](https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop)
+Contact: dev@twzrd.xyz
