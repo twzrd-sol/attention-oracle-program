@@ -37,12 +37,12 @@ echo "==> Wallet pubkey: $AUTH"
 echo "==> On-chain program info (before)"
 solana program show "$PROGRAM_ID" || true
 
-echo "==> Upgrading program with ROOT binary"
+echo "==> Deploying program with ROOT binary"
 solana program deploy "$BIN_ROOT" \
   --program-id "$PROGRAM_ID" \
   --url mainnet-beta
 
-echo "==> Post-upgrade verification"
+echo "==> Post-deploy verification"
 TMP=$(mktemp /tmp/ao.upgrade.XXXXXX.so)
 solana program dump "$PROGRAM_ID" "$TMP" --url mainnet-beta >/dev/null
 SHA_ON=$(sha256sum "$TMP" | cut -d' ' -f1)
