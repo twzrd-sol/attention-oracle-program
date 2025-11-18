@@ -1,26 +1,22 @@
 import http from 'node:http';
 import { clusterApiUrl, Connection, PublicKey } from '@solana/web3.js';
 import { getSwitchboardProgram, decodeLatestAggregatorValue } from './switchboard.js';
+import { env } from './env.js';
 
-const PORT = Number(process.env.PORT || 3000);
-const CLUSTER = (process.env.SB_CLUSTER || 'devnet') as 'devnet' | 'mainnet-beta' | 'testnet';
-const FEED = process.env.SB_FEED;
-
-if (!FEED) {
-  console.error('Missing SB_FEED aggregator pubkey');
-  process.exit(1);
-}
+const { PORT, SB_CLUSTER, SB_FEED } = env;
 
 const server = http.createServer(async (req, res) => {
   try {
     if (!req.url) return void res.end();
     if (req.url.startsWith('/price')) {
-      const rpc = clusterApiUrl(CLUSTER);
+      const rpc = clusterApiUrl(SB_CLUSTER);
       const conn = new Connection(rpc, 'confirmed');
       const prog = await getSwitchboardProgram(conn);
-      const { price, slot } = await decodeLatestAggregatorValue(prog, new PublicKey(FEED));
+      const { price, slot } = await decodeLatestAggregatorValue(prog, new PublicKey(SB_FEED));
       res.writeHead(200, { 'content-type': 'application/json' });
-      return void res.end(JSON.stringify({ ok: true, cluster: CLUSTER, feed: FEED, price, slot }));
+      return void res.end(
+        JSON.stringify({ ok: true, cluster: SB_CLUSTER, feed: SB_FEED, price, slot }),
+      );
     }
     if (req.url.startsWith('/protected')) {
       const paid = req.headers['x-402-payment'] === 'true';
@@ -42,4 +38,3 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`x402+Switchboard example listening on :${PORT}`);
 });
-
