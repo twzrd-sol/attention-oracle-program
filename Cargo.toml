@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "programs/token_2022",
-    "sdk/rust",
+    "sdk/rust"
 ]
 resolver = "2"
 
