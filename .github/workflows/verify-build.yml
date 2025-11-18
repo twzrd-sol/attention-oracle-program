@@ -39,7 +39,8 @@ jobs:
             ${{ runner.os }}-cargo-${{ matrix.solana }}-
             ${{ runner.os }}-cargo-
 
-      - name: Install Anchor CLI 0.32.1
+      - name: Install Anchor CLI 0.32.1 (best-effort)
+        continue-on-error: true
         run: |
           cargo install --locked anchor-cli --version 0.32.1
           anchor --version
