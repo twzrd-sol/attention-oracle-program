@@ -8,6 +8,18 @@ import * as fs from 'fs';
 
 const program = new Command();
 
+const DEFAULT_RPC_URL =
+  process.env.AO_RPC_URL ||
+  process.env.ANCHOR_PROVIDER_URL ||
+  'https://api.mainnet-beta.solana.com';
+
+const DEFAULT_PROGRAM_ID_STR =
+  process.env.AO_PROGRAM_ID || 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop';
+
+function getProgramId(): PublicKey {
+  return new PublicKey(DEFAULT_PROGRAM_ID_STR);
+}
+
 program
   .name('attention-oracle')
   .description('Attention Oracle CLI - Admin operations and utilities')
@@ -15,7 +27,7 @@ program
 
 // Global options
 program
-  .option('-u, --url <url>', 'RPC URL', 'https://api.mainnet-beta.solana.com')
+  .option('-u, --url <url>', 'RPC URL', DEFAULT_RPC_URL)
   .option('-k, --keypair <path>', 'Path to keypair file', '~/.config/solana/id.json');
 
 /**
@@ -29,7 +41,7 @@ program
 
     try {
       const connection = new Connection(program.opts().url);
-      const programId = new PublicKey('GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop');
+      const programId = getProgramId();
 
       const programInfo = await connection.getAccountInfo(programId);
       if (!programInfo) {
@@ -64,7 +76,7 @@ program
     try {
       const connection = new Connection(program.opts().url);
       const userPubkey = new PublicKey(wallet);
-      const programId = new PublicKey('GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop');
+      const programId = getProgramId();
 
       // Derive passport PDA
       const [passportPda] = PublicKey.findProgramAddressSync(
@@ -182,7 +194,7 @@ program
   .option('-c, --channel <id>', 'Channel ID (for channel/epoch)')
   .option('-e, --epoch <number>', 'Epoch index (for epoch)')
   .action(async (options) => {
-    const programId = new PublicKey('GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop');
+    const programId = getProgramId();
 
     console.log(chalk.bold('\n🔑 PDA Derivation'));
     console.log(chalk.gray('━'.repeat(50)));
