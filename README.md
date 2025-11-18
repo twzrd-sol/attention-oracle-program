@@ -20,7 +20,7 @@ Program ID (current deployment reference): `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjN
 
 - Language: Rust
 - Program framework: Anchor ≥ 0.30
-- Runtime: Solana mainnet, 1.18+ toolchain
+- Runtime: Solana mainnet, validator / CLI v2.3.x
 - Token standard: Token‑2022 (transfer hooks)
 
 ## Build
@@ -46,7 +46,6 @@ anchor test
 ## Documents
 
 - `OPEN_CORE_DOCUMENTATION_COMPLETE.md` — Open‑core scope and guidelines
-- `OPEN_CORE_EXCELLENCE_PLAN.md` — Quality bars and contribution expectations
 - `PITCH_DECK.md` — Project overview deck
 
 ## Security & Secrets
