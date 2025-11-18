@@ -20,7 +20,8 @@ fn derive_streamer_key(channel: &str) -> Pubkey {
     let mut lower = channel.as_bytes().to_vec();
     // Convert ASCII bytes to lowercase in-place (avoids allocation for Unicode)
     lower.iter_mut().for_each(|b| *b = b.to_ascii_lowercase());
-    let hash = keccak_hashv(&[b"twitch:", lower.as_slice()]);
+    // Brand- and platform-neutral prefix to derive a stable streamer key
+    let hash = keccak_hashv(&[b"channel:", lower.as_slice()]);
     Pubkey::new_from_array(hash)
 }
 
@@ -486,11 +487,11 @@ pub fn claim_channel_open_with_receipt(
             MiloError::MissingBubblegumAccounts
         );
 
-        // Build metadata
+        // Build metadata (brand-neutral)
         let metadata = mpl_bubblegum::types::MetadataArgs {
-            name: format!("TWZRD: {} #{}", channel, epoch),
-            symbol: "TWZRD".to_string(),
-            uri: format!("https://twzrd.xyz/receipts/{}/{}", channel, epoch),
+            name: format!("Attention Oracle: {} #{}", channel, epoch),
+            symbol: "AO".to_string(),
+            uri: format!("https://example.org/receipts/{}/{}", channel, epoch),
             seller_fee_basis_points: 0,
             primary_sale_happened: true,
             is_mutable: false,

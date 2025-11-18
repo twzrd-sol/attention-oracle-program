@@ -91,7 +91,7 @@ declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 security_txt! {
     name: "Attention Oracle - Verifiable Distribution Protocol (Token-2022)",
     project_url: "https://github.com/twzrd-sol/attention-oracle-program",
-    contacts: "email:security@twzrd.xyz",
+    contacts: "email:security@example.org",
     policy: "https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md",
     preferred_languages: "en",
     source_code: "https://github.com/twzrd-sol/attention-oracle-program"
