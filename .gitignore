@@ -20,6 +20,9 @@ x402-api-server/
 .env
 .env*
 **/.env*
+# but allow tracked examples across the repo
+!.env.example
+!**/.env.example
 
 # IDE
 .vscode/
