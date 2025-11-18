@@ -1,6 +1,6 @@
 use crate::{
     constants::{EPOCH_STATE_SEED, PROTOCOL_SEED},
-    errors::MiloError,
+    errors::OracleError,
     state::{EpochState, ProtocolState},
 };
 use anchor_lang::prelude::*;
@@ -16,7 +16,7 @@ pub struct CloseEpochState<'info> {
     #[account(
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -37,7 +37,7 @@ pub fn close_epoch_state(
 ) -> Result<()> {
     // Safety: only allow closing when all claims are completed
     let es = &ctx.accounts.epoch_state;
-    require!(all_claims_completed(es), MiloError::EpochNotFullyClaimed);
+    require!(all_claims_completed(es), OracleError::EpochNotFullyClaimed);
     // Account will be closed automatically by Anchor's `close = admin` constraint
     // This recovers the rent to the admin account
     msg!(
@@ -59,7 +59,7 @@ pub struct CloseEpochStateOpen<'info> {
     #[account(
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -79,7 +79,7 @@ pub fn close_epoch_state_open(
     _streamer_key: Pubkey,
 ) -> Result<()> {
     let es = &ctx.accounts.epoch_state;
-    require!(all_claims_completed(es), MiloError::EpochNotFullyClaimed);
+    require!(all_claims_completed(es), OracleError::EpochNotFullyClaimed);
     msg!(
         "Closed epoch_state_open for epoch {} streamer {}",
         _epoch,
@@ -134,13 +134,13 @@ pub fn force_close_epoch_state_legacy(
     _streamer_key: Pubkey,
 ) -> Result<()> {
     let emergency =
-        Pubkey::from_str(EMERGENCY_ADMIN_STR).map_err(|_| error!(MiloError::Unauthorized))?;
-    require_keys_eq!(ctx.accounts.admin.key(), emergency, MiloError::Unauthorized);
+        Pubkey::from_str(EMERGENCY_ADMIN_STR).map_err(|_| error!(OracleError::Unauthorized))?;
+    require_keys_eq!(ctx.accounts.admin.key(), emergency, OracleError::Unauthorized);
     // Timelock to reduce risk of premature close
     let now = Clock::get()?.unix_timestamp;
     require!(
         now - ctx.accounts.epoch_state.timestamp >= crate::constants::EPOCH_FORCE_CLOSE_GRACE_SECS,
-        MiloError::EpochClosed
+        OracleError::EpochClosed
     );
     Ok(())
 }
@@ -152,12 +152,12 @@ pub fn force_close_epoch_state_open(
     _mint: Pubkey,
 ) -> Result<()> {
     let emergency =
-        Pubkey::from_str(EMERGENCY_ADMIN_STR).map_err(|_| error!(MiloError::Unauthorized))?;
-    require_keys_eq!(ctx.accounts.admin.key(), emergency, MiloError::Unauthorized);
+        Pubkey::from_str(EMERGENCY_ADMIN_STR).map_err(|_| error!(OracleError::Unauthorized))?;
+    require_keys_eq!(ctx.accounts.admin.key(), emergency, OracleError::Unauthorized);
     let now = Clock::get()?.unix_timestamp;
     require!(
         now - ctx.accounts.epoch_state.timestamp >= crate::constants::EPOCH_FORCE_CLOSE_GRACE_SECS,
-        MiloError::EpochClosed
+        OracleError::EpochClosed
     );
     Ok(())
 }

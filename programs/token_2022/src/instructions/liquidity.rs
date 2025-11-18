@@ -1,6 +1,6 @@
 use crate::{
     constants::{LIQUIDITY_ENGINE_SEED, PROTOCOL_SEED},
-    errors::MiloError,
+    errors::OracleError,
     state::{LiquidityEngine, LiquidityState, ProtocolState},
 };
 use anchor_lang::prelude::*;
@@ -14,7 +14,7 @@ pub struct TriggerLiquidityDrip<'info> {
     #[account(
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = authority.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -51,30 +51,30 @@ pub fn trigger_drip(ctx: Context<TriggerLiquidityDrip>, tier: u8) -> Result<()> 
         1 => {
             require!(
                 !engine.state.tier_1_complete,
-                MiloError::DripAlreadyExecuted
+                OracleError::DripAlreadyExecuted
             );
             engine.state.tier_1_complete = true;
             engine.state.current_tier = engine.state.current_tier.max(1);
         }
         2 => {
-            require!(engine.state.tier_1_complete, MiloError::InvalidDripTier);
+            require!(engine.state.tier_1_complete, OracleError::InvalidDripTier);
             require!(
                 !engine.state.tier_2_complete,
-                MiloError::DripAlreadyExecuted
+                OracleError::DripAlreadyExecuted
             );
             engine.state.tier_2_complete = true;
             engine.state.current_tier = engine.state.current_tier.max(2);
         }
         3 => {
-            require!(engine.state.tier_2_complete, MiloError::InvalidDripTier);
+            require!(engine.state.tier_2_complete, OracleError::InvalidDripTier);
             require!(
                 !engine.state.tier_3_complete,
-                MiloError::DripAlreadyExecuted
+                OracleError::DripAlreadyExecuted
             );
             engine.state.tier_3_complete = true;
             engine.state.current_tier = engine.state.current_tier.max(3);
         }
-        _ => return err!(MiloError::InvalidDripTier),
+        _ => return err!(OracleError::InvalidDripTier),
     }
 
     engine.state.last_drip = now;

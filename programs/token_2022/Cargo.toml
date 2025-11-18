@@ -25,10 +25,6 @@ receipts = []
 anchor-lang = "0.32.1"
 anchor-spl = "0.32.1"
 solana-program = "2.3.0"
-spl-token-2022 = { version = "4.0.0", features = ["no-entrypoint"] }
-spl-transfer-hook-interface = "0.6.0"
-spl-tlv-account-resolution = "0.6.0"
-spl-pod = "0.2.0"
 bytemuck = "1.19"
 sha3 = "0.10"
 solana-security-txt = "1.1"
