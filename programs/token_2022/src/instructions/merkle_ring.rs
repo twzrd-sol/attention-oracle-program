@@ -91,7 +91,10 @@ pub fn set_merkle_root_ring(
     let channel_state = &mut ctx.accounts.channel_state.load_mut()?;
 
     // Verify channel was initialized
-    require!(channel_state.version > 0, OracleError::ChannelNotInitialized);
+    require!(
+        channel_state.version > 0,
+        OracleError::ChannelNotInitialized
+    );
     require!(
         channel_state.streamer == streamer_key,
         OracleError::InvalidStreamer
@@ -154,7 +157,10 @@ pub fn claim_with_ring(
     let channel_state = &mut ctx.accounts.channel_state.load_mut()?;
 
     // Verify channel initialized
-    require!(channel_state.version > 0, OracleError::ChannelNotInitialized);
+    require!(
+        channel_state.version > 0,
+        OracleError::ChannelNotInitialized
+    );
     require!(
         channel_state.streamer == streamer_key,
         OracleError::InvalidStreamer
