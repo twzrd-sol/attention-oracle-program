@@ -1,6 +1,6 @@
 use crate::{
     constants::{EPOCH_STATE_SEED, PROTOCOL_SEED},
-    errors::MiloError,
+    errors::OracleError,
     state::{EpochState, ProtocolState},
 };
 use anchor_lang::prelude::*;
@@ -44,8 +44,8 @@ pub fn set_merkle_root(
     let signer = ctx.accounts.update_authority.key();
     let is_admin = signer == protocol.admin;
     let is_publisher = protocol.publisher != Pubkey::default() && signer == protocol.publisher;
-    require!(is_admin || is_publisher, MiloError::Unauthorized);
-    require!(!protocol.paused, MiloError::ProtocolPaused);
+    require!(is_admin || is_publisher, OracleError::Unauthorized);
+    require!(!protocol.paused, OracleError::ProtocolPaused);
 
     let epoch_state = &mut ctx.accounts.epoch_state;
     let ts = Clock::get()?.unix_timestamp;
@@ -53,7 +53,7 @@ pub fn set_merkle_root(
     // Prevent re-initialization of an active epoch
     require!(
         epoch_state.timestamp == 0,
-        MiloError::EpochAlreadyInitialized
+        OracleError::EpochAlreadyInitialized
     );
 
     // Initialize/overwrite epoch fields
@@ -114,8 +114,8 @@ pub fn set_merkle_root_open(
     let signer = ctx.accounts.update_authority.key();
     let is_admin = signer == protocol.admin;
     let is_publisher = protocol.publisher != Pubkey::default() && signer == protocol.publisher;
-    require!(is_admin || is_publisher, MiloError::Unauthorized);
-    require!(!protocol.paused, MiloError::ProtocolPaused);
+    require!(is_admin || is_publisher, OracleError::Unauthorized);
+    require!(!protocol.paused, OracleError::ProtocolPaused);
 
     let epoch_state = &mut ctx.accounts.epoch_state;
     let ts = Clock::get()?.unix_timestamp;
@@ -123,7 +123,7 @@ pub fn set_merkle_root_open(
     // Prevent re-initialization of an active epoch
     require!(
         epoch_state.timestamp == 0,
-        MiloError::EpochAlreadyInitialized
+        OracleError::EpochAlreadyInitialized
     );
 
     epoch_state.epoch = epoch;

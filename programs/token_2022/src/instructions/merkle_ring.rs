@@ -1,6 +1,6 @@
 use crate::{
     constants::{CHANNEL_STATE_SEED, PROTOCOL_SEED},
-    errors::MiloError,
+    errors::OracleError,
     state::{ChannelState, ProtocolState},
 };
 use anchor_lang::prelude::*;
@@ -85,16 +85,16 @@ pub fn set_merkle_root_ring(
     let signer = ctx.accounts.update_authority.key();
     let is_admin = signer == protocol.admin;
     let is_publisher = protocol.publisher != Pubkey::default() && signer == protocol.publisher;
-    require!(is_admin || is_publisher, MiloError::Unauthorized);
-    require!(!protocol.paused, MiloError::ProtocolPaused);
+    require!(is_admin || is_publisher, OracleError::Unauthorized);
+    require!(!protocol.paused, OracleError::ProtocolPaused);
 
     let channel_state = &mut ctx.accounts.channel_state.load_mut()?;
 
     // Verify channel was initialized
-    require!(channel_state.version > 0, MiloError::ChannelNotInitialized);
+    require!(channel_state.version > 0, OracleError::ChannelNotInitialized);
     require!(
         channel_state.streamer == streamer_key,
-        MiloError::InvalidStreamer
+        OracleError::InvalidStreamer
     );
 
     // Update ring buffer slot (modulo 10)
@@ -127,7 +127,7 @@ pub struct ClaimWithRing<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -154,24 +154,24 @@ pub fn claim_with_ring(
     let channel_state = &mut ctx.accounts.channel_state.load_mut()?;
 
     // Verify channel initialized
-    require!(channel_state.version > 0, MiloError::ChannelNotInitialized);
+    require!(channel_state.version > 0, OracleError::ChannelNotInitialized);
     require!(
         channel_state.streamer == streamer_key,
-        MiloError::InvalidStreamer
+        OracleError::InvalidStreamer
     );
 
     // Get the slot for this epoch
     let slot = channel_state.slot_mut(epoch);
 
     // Verify epoch matches
-    require!(slot.epoch == epoch, MiloError::InvalidEpoch);
+    require!(slot.epoch == epoch, OracleError::InvalidEpoch);
 
     // Check if already claimed
-    require!(!slot.test_bit(index as usize), MiloError::AlreadyClaimed);
+    require!(!slot.test_bit(index as usize), OracleError::AlreadyClaimed);
 
     // Verify merkle proof (would use actual verification here)
     // For now just a placeholder
-    require!(proof.len() > 0, MiloError::InvalidProof);
+    require!(proof.len() > 0, OracleError::InvalidProof);
 
     // Mark as claimed
     slot.set_bit(index as usize);

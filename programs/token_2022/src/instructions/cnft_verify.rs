@@ -24,16 +24,16 @@ pub fn verify_cnft_receipt(
     expected_channel: &str,
     expected_epoch: u64,
 ) -> Result<()> {
-    use crate::errors::MiloError;
+    use crate::errors::OracleError;
 
     // Step 1: Verify ownership
-    require!(receipt_proof.owner == *claimer, MiloError::InvalidProof);
+    require!(receipt_proof.owner == *claimer, OracleError::InvalidProof);
 
     // Step 2: Verify metadata hash matches expected channel/epoch
     let expected_hash = compute_metadata_hash(expected_channel, expected_epoch);
     require!(
         receipt_proof.metadata_hash == expected_hash,
-        MiloError::InvalidProof
+        OracleError::InvalidProof
     );
 
     msg!(

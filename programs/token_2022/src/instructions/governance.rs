@@ -1,6 +1,6 @@
 use crate::{
     constants::{HARVEST_SPLIT_BPS_TREASURY, PROTOCOL_SEED},
-    errors::MiloError,
+    errors::OracleError,
     state::{FeeConfig, FeeSplit, ProtocolState},
 };
 use anchor_lang::prelude::*;
@@ -20,7 +20,7 @@ pub struct UpdateFeeConfig<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = authority.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -42,7 +42,7 @@ pub fn update_fee_config(
 ) -> Result<()> {
     require!(
         new_basis_points <= crate::constants::MAX_FEE_BASIS_POINTS,
-        MiloError::InvalidFeeBps
+        OracleError::InvalidFeeBps
     );
 
     // For v1, we store only basis_points and max_fee at init; allow updating basis points.
@@ -63,7 +63,7 @@ pub struct UpdateFeeConfigOpen<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = authority.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -85,7 +85,7 @@ pub fn update_fee_config_open(
 ) -> Result<()> {
     require!(
         new_basis_points <= crate::constants::MAX_FEE_BASIS_POINTS,
-        MiloError::InvalidFeeBps
+        OracleError::InvalidFeeBps
     );
 
     let fee_cfg = &mut ctx.accounts.fee_config;
@@ -104,7 +104,7 @@ pub struct UpdateTierMultipliers<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = authority.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -125,7 +125,7 @@ pub fn update_tier_multipliers(
 ) -> Result<()> {
     // Validate multipliers are between 0 and 10000 (0.0x to 1.0x)
     for multiplier in new_multipliers.iter() {
-        require!(*multiplier <= 10000, MiloError::InvalidFeeBps);
+        require!(*multiplier <= 10000, OracleError::InvalidFeeBps);
     }
 
     let fee_cfg = &mut ctx.accounts.fee_config;
@@ -158,7 +158,7 @@ pub struct HarvestFees<'info> {
     #[account(
         seeds = [PROTOCOL_SEED, mint.key().as_ref()],
         bump = protocol_state.bump,
-        constraint = authority.key() == protocol_state.admin @ MiloError::Unauthorized,
+        constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 

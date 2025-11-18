@@ -1,5 +1,5 @@
 use crate::constants::{CHANNEL_BITMAP_BYTES, CHANNEL_MAX_CLAIMS, CHANNEL_RING_SLOTS};
-use crate::errors::MiloError;
+use crate::errors::OracleError;
 use anchor_lang::prelude::*;
 
 /// Global protocol state (singleton)
@@ -92,7 +92,7 @@ impl FeeSplit {
     pub fn validate(&self) -> Result<()> {
         require!(
             self.lp_allocation + self.treasury_allocation + self.burn_allocation == 100,
-            MiloError::InvalidFeeSplit
+            OracleError::InvalidFeeSplit
         );
         Ok(())
     }
@@ -337,7 +337,7 @@ impl ChannelSlot {
     }
 
     pub fn validate_index(index: usize) -> Result<()> {
-        require!(index < CHANNEL_MAX_CLAIMS, MiloError::InvalidIndex);
+        require!(index < CHANNEL_MAX_CLAIMS, OracleError::InvalidIndex);
         Ok(())
     }
 }

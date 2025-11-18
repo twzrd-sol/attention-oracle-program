@@ -10,7 +10,7 @@ use anchor_spl::{
 use crate::constants::{
     CHANNEL_BITMAP_BYTES, CHANNEL_MAX_CLAIMS, CHANNEL_RING_SLOTS, CHANNEL_STATE_SEED, PROTOCOL_SEED,
 };
-use crate::errors::MiloError;
+use crate::errors::OracleError;
 use crate::instructions::claim::{compute_leaf, verify_proof};
 use crate::state::{ChannelSlot, ChannelState, ProtocolState};
 use anchor_lang::accounts::account_loader::AccountLoader;
@@ -49,7 +49,7 @@ pub struct SetChannelMerkleRoot<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -73,7 +73,7 @@ pub fn set_channel_merkle_root(
     let is_admin = signer == protocol_state.admin;
     let is_publisher =
         protocol_state.publisher != Pubkey::default() && signer == protocol_state.publisher;
-    require!(is_admin || is_publisher, MiloError::Unauthorized);
+    require!(is_admin || is_publisher, OracleError::Unauthorized);
     let streamer_key = derive_streamer_key(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,
@@ -84,7 +84,7 @@ pub fn set_channel_merkle_root(
     require_keys_eq!(
         expected_pda,
         ctx.accounts.channel_state.to_account_info().key(),
-        MiloError::InvalidChannelState
+        OracleError::InvalidChannelState
     );
 
     // Create account if needed
@@ -138,15 +138,15 @@ pub fn set_channel_merkle_root(
     // Validate
     require!(
         channel_state.version == CHANNEL_STATE_VERSION,
-        MiloError::InvalidChannelState
+        OracleError::InvalidChannelState
     );
     require!(
         channel_state.mint == protocol_state.mint,
-        MiloError::InvalidMint
+        OracleError::InvalidMint
     );
     require!(
         channel_state.streamer == streamer_key,
-        MiloError::InvalidChannelState
+        OracleError::InvalidChannelState
     );
 
     // Update slot (ring buffer logic) with monotonic guard
@@ -155,7 +155,7 @@ pub fn set_channel_merkle_root(
     let existing_epoch = channel_state.slots[slot_idx].epoch;
     require!(
         existing_epoch == 0 || epoch > existing_epoch,
-        MiloError::EpochNotIncreasing
+        OracleError::EpochNotIncreasing
     );
     channel_state.slots[slot_idx].epoch = epoch;
     channel_state.slots[slot_idx].root = root;
@@ -175,7 +175,7 @@ pub struct ClaimChannel<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -227,7 +227,7 @@ pub fn claim_channel_open(
     require_keys_eq!(
         expected_pda,
         ctx.accounts.channel_state.to_account_info().key(),
-        MiloError::InvalidChannelState
+        OracleError::InvalidChannelState
     );
 
     // Load via Anchor's zero_copy loader
@@ -235,36 +235,36 @@ pub fn claim_channel_open(
 
     require!(
         channel_state.version == CHANNEL_STATE_VERSION,
-        MiloError::InvalidChannelState
+        OracleError::InvalidChannelState
     );
     require!(
         channel_state.mint == protocol_state.mint,
-        MiloError::InvalidMint
+        OracleError::InvalidMint
     );
     require!(
         channel_state.streamer == streamer_key,
-        MiloError::InvalidChannelState
+        OracleError::InvalidChannelState
     );
 
     ChannelSlot::validate_index(index as usize)?;
     let slot_idx = ChannelState::slot_index(epoch);
     require!(
         channel_state.slots[slot_idx].epoch == epoch,
-        MiloError::SlotMismatch
+        OracleError::SlotMismatch
     );
 
     let byte_i = (index / 8) as usize;
     let bit_mask = 1u8 << (index % 8);
-    require!(byte_i < CHANNEL_BITMAP_BYTES, MiloError::InvalidIndex);
+    require!(byte_i < CHANNEL_BITMAP_BYTES, OracleError::InvalidIndex);
     require!(
         channel_state.slots[slot_idx].claimed_bitmap[byte_i] & bit_mask == 0,
-        MiloError::AlreadyClaimed
+        OracleError::AlreadyClaimed
     );
 
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, channel_state.slots[slot_idx].root),
-        MiloError::InvalidProof
+        OracleError::InvalidProof
     );
 
     // Mark as claimed
@@ -314,7 +314,7 @@ pub struct ClaimChannelWithReceipt<'info> {
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -390,7 +390,7 @@ pub fn claim_channel_open_with_receipt(
     require_keys_eq!(
         expected_pda,
         ctx.accounts.channel_state.to_account_info().key(),
-        MiloError::InvalidChannelState
+        OracleError::InvalidChannelState
     );
 
     // Load via Anchor's zero_copy loader
@@ -398,36 +398,36 @@ pub fn claim_channel_open_with_receipt(
 
     require!(
         channel_state.version == CHANNEL_STATE_VERSION,
-        MiloError::InvalidChannelState
+        OracleError::InvalidChannelState
     );
     require!(
         channel_state.mint == protocol_state.mint,
-        MiloError::InvalidMint
+        OracleError::InvalidMint
     );
     require!(
         channel_state.streamer == streamer_key,
-        MiloError::InvalidChannelState
+        OracleError::InvalidChannelState
     );
 
     ChannelSlot::validate_index(index as usize)?;
     let slot_idx = ChannelState::slot_index(epoch);
     require!(
         channel_state.slots[slot_idx].epoch == epoch,
-        MiloError::SlotMismatch
+        OracleError::SlotMismatch
     );
 
     let byte_i = (index / 8) as usize;
     let bit_mask = 1u8 << (index % 8);
-    require!(byte_i < CHANNEL_BITMAP_BYTES, MiloError::InvalidIndex);
+    require!(byte_i < CHANNEL_BITMAP_BYTES, OracleError::InvalidIndex);
     require!(
         channel_state.slots[slot_idx].claimed_bitmap[byte_i] & bit_mask == 0,
-        MiloError::AlreadyClaimed
+        OracleError::AlreadyClaimed
     );
 
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, channel_state.slots[slot_idx].root),
-        MiloError::InvalidProof
+        OracleError::InvalidProof
     );
 
     // Mark as claimed
@@ -470,7 +470,7 @@ pub fn claim_channel_open_with_receipt(
                 && ctx.accounts.bubblegum_program.is_some()
                 && ctx.accounts.log_wrapper.is_some()
                 && ctx.accounts.compression_program.is_some(),
-            MiloError::MissingBubblegumAccounts
+            OracleError::MissingBubblegumAccounts
         );
 
         // Build metadata (brand-neutral)
