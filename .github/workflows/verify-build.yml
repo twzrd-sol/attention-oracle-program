@@ -5,21 +5,38 @@ on:
     branches: [ main, chore/anchor-0.32-upgrade ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build-sbf:
     runs-on: ubuntu-latest
+    name: Build (Solana ${{ matrix.solana }})
+    strategy:
+      fail-fast: false
+      matrix:
+        solana: [ '2.3.0', 'stable' ]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Solana (v2.3.0)
+      - name: Setup Solana (${{ matrix.solana }})
         uses: solana-labs/setup-solana@v1
         with:
-          solana-version: 2.3.0
+          solana-version: ${{ matrix.solana }}
 
       - name: Install Rust toolchain (stable)
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and git
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ matrix.solana }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.solana }}-
+            ${{ runner.os }}-cargo-
 
       - name: Install Anchor CLI 0.32.1
         run: |
@@ -31,20 +48,23 @@ jobs:
         run: |
           cargo build-sbf
 
-      - name: Compute SHA256
+      - name: Compute SHA256 (2.3.0 only)
         id: sha
+        if: matrix.solana == '2.3.0'
         run: |
           echo "sha256=$(sha256sum programs/target/deploy/token_2022.so | cut -d' ' -f1)" >> $GITHUB_OUTPUT
           ls -lh programs/target/deploy/token_2022.so
 
-      - name: Extract IDL (best-effort)
+      - name: Extract IDL (best-effort, 2.3.0 only)
+        if: matrix.solana == '2.3.0'
         continue-on-error: true
         run: |
           mkdir -p target/idl
           anchor idl parse -f programs/src/lib.rs -o target/idl/token_2022.json || true
           test -f target/idl/token_2022.json && jq length target/idl/token_2022.json || true
 
-      - name: Upload artifacts
+      - name: Upload artifacts (2.3.0 only)
+        if: matrix.solana == '2.3.0'
         uses: actions/upload-artifact@v4
         with:
           name: sbf-artifacts
@@ -52,6 +72,7 @@ jobs:
             programs/target/deploy/token_2022.so
             target/idl/token_2022.json
 
-      - name: Summary
+      - name: Summary (2.3.0 only)
+        if: matrix.solana == '2.3.0'
         run: |
           echo "Binary SHA256: ${{ steps.sha.outputs.sha256 }}" | tee -a $GITHUB_STEP_SUMMARY
