@@ -52,3 +52,13 @@ logs/
 # OS files
 Thumbs.db
 .DS_Store
+# Security: Never commit these
+.env
+.env.*
+ecosystem.config.js
+ecosystem.config.cjs
+*.key
+*.pem
+**/secrets.*
+**/credentials.*
+**/token.*
