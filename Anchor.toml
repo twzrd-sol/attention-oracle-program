@@ -1,5 +1,5 @@
 [workspace]
-members = ["programs"]
+members = ["programs/token_2022"]
 
 [features]
 seeds = false
