@@ -11,6 +11,11 @@ out/
 build/
 dist/
 
+# Exclude UI/demo apps from this repo
+apps/
+portal-v3/
+x402-api-server/
+
 # Environment files (never commit secrets)
 .env
 .env*
