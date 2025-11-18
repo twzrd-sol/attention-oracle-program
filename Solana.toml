@@ -9,16 +9,16 @@ license = "MIT OR Apache-2.0"
 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop = "programs"
 
 [build]
-solana_version = "1.18.17"
-anchor_version = "0.30.1"
+solana_version = "2.3.0"
+anchor_version = "0.32.1"
 
 [[dependencies]]
 name = "anchor-lang"
-version = "0.30.1"
+version = "0.32.1"
 
 [[dependencies]]
 name = "anchor-spl"
-version = "0.30.1"
+version = "0.32.1"
 
 [[dependencies]]
 name = "spl-token-2022"
