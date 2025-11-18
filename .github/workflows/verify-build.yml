@@ -58,14 +58,24 @@ jobs:
           export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
           solana --version || true
           which cargo-build-sbf || true
-          cargo build-sbf
+          mkdir -p target/deploy
+          cargo build-sbf --sbf-out-dir target/deploy
+
+      - name: Locate artifact
+        id: locate
+        run: |
+          SO=$(find programs/target -type f -name 'token_2022.so' | head -n 1)
+          if [ -z "$SO" ]; then echo "No token_2022.so found under programs/target" >&2; exit 1; fi
+          echo "so=$SO" >> $GITHUB_OUTPUT
+          ls -lh "$SO"
 
       - name: Compute SHA256 (2.3.0 only)
         id: sha
         if: matrix.solana == '2.3.0'
         run: |
-          echo "sha256=$(sha256sum programs/target/deploy/token_2022.so | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          ls -lh programs/target/deploy/token_2022.so
+          SO="${{ steps.locate.outputs.so }}"
+          echo "sha256=$(sha256sum "$SO" | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          ls -lh "$SO"
 
       - name: Extract IDL (best-effort, 2.3.0 only)
         if: matrix.solana == '2.3.0'
@@ -81,7 +91,7 @@ jobs:
         with:
           name: sbf-artifacts
           path: |
-            programs/target/deploy/token_2022.so
+            ${{ steps.locate.outputs.so }}
             target/idl/token_2022.json
 
       - name: Summary (2.3.0 only)
