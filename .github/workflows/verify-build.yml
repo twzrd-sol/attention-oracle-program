@@ -29,8 +29,25 @@ jobs:
           else
             CH=v${{ matrix.solana }}
           fi
-          echo "Installing Solana CLI channel: $CH"
-          sh -c "$(curl -sSfL https://release.anza.xyz/$CH/install)"
+          echo "Installing Solana CLI channel: $CH (with retries)"
+          ok=""
+          for url in https://release.anza.xyz https://release.solana.com; do
+            for attempt in 1 2 3; do
+              echo "Attempt $attempt: $url/$CH/install"
+              if curl -fsSL "$url/$CH/install" | sh; then ok=1; break; fi
+              sleep 3
+            done
+            [[ -n "$ok" ]] && break || true
+          done
+          if [[ -z "$ok" ]]; then
+            echo "Failed to install Solana CLI after retries" >&2
+            exit 1
+          fi
+          # Persist path for subsequent steps and set for current shell
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          solana --version || (echo "Solana CLI not on PATH" >&2; exit 1)
+          cargo --list | grep -F "build-sbf" || true
 
       - name: Install Rust toolchain (1.84.0)
         uses: dtolnay/rust-toolchain@1.84.0
@@ -55,9 +72,11 @@ jobs:
       - name: Build SBF
         working-directory: programs
         run: |
+          # Ensure PATH includes Solana active_release bin for this step
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-          solana --version || true
-          which cargo-build-sbf || true
+          solana --version
+          which cargo-build-sbf || (echo "cargo-build-sbf not found in PATH" >&2; exit 1)
           cargo build-sbf
 
       - name: Compute SHA256 (2.3.0 only)
