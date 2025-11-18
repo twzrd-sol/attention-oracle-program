@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+*/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Rust/Anchor
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Test artifacts
+test-ledger/
+.anchor/
+
+# Logs
+logs/
+*.log
+
+# Keys (CRITICAL - Never commit keys!)
+*.json
+!package*.json
+!tsconfig.json
+*.pem
+*.key
+.keys/
+
+# Database
+*.db
+*.sqlite
+
+# OS files
+Thumbs.db
+.DS_Store
