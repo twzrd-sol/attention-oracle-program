@@ -11,8 +11,9 @@ out/
 build/
 dist/
 
-# Exclude UI/demo apps from this repo
-apps/
+# Exclude UI/demo apps (only include listener)
+apps/!
+!apps/stream-listener-ts/
 portal-v3/
 x402-api-server/
 
