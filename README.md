@@ -1,9 +1,6 @@
 # Attention Oracle (Open Core)
 
-Builder‑neutral, first‑principles implementation of a modern Solana program for verifiable claims using Merkle proofs and Token‑2022. No IP, no secrets, no hype.
-
-— Keep: open‑core docs
-— Remove: internal checklists, ops runbooks, incident logs, and environment files (scrubbed from history)
+Builder‑neutral, first‑principles implementation of a modern Solana program for verifiable claims using Merkle proofs and Token‑2022.
 
 Repository scope is two core components:
 - Solana program (Rust, Anchor) in `programs/`
@@ -45,16 +42,15 @@ anchor test
 - `clients/` — optional helpers and examples
 - `packages/, rust-packages/` — shared libs (if present)
 
-## Documents (kept)
+## Documents
 
 - `OPEN_CORE_DOCUMENTATION_COMPLETE.md` — Open‑core scope and guidelines
 - `OPEN_CORE_EXCELLENCE_PLAN.md` — Quality bars and contribution expectations
-
-Pitch materials are maintained off‑repo and shared on request. All other internal docs were removed and scrubbed from git history.
+For pitch materials, contact the maintainers.
 
 ## Security & Secrets
 
-- No private keys, .env files, or credentials are tracked. `.gitignore` blocks them; history has been rewritten to purge past leaks.
+- No private keys, .env files, or credentials are tracked. `.gitignore` blocks common secret patterns. Use environment variables and secret stores.
 - Report any security concerns to the maintainers via private channels; do not open public issues for sensitive findings.
 
 ## License
