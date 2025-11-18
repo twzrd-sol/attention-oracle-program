@@ -13,8 +13,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Solana CLI (v2.3.0)
-        uses: anza-xyz/setup-solana@v2
+      - name: Setup Solana (v2.3.0)
+        uses: solana-labs/setup-solana@v1
         with:
           solana-version: 2.3.0
 
@@ -55,4 +55,3 @@ jobs:
       - name: Summary
         run: |
           echo "Binary SHA256: ${{ steps.sha.outputs.sha256 }}" | tee -a $GITHUB_STEP_SUMMARY
-
