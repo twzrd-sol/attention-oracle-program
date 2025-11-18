@@ -1,88 +1,60 @@
-# Attention Oracle
+# Attention Oracle (Open Core)
 
-## Open-Source Token Distribution Protocol for Creator Economies on Solana
+Builder‑neutral, first‑principles implementation of a modern Solana program for verifiable claims using Merkle proofs and Token‑2022. No IP, no secrets, no hype.
 
-### Overview
+— Keep: open‑core docs and pitch deck for context
+— Remove: internal checklists, ops runbooks, incident logs, and environment files (scrubbed from history)
 
-Attention Oracle is an open-source protocol that enables verifiable token distribution for content creators and their communities. Built on Solana using Token-2022 extensions, it provides gas-efficient merkle tree-based claiming with dynamic fee tiers.
+Repository scope is the on‑chain program and minimal client helpers. UI and infra are intentionally out of scope.
 
-**Status**: Production (Mainnet Deployed)  
-**Program ID**: `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`  
-**License**: Dual MIT/Apache-2.0  
+## What It Does
 
-📊 **[View Pitch Deck](PITCH.md)** - Learn about our vision and roadmap
+- Verifiable distribution via Merkle roots committed per epoch/channel
+- Token‑2022 mint support and transfer hook entrypoint
+- Gas‑efficient claim bitmaps to prevent double claims
 
-### Core Components
+Program ID (current deployment reference): `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
 
-#### 1. Token-2022 Program (`/programs`)
-- Merkle tree-based token distribution
-- Dynamic fee tiers with passport verification
-- Transfer hooks for automated fee collection
-- Gas-optimized claiming (~5,000 CU per claim)
-- Multi-channel support with ring buffer storage
+## Stack
 
-#### 2. X402 Integration (`/x402-api-server`)
-- Switchboard Oracle integration
-- Off-chain data aggregation
-- Merkle root generation
-- Fee harvest automation
+- Language: Rust
+- Framework: Anchor ≥ 0.30
+- Cluster toolchain: Solana ≥ 1.18
 
-### Technical Architecture
-
-```
-┌────────────────────────┐
-│   Off-Chain Oracle     │
-│  (X402 + Switchboard)  │
-└───────────┬────────────┘
-            │
-┌───────────▼────────────┐
-│   Solana Program       │
-│  Token-2022 + Hooks    │
-└────────────────────────┘
-```
-
-### Quick Start
+## Build
 
 ```bash
-# Clone the repository
-git clone https://github.com/twzrd-sol/attention-oracle-program
-cd attention-oracle-program
-
-# Build the program
-cd programs
-cargo build-sbf
-
-# Run tests
-cargo test-sbf
+cd programs/attention-oracle
+anchor build
 ```
 
-### Verify On-Chain Deployment
+## Test
 
 ```bash
-solana-verify verify-from-repo \
-  --program-id GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop \
-  --mount-path programs \
-  --library-name token_2022 \
-  https://github.com/twzrd-sol/attention-oracle-program
+cd programs/attention-oracle
+anchor test
 ```
 
-### Documentation
+## Directory Map (high level)
 
-- [Pitch Deck](PITCH.md) - Vision, roadmap, and business model
-- [Security Policy](SECURITY.md) - Vulnerability disclosure process
+- `programs/attention-oracle/` — on‑chain program
+- `clients/` — optional helpers and examples
+- `packages/, rust-packages/` — shared libs (if present)
 
-### Security
+## Documents (kept)
 
-For security concerns, please email: security@twzrd.xyz
+- `OPEN_CORE_DOCUMENTATION_COMPLETE.md` — Open‑core scope and guidelines
+- `OPEN_CORE_EXCELLENCE_PLAN.md` — Quality bars and contribution expectations
+- `PITCH_DECK.md` / `pitch-deck.html` — Investor‑facing summary
 
-### License
+All other internal docs were removed and scrubbed from git history.
 
-This project is dual-licensed under:
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
+## Security & Secrets
 
-You may choose either license at your option.
+- No private keys, .env files, or credentials are tracked. `.gitignore` blocks them; history has been rewritten to purge past leaks.
+- Report any security concerns to the maintainers via private channels; do not open public issues for sensitive findings.
 
-### Contribution
+## License
 
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you shall be dual licensed as above, without any additional terms or conditions.
+Open‑core: core protocol and program are open; proprietary extensions live out of tree.
+
