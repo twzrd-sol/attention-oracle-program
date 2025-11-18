@@ -200,11 +200,11 @@ pub fn harvest_and_distribute_fees(ctx: Context<HarvestFees>) -> Result<()> {
     // TODO: Implement proper extension deserialization using spl-token-2022 types
     let withheld_amount = 0u64; // Placeholder; keepers track this from events
 
-      // Calculate treasury and creator pool shares based on a true 50/50 split (non-breaking default)
-      // Governance-configurable split will be introduced with a FeeConfig layout migration.
-      let treasury_share =
-          (withheld_amount as u128 * HARVEST_SPLIT_BPS_TREASURY as u128 / 10000) as u64;
-      let creator_pool_share = withheld_amount.saturating_sub(treasury_share);
+    // Calculate treasury and creator pool shares based on a true 50/50 split (non-breaking default)
+    // Governance-configurable split will be introduced with a FeeConfig layout migration.
+    let treasury_share =
+        (withheld_amount as u128 * HARVEST_SPLIT_BPS_TREASURY as u128 / 10000) as u64;
+    let creator_pool_share = withheld_amount.saturating_sub(treasury_share);
 
     // Emit event for keeper bots to consume and execute Token-2022 withdrawals
     // This respects the hybrid architecture: on-chain observes, off-chain executes

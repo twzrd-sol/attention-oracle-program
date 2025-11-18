@@ -1,4 +1,6 @@
-use anchor_lang::solana_program::{program::invoke_signed, rent::Rent, system_instruction, system_program};
+use anchor_lang::solana_program::{
+    program::invoke_signed, rent::Rent, system_instruction, system_program,
+};
 use anchor_lang::{accounts::account::Account, prelude::*};
 use anchor_spl::{
     associated_token::AssociatedToken,
