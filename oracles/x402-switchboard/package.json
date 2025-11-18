@@ -1,0 +1,17 @@
+{
+  "name": "@ao/x402-switchboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "ts-node-esm src/server.ts"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "@switchboard-xyz/sbv2-lite": "^0.2.4"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}
