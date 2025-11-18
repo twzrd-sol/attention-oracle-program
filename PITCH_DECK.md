@@ -1,8 +1,8 @@
 # Attention Oracle — Pitch Deck
 
-**Settling Attention as On-Chain State on Solana**
+**Settling attention as on‑chain state on Solana**
 
-A thesis-driven presentation for investors and builders. Focuses on market structure, mechanism design, Solana fit, and traction. No marketing lore; no internal process notes.
+Presentation for investors and builders covering market structure, mechanism design, Solana fit, and current status.
 
 ---
 
@@ -169,36 +169,7 @@ Tokens function as **Proof-of-Fandom** unlocking:
 
 ---
 
-## Slide 7: Traction to Date
-
-### Mainnet Metrics (Last 30 Days)
-
-**Deployment:**
-- Program: `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` (Solana mainnet)
-- Token-2022 hooks with audited transfer logic
-- Live and processing claims
-
-**Pilot Creators:**
-- 3 integration partners (gaming, DeFi education)
-- ~120k combined audience
-- Real, organic integrations
-
-**On-Chain Activity:**
-- **15,400 verified attention claims** (30 days)
-- **513 claims/day average**
-- **14% bot rejection rate** (Oracle functioning)
-- **<$2 total gas spent** (compression proven)
-- **28% 7-day return rate** (early retention signal)
-
-**Observations:**
-- Core mechanism works at scale
-- Anti-bot oracle is functional
-- Infrastructure is gas-efficient
-- Retention needs product iteration (expected at alpha)
-
----
-
-## Slide 8: Competitive Positioning
+## Slide 7: Competitive Positioning
 
 ### Why We Win
 
@@ -222,14 +193,16 @@ Tokens function as **Proof-of-Fandom** unlocking:
 - We focus on engagement settlement (fundamental primitive)
 - Speculation can layer on top
 
-**Moat (Today):**
-1. **First to operationalize defensible anti-bot oracle on Solana**
-2. **Integration depth and creator support**
-3. **Multi-creator wallet accumulation** (switching cost grows with token count)
+**Moat (Design Goals):**
+1. Operational, economically defensible anti-bot oracle on Solana.
+2. Deep integrations with creators and existing distribution surfaces.
+3. Multi-creator wallet accumulation increasing switching costs over time.
+
+These are targets, not current claims; they should only be presented as achieved once supported by data.
 
 ---
 
-## Slide 9: Risks & Mitigations
+## Slide 8: Risks & Mitigations
 
 ### Key Execution Risks
 
@@ -249,129 +222,21 @@ Tokens function as **Proof-of-Fandom** unlocking:
 - IC Checkpoint: Legal opinion on token classification (US-first)
 
 **Risk 4: Retention**
-- Impact: Users claim once and churn
-- Mitigation: Status/access model should improve retention; product iteration Q1
-- IC Checkpoint: Target 40%+ 7-day retention by month 6 (currently 28%)
+- Impact: Users claim once and churn.
+- Mitigation: Design focuses on status/access and cross‑creator utility; iteration will be driven by observed cohorts.
 
 ---
 
-## Slide 10: Use of Proceeds
+## Slide 9: Optional Seed Round Outline (Placeholder)
 
-### $2.5M Seed Allocation
+This slide is intentionally high‑level; specific round size, valuation, and allocation should only be filled in once numbers are agreed and supported by data.
 
-| Category | % | $ | Purpose |
-|----------|---|---|---------|
-| Creator Integrations (BD) | 50% | $1.25M | Onboard 50-100 creators, DevRel, SDK support |
-| Product & Engineering | 20% | $500k | Hook hardening, dashboard, analytics |
-| Security & Audits | 15% | $375k | Program audit, oracle red-team |
-| Legal & Operations | 15% | $375k | Token structure, compliance, jurisdictions |
+- Target: seed financing to harden Oracle, expand creator integrations, and complete audits.
+- Use of proceeds: creator integrations, product/engineering, audits, and legal/ops.
+- Milestones: concrete creator count, claims volume, and retention targets to be added once baselines exist.
 
-**Burn Rate:** ~$180k/month (14-month runway)
+Team and detailed terms are best covered in a separate, up‑to‑date memo rather than fixed in this deck.
 
-**Milestones:**
-- M1 (3mo): 25 creators, 100k claims
-- M2 (6mo): 50 creators, 1M claims, 40%+ retention
-- M3 (9mo): 100 creators, 10M claims, Series A clarity
-
----
-
-## Slide 11: Team
-
-### Execution Credibility
-
-**Tech Lead**
-- Ex-Solana Labs core contributor
-- Optimized SPL-Token library
-- Deep Rust/SVM expertise
-- Shipped mainnet code
-
-**Product Lead**
-- Former Ad-Tech Engineer (The Trade Desk)
-- Understands DSP and ad stack inefficiencies
-- 7+ years in real-time bidding
-
-**Mechanism Design**
-- DeFi protocol designer
-- Prior 2021 cycle exit
-- Governance and tokenomics experience
-
-**Team Transparency:**
-- Pseudonymous publicly; doxxed to IC
-- Some LPs may require public identification
-- Valuation reflects anonymity trade-off
-
----
-
-## Slide 12: The Ask
-
-### Investment Terms
-
-**Amount:** $2.5M Seed
-**Runway:** 14 months to Series A or profitability inflection
-
-**Key Checkpoints Before Close:**
-1. Oracle precision/recall data (precision >95%)
-2. LOIs from 5+ creators
-3. Team legal/corporate finalized
-4. Public vs. pseudonymous decision
-
-**Success Metrics (Year 1):**
-- 50+ integrated creators
-- 1M+ on-chain claims
-- 40%+ 7-day retention
-- Multi-creator token accumulation driving moat
-
----
-
-## Slide 13: Why Fund This
-
-### The Investment Thesis
-
-**Thesis Strength: 9/10**
-- Attention as on-chain asset is correct
-- Solana timing is perfect (not 2 years ago, not 10 years from now)
-- Settlement cost is the unlock
-
-**Execution Risk: 7/10**
-- Oracle operationalized but needs red-team validation
-- Creator adoption is normal seed risk (strong BD allocation mitigates)
-- Pseudonymous team is VC-fundable but impacts valuation
-
-**Category Potential: High**
-- $100B+ addressable market (creator economy)
-- First protocol to settle attention at scale
-- Network effects compound (more creators → better data → better oracle)
-
-**Recommendation:**
-This is a **category-defining bet on the financialization of engagement**. Fund it.
-
----
-
-## Appendices (For Discussion)
-
-**Appendix A: Oracle Performance Data**
-- Precision/recall on adversarial test set
-- False positive/negative rates
-- Attack vs. reward cost breakdown
-
-**Appendix B: Creator Integration Playbook**
-- SDK deployment checklist
-- Metrics dashboard setup
-- Common integration issues + fixes
-
-**Appendix C: Token Design & Compliance**
-- Token classification (utility vs. security)
-- Transfer hook mechanics
-- Gas subsidy model (detailed)
-- Regulatory pathway
-
-**Appendix D: 18-Month Roadmap**
-- Q1: Product iteration, 25 creators
-- Q2: 50 creators, multi-root epochs, mobile SDK
-- Q3: Partner integrations, data graph exploration, Series A prep
-
----
 
 **Questions?**
 dev@twzrd.xyz | [GitHub](https://github.com/twzrd-sol/attention-oracle-program) | [Mainnet](https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop)
-
