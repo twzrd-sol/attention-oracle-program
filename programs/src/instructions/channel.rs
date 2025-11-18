@@ -1,6 +1,4 @@
-use anchor_lang::solana_program::{
-    keccak, program::invoke_signed, rent::Rent, system_instruction, system_program,
-};
+use anchor_lang::solana_program::{program::invoke_signed, rent::Rent, system_instruction, system_program};
 use anchor_lang::{accounts::account::Account, prelude::*};
 use anchor_spl::{
     associated_token::AssociatedToken,
@@ -22,8 +20,21 @@ fn derive_streamer_key(channel: &str) -> Pubkey {
     let mut lower = channel.as_bytes().to_vec();
     // Convert ASCII bytes to lowercase in-place (avoids allocation for Unicode)
     lower.iter_mut().for_each(|b| *b = b.to_ascii_lowercase());
-    let hash = keccak::hashv(&[b"twitch:", &lower]);
-    Pubkey::new_from_array(hash.0[..32].try_into().unwrap())
+    let hash = keccak_hashv(&[b"twitch:", lower.as_slice()]);
+    Pubkey::new_from_array(hash)
+}
+
+// Minimal Keccak-256 helpers (Solana 2.x split crates; use sha3 directly)
+use sha3::{Digest, Keccak256};
+fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
+    let mut hasher = Keccak256::new();
+    for p in parts {
+        hasher.update(p);
+    }
+    let out = hasher.finalize();
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&out[..32]);
+    arr
 }
 
 #[derive(Accounts)]
