@@ -135,7 +135,11 @@ pub fn force_close_epoch_state_legacy(
 ) -> Result<()> {
     let emergency =
         Pubkey::from_str(EMERGENCY_ADMIN_STR).map_err(|_| error!(OracleError::Unauthorized))?;
-    require_keys_eq!(ctx.accounts.admin.key(), emergency, OracleError::Unauthorized);
+    require_keys_eq!(
+        ctx.accounts.admin.key(),
+        emergency,
+        OracleError::Unauthorized
+    );
     // Timelock to reduce risk of premature close
     let now = Clock::get()?.unix_timestamp;
     require!(
@@ -153,7 +157,11 @@ pub fn force_close_epoch_state_open(
 ) -> Result<()> {
     let emergency =
         Pubkey::from_str(EMERGENCY_ADMIN_STR).map_err(|_| error!(OracleError::Unauthorized))?;
-    require_keys_eq!(ctx.accounts.admin.key(), emergency, OracleError::Unauthorized);
+    require_keys_eq!(
+        ctx.accounts.admin.key(),
+        emergency,
+        OracleError::Unauthorized
+    );
     let now = Clock::get()?.unix_timestamp;
     require!(
         now - ctx.accounts.epoch_state.timestamp >= crate::constants::EPOCH_FORCE_CLOSE_GRACE_SECS,

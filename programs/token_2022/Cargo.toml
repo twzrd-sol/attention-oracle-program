@@ -4,7 +4,7 @@ name = "attention-oracle-token-2022"
 version = "0.2.0"
 description = "Verifiable Distribution Protocol (Token-2022)"
 edition = "2021"
-rust-version = "1.89"
+rust-version = "1.84"  # Temporarily relaxed; restore to 1.89 when SBF toolchain supports it
 license = "MIT"
 
 [lib]

@@ -1,19 +1,27 @@
-Minimal, builder‑neutral x402 + Switchboard integration example.
+# x402 + Switchboard Demo
 
-Endpoints
-- GET /price — returns latest Switchboard feed (cluster, feed, price, slot)
-- GET /protected — requires `x-402-payment: true` header; otherwise 402
+Minimal, builder-neutral example server.
 
-Config
-- `SB_CLUSTER` (default: devnet)
-- `SB_FEED` (required) — aggregator public key
-- `PORT` (default: 3000)
+- GET `/price` – returns the latest Switchboard feed (cluster, feed, price, slot).
+- GET `/protected` – returns HTTP 402 unless `x-402-payment: true` header is present.
 
-Run
+## Config
+
+`.env` keys:
+
+```env
+PORT=3000
+SB_CLUSTER=devnet
+SB_FEED=<switchboard-aggregator-pubkey>
+```
+
+## Run
+
 ```bash
 cd oracles/x402-switchboard
 npm install
 npm run dev
+curl http://localhost:3000/price
 ```
 
-Note: This is an example only. It persists no data and performs no auth.
+This demo is stateless; it persists no data and performs no auth. Use it as a reference implementation only.
