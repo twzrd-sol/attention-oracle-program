@@ -13,10 +13,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Solana CLI (v3.0.0)
-        uses: anza-labs/setup-solana@v1
+      - name: Install Solana CLI (v2.3.0)
+        uses: anza-xyz/setup-solana@v2
         with:
-          version: v3.0.0
+          solana-version: 2.3.0
 
       - name: Install Rust toolchain (stable)
         uses: dtolnay/rust-toolchain@stable
