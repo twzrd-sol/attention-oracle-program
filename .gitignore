@@ -52,3 +52,7 @@ logs/
 # OS files
 Thumbs.db
 .DS_Store
+
+# Internal deployment docs (keep private)
+DEPLOYMENT_STATUS.md
+**/DEPLOYMENT_STATUS.md
