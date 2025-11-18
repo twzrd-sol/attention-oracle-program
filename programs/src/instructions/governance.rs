@@ -187,7 +187,7 @@ pub struct HarvestFees<'info> {
 /// Harvest withheld fees and queue distribution event for keepers
 /// The actual Token-2022 withdrawal is performed by keeper bots listening to events
 pub fn harvest_and_distribute_fees(ctx: Context<HarvestFees>) -> Result<()> {
-    let fee_config = &ctx.accounts.fee_config;
+    let _fee_config = &ctx.accounts.fee_config;
     let ts = Clock::get()?.unix_timestamp;
 
     // Read mint account data to extract Token-2022 transfer fee extension withheld amount

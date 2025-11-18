@@ -212,7 +212,7 @@ pub fn close_old_epoch_state(ctx: Context<CloseOldEpochState>) -> Result<()> {
 
     // Invalidate account
     epoch_state.assign(&System::id());
-    epoch_state.realloc(0, false)?;
+    epoch_state.resize(0)?;
 
     msg!("Closed old epoch state, recovered {} lamports", lamports);
 

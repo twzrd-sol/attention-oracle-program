@@ -310,8 +310,8 @@ pub fn claim_open(
 
 pub fn compute_leaf(claimer: &Pubkey, index: u32, amount: u64, id: &str) -> [u8; 32] {
     // Note: Off-chain must mirror this exact hashing scheme
-    let mut idx = index.to_le_bytes();
-    let mut amt = amount.to_le_bytes();
+    let idx = index.to_le_bytes();
+    let amt = amount.to_le_bytes();
     let id_bytes = id.as_bytes();
     keccak_hashv(&[claimer.as_ref(), &idx, &amt, id_bytes])
 }
