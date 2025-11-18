@@ -1,3 +1,0 @@
-[workspace]
-members = ["token_2022"]
-resolver = "2"
