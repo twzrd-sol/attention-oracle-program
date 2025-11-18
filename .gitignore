@@ -12,16 +12,10 @@ out/
 build/
 dist/
 
-# Exclude UI/demo apps; keep only listener README public
+# Exclude app subtrees by default (will add allow-list when ready)
 apps/*
-!apps/stream-listener-ts
-!apps/stream-listener-ts/**
-# Re-ignore build artifacts and deps inside the allowed subtree
-apps/stream-listener-ts/node_modules/
-apps/stream-listener-ts/dist/
-apps/stream-listener-ts/package-lock.json
-!apps/twzrd-aggregator-rs
-!apps/twzrd-aggregator-rs/**
+apps/stream-listener-ts/
+apps/twzrd-aggregator-rs/
 portal-v3/
 x402-api-server/
 
@@ -96,3 +90,6 @@ apps/worker-v2/
 apps/ctw-*/
 apps/_deprecated-*/
 apps/_archive/
+cli/
+sdk/
+scripts/
