@@ -60,9 +60,9 @@ target/deploy/token_2022.so
 sha256sum target/deploy/token_2022.so
 ```
 
-**Expected SHA-256** (for commit `ac4e003`):
+**Expected SHA-256** (for commit `cf4686b`):
 ```
-eee777452b1ddee400657d7aa97589f58c80e2eab3360ad13b17b90a5e9cdca9
+6dedc0ab78f3e3b8ea5533500b83c006a9542d893fb5547a0899bcbc4982593f
 ```
 
 ### 4. Compare with On-Chain Deployment
@@ -132,7 +132,7 @@ Found a discrepancy or security issue?
 
 | Version | Commit | Deploy Date | Binary SHA-256 | Toolchain |
 |---------|--------|-------------|----------------|-----------|
-| v0.2.0 | `ac4e003` | 2025-11-18 | `eee777...dca9` | Anchor 0.32.1, Solana 2.3.0 |
+| v0.2.0 | `cf4686b` | 2025-11-18 | `6dedc0ab...593f` | Anchor 0.32.1, Solana 2.3.0 |
 | v0.1.0 | `b38201a` | 2025-11-13 | `[legacy]` | Anchor 0.30.1, Solana 1.18 |
 
 ## IDL Extraction
@@ -167,7 +167,7 @@ A: Three ways to verify:
 
 ### Q: Can I verify against the old Solscan link?
 
-A: The old verification link (commit `b38201a`) used Anchor 0.30.1. For the new deployment, use commit `ac4e003` with the toolchain specified in this document.
+A: The old verification link (commit `b38201a`) used Anchor 0.30.1. For the new deployment, use commit `cf4686b` with the toolchain specified in this document.
 
 ### Q: What's the upgrade path?
 
