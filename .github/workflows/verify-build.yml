@@ -21,9 +21,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Solana (${{ matrix.solana }})
-        uses: solana-labs/setup-solana@v1
+        uses: metadaoproject/setup-solana@v1.2
         with:
-          solana-version: ${{ matrix.solana }}
+          solana-cli-version: ${{ matrix.solana }}
 
       - name: Install Rust toolchain (stable)
         uses: dtolnay/rust-toolchain@stable
