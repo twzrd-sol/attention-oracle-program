@@ -119,7 +119,7 @@ npm publish --access public
 
 ## Why Not Published Yet?
 
-The SDKs are **scaffolded** as part of the "three wishes" implementation, but they require:
+The SDKs are **scaffolded** and documented, but they require:
 
 1. **Dependencies installed** (not committed to git - in `.gitignore`)
 2. **Build artifacts generated** (TypeScript → JavaScript compilation)

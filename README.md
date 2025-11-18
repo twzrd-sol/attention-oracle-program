@@ -45,7 +45,7 @@ anchor test
 
 - `OPEN_CORE_DOCUMENTATION_COMPLETE.md` — Open‑core scope and guidelines
 - `OPEN_CORE_EXCELLENCE_PLAN.md` — Quality bars and contribution expectations
-- `PITCH_DECK.md` / `pitch-deck.html` — Investor‑facing summary
+- `PITCH_DECK.md` / `pitch-deck.html` — Project overview deck
 
 All other internal docs were removed and scrubbed from git history.
 
