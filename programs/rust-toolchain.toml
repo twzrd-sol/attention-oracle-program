@@ -1,0 +1,8 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+
+# Note: Solana BPF builds use the platform-specific toolchain provided by
+# Solana's cargo-build-sbf, which may differ from this Rust version.
+# This file ensures consistent formatting/linting across contributors.
