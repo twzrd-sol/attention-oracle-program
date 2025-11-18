@@ -1,8 +1,10 @@
+## Production-ready crate config (Agave 3.0 + Rust 1.89)
 [package]
-name = "token-2022"
-version = "0.1.0"
-description = "Token-2022 claim + transfer-hook (brand-neutral)"
+name = "attention-oracle-token-2022"
+version = "0.2.0"
+description = "Verifiable Distribution Protocol (Token-2022)"
 edition = "2021"
+rust-version = "1.89"
 license = "MIT"
 
 [lib]
@@ -10,30 +12,32 @@ crate-type = ["cdylib", "lib"]
 name = "token_2022"
 
 [features]
+default = []
+cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-cpi = ["no-entrypoint"]
-default = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
-# Optional, off by default to minimize on-chain surface
-passport = []
-points = []
+# Optional, off by default to keep binary lean
+receipts = []
 
 [dependencies]
-anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
-anchor-spl = { version = "0.32.1", features = ["token_2022"] }
-bytemuck = "1.14" # required by Anchor's zero_copy derive
-# Anchor >= 0.32 re-exports `solana_program`; keep imports via `anchor_lang::solana_program`
-# to avoid version skew. No direct `solana-program` dependency is needed here.
-mpl-bubblegum = "2.1.0"
-solana-security-txt = "1"
+anchor-lang = "0.32.1"
+anchor-spl = "0.32.1"
+solana-program = "2.3.0"
+spl-token-2022 = "5.0.2"
+spl-transfer-hook-interface = "0.6.0"
+spl-tlv-account-resolution = "0.6.0"
+spl-pod = "0.2.0"
+bytemuck = "1.19"
 sha3 = "0.10"
+solana-security-txt = "1.1"
+mpl-bubblegum = { version = "2.1.0", features = ["no-entrypoint"] }
 
 [profile.release]
-opt-level = "z"     # Optimize for size
-lto = true          # Enable Link Time Optimization
-codegen-units = 1   # Single codegen unit for better optimization
-strip = true        # Strip symbols
-panic = "abort"     # Smaller panic handler
-overflow-checks = false
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+overflow-checks = true
