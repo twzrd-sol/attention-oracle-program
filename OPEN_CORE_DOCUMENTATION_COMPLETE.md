@@ -11,9 +11,9 @@ Scope retained here:
 - Public interfaces and on‑chain types in `programs/attention-oracle`
 - Reference client helpers under `clients/` (if present)
 
-Redacted/removed from history:
-- Internal runbooks, system checklists, and incident reports
-- Environment files, keys, and secrets
-- Infra deployments and vendor‑specific scripts
+Out of scope (not included here):
+- Operational runbooks, checklists, and incident reports
+- Environment files, keys, and credentials
+- Deployment scripts and vendor‑specific infrastructure
 
 Contributions welcome for the open‑core surface area only.
