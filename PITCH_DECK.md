@@ -107,7 +107,7 @@ If bots can cheaply simulate watching, the economy becomes an extractable faucet
 - Oracle nodes stake; slashed for fraudulent patterns
 - Honest nodes rewarded proportional to volume + quality
 
-**Key Metric:** Oracle precision >95% on red-team testing (required before seed close).
+**Key Metric (target):** Oracle precision above 95% under red-team testing before any large-scale deployment.
 
 ---
 
