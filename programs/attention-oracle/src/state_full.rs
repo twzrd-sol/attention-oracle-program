@@ -19,11 +19,8 @@ pub struct ProtocolState {
     /// only the admin is authorized.
     pub publisher: Pubkey,
 
-    /// Treasury PDA token account
+    /// Treasury PDA
     pub treasury: Pubkey,
-
-    /// Creator Pool PDA token account
-    pub creator_pool: Pubkey,
 
     /// CCM mint address
     pub mint: Pubkey,
@@ -46,7 +43,6 @@ impl ProtocolState {
         32 +   // admin
         32 +   // publisher
         32 +   // treasury
-        32 +   // creator_pool
         32 +   // mint
         1 +    // paused
         1 +    // require_receipt
@@ -65,16 +61,6 @@ pub struct FeeConfig {
     /// Drip threshold (volume triggers)
     pub drip_threshold: u64,
 
-    /// Treasury fee basis points (0.05% base)
-    pub treasury_fee_bps: u16,
-
-    /// Creator fee basis points (0.05% base, multiplied by tier)
-    pub creator_fee_bps: u16,
-
-    /// Tier multipliers for creator allocation (array of 6 f64 values)
-    /// Stores as fixed-point u32 (multiplied by 10000 for precision)
-    pub tier_multipliers: [u32; 6],
-
     /// Bump seed
     pub bump: u8,
 }
@@ -84,9 +70,6 @@ impl FeeConfig {
         2 +    // basis_points
         8 +    // max_fee
         8 +    // drip_threshold
-        2 +    // treasury_fee_bps
-        2 +    // creator_fee_bps
-        (4 * 6) + // tier_multipliers (6 u32s)
         1; // bump
 }
 

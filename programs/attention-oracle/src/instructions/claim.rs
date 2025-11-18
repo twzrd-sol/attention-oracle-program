@@ -6,13 +6,11 @@ use anchor_spl::{
 use solana_program::keccak;
 
 use crate::{
-    constants::{MAX_ID_BYTES, PROTOCOL_SEED},
-    errors::ProtocolError,
+    constants::{EPOCH_STATE_SEED, PROTOCOL_SEED},
+    errors::MiloError,
     instructions::cnft_verify::CnftReceiptProof,
-    state::{ChannelState, EpochState, FeeConfig, PassportState, ProtocolState},
+    state::{EpochState, ProtocolState},
 };
-
-const MAX_PROOF_NODES: usize = 20;
 
 #[derive(Accounts)]
 pub struct Claim<'info> {
@@ -24,7 +22,7 @@ pub struct Claim<'info> {
         mut,
         seeds = [PROTOCOL_SEED],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ ProtocolError::ProtocolPaused,
+        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -54,6 +52,10 @@ pub struct Claim<'info> {
     )]
     pub claimer_ata: InterfaceAccount<'info, TokenAccount>,
 
+    /// Optional: TWZRD cNFT receipt (if provided, verifies L1 participation)
+    /// CHECK: Optional account, validated in instruction if present
+    pub twzrd_receipt: Option<UncheckedAccount<'info>>,
+
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -61,32 +63,28 @@ pub struct Claim<'info> {
 
 pub fn claim(
     ctx: Context<Claim>,
+    _streamer_index: u8,
     index: u32,
     amount: u64,
     id: String,
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
-    // Get epoch_state key before mutable borrow
+    // Copy key before taking a mutable borrow to satisfy the borrow checker
     let epoch_state_key = ctx.accounts.epoch_state.key();
     let epoch = &mut ctx.accounts.epoch_state;
 
     // Basic guards
-    require!(!epoch.closed, ProtocolError::EpochClosed);
-    // Index must be strictly within published claim_count
-    require!(
-        index < epoch.claim_count as u32,
-        ProtocolError::InvalidIndex
-    );
+    require!(!epoch.closed, MiloError::EpochClosed);
+    require!(index < epoch.claim_count, MiloError::InvalidIndex);
     require!(
         epoch.mint == ctx.accounts.mint.key(),
-        ProtocolError::InvalidMint
+        MiloError::InvalidMint
     );
-    require!(id.len() <= MAX_ID_BYTES, ProtocolError::InvalidInputLength);
 
-    // Validate epoch_state PDA seeds to prevent spoofing
-    let expected = Pubkey::find_program_address(
+    // Prevent spoofed epoch_state accounts
+    let expected_epoch_state = Pubkey::find_program_address(
         &[
-            crate::constants::EPOCH_STATE_SEED,
+            EPOCH_STATE_SEED,
             &epoch.epoch.to_le_bytes(),
             epoch.streamer.as_ref(),
         ],
@@ -94,42 +92,30 @@ pub fn claim(
     )
     .0;
     require_keys_eq!(
-        expected,
+        expected_epoch_state,
         epoch_state_key,
-        ProtocolError::InvalidEpochState
+        MiloError::InvalidEpochState
     );
 
-    // Check proof depth and bitmap
-    require!(
-        proof.len() <= MAX_PROOF_NODES,
-        ProtocolError::InvalidProofLength
-    );
+    // Check bitmap not already claimed
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
-    require!(
-        byte_i < epoch.claimed_bitmap.len(),
-        ProtocolError::InvalidIndex
-    );
+    require!(byte_i < epoch.claimed_bitmap.len(), MiloError::InvalidIndex);
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
-        ProtocolError::AlreadyClaimed
+        MiloError::AlreadyClaimed
     );
 
     // Verify proof against on-chain root
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, epoch.root),
-        ProtocolError::InvalidProof
+        MiloError::InvalidProof
     );
 
     // Transfer CCM from treasury PDA to claimer (use transfer_checked for Token-2022)
     let seeds: &[&[u8]] = &[PROTOCOL_SEED, &[ctx.accounts.protocol_state.bump]];
     let signer = &[seeds];
-
-    require!(
-        ctx.accounts.treasury_ata.amount >= amount,
-        ProtocolError::InvalidAmount
-    );
 
     token_interface::transfer_checked(
         CpiContext::new_with_signer(
@@ -148,16 +134,12 @@ pub fn claim(
 
     // Mark claimed and bump totals
     epoch.claimed_bitmap[byte_i] |= bit;
-    epoch.total_claimed = epoch
-        .total_claimed
-        .checked_add(amount)
-        .ok_or(ProtocolError::InvalidAmount)?;
+    epoch.total_claimed = epoch.total_claimed.saturating_add(amount);
 
     Ok(())
 }
 
-// Open variant: protocol_state keyed by mint (Extended 13-account variant)
-// Includes tier-based sybil resistance and fee distribution support
+// Open variant: protocol_state keyed by mint
 #[derive(Accounts)]
 pub struct ClaimOpen<'info> {
     #[account(mut)]
@@ -167,7 +149,7 @@ pub struct ClaimOpen<'info> {
         mut,
         seeds = [crate::constants::PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = !protocol_state.paused @ ProtocolError::ProtocolPaused,
+        constraint = !protocol_state.paused @ MiloError::ProtocolPaused,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -193,40 +175,26 @@ pub struct ClaimOpen<'info> {
     )]
     pub claimer_ata: InterfaceAccount<'info, TokenAccount>,
 
+    /// Optional: TWZRD epoch state (for cNFT verification)
+    /// CHECK: Optional account, validated in instruction if receipt required
+    pub twzrd_epoch_state: Option<UncheckedAccount<'info>>,
+
+    /// Optional: Bubblegum tree (for cNFT verification)
+    /// CHECK: Optional account, validated in instruction if receipt required
+    pub merkle_tree: Option<UncheckedAccount<'info>>,
+
+    /// Optional: SPL Account Compression program (for cNFT verification)
+    /// CHECK: Optional account, validated in instruction if receipt required
+    pub compression_program: Option<UncheckedAccount<'info>>,
+
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
-
-    // ===== Extended accounts (10-13) for tier-based claims =====
-
-    /// Fee configuration PDA (for dynamic tier-based fee calculation)
-    /// Seeds: [PROTOCOL_SEED, mint, b"fee_config"]
-    #[account(
-        seeds = [crate::constants::PROTOCOL_SEED, protocol_state.mint.as_ref(), b"fee_config"],
-        bump = fee_config.bump,
-    )]
-    pub fee_config: Account<'info, FeeConfig>,
-
-    /// User's passport state (optional, for tier/sybil verification)
-    /// Stores tier level (0-6) and reputation score
-    /// If not provided, defaults to unverified (tier 0) for fee purposes
-    #[account(mut)]
-    pub passport_state: Option<Account<'info, PassportState>>,
-
-    /// Channel state ring buffer (optional, for per-channel epoch tracking)
-    /// Seeds: [CHANNEL_STATE_SEED, mint, streamer_key]
-    /// Used for ring buffer epoch management and recent root tracking
-    pub channel_state: Option<AccountLoader<'info, ChannelState>>,
-
-    /// Creator/pool fee recipient ATA (optional, for tier-based fee routing)
-    /// If provided, receives tier-multiplied portion of transfer fees
-    /// Falls back to treasury_ata if not provided
-    #[account(mut)]
-    pub creator_pool_ata: Option<InterfaceAccount<'info, TokenAccount>>,
 }
 
 pub fn claim_open(
     ctx: Context<ClaimOpen>,
+    _streamer_index: u8,
     index: u32,
     amount: u64,
     id: String,
@@ -236,25 +204,36 @@ pub fn claim_open(
     twzrd_epoch: Option<u64>,
     receipt_proof: Option<CnftReceiptProof>,
 ) -> Result<()> {
-    // Get epoch_state key before mutable borrow
     let epoch_state_key = ctx.accounts.epoch_state.key();
     let epoch = &mut ctx.accounts.epoch_state;
-    require!(!epoch.closed, ProtocolError::EpochClosed);
-    require!(
-        index < epoch.claim_count as u32,
-        ProtocolError::InvalidIndex
-    );
+    require!(!epoch.closed, MiloError::EpochClosed);
+    require!(index < epoch.claim_count, MiloError::InvalidIndex);
     require!(
         epoch.mint == ctx.accounts.mint.key(),
-        ProtocolError::InvalidMint
+        MiloError::InvalidMint
     );
-    require!(id.len() <= MAX_ID_BYTES, ProtocolError::InvalidInputLength);
 
-    // Step 1: If receipt required, verify ORACLE L1 participation
+    let expected_epoch_state = Pubkey::find_program_address(
+        &[
+            EPOCH_STATE_SEED,
+            &epoch.epoch.to_le_bytes(),
+            epoch.streamer.as_ref(),
+            ctx.accounts.protocol_state.mint.as_ref(),
+        ],
+        ctx.program_id,
+    )
+    .0;
+    require_keys_eq!(
+        expected_epoch_state,
+        epoch_state_key,
+        MiloError::InvalidEpochState
+    );
+
+    // Step 1: If receipt required, verify TWZRD L1 participation
     if ctx.accounts.protocol_state.require_receipt {
         require!(
             channel.is_some() && twzrd_epoch.is_some() && receipt_proof.is_some(),
-            ProtocolError::ReceiptRequired
+            MiloError::ReceiptRequired
         );
 
         let receipt = receipt_proof.as_ref().unwrap();
@@ -275,85 +254,28 @@ pub fn claim_open(
         );
     }
 
-    // Validate epoch_state PDA seeds to prevent spoofing (mint-keyed open variant)
-    let expected = Pubkey::find_program_address(
-        &[
-            crate::constants::EPOCH_STATE_SEED,
-            &epoch.epoch.to_le_bytes(),
-            epoch.streamer.as_ref(),
-            ctx.accounts.protocol_state.mint.as_ref(),
-        ],
-        ctx.program_id,
-    )
-    .0;
-    require_keys_eq!(
-        expected,
-        epoch_state_key,
-        ProtocolError::InvalidEpochState
-    );
-
     // Step 2: Verify merkle proof for CCM claim
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
-    require!(
-        byte_i < epoch.claimed_bitmap.len(),
-        ProtocolError::InvalidIndex
-    );
-    require!(
-        proof.len() <= MAX_PROOF_NODES,
-        ProtocolError::InvalidProofLength
-    );
+    require!(byte_i < epoch.claimed_bitmap.len(), MiloError::InvalidIndex);
     require!(
         epoch.claimed_bitmap[byte_i] & bit == 0,
-        ProtocolError::AlreadyClaimed
+        MiloError::AlreadyClaimed
     );
 
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, epoch.root),
-        ProtocolError::InvalidProof
+        MiloError::InvalidProof
     );
 
-    // Step 2b (NEW): Tier-based verification (extended variant)
-    // Look up user's passport tier for dynamic fee calculation
-    let (user_tier, tier_multiplier) = if let Some(passport) = &ctx.accounts.passport_state {
-        (passport.tier, passport.tier_multiplier())
-    } else {
-        // Default to tier 0 (unverified) if passport not provided
-        (0u8, 0u8)
-    };
-
-    // Emit tier-based claim event for off-chain indexing
-    let ts = Clock::get()?.unix_timestamp;
-    emit!(crate::events::ClaimTiered {
-        claimer: ctx.accounts.claimer.key(),
-        amount,
-        tier: user_tier,
-        tier_multiplier,
-        epoch: epoch.epoch,
-        claimed_at: ts,
-    });
-
-    msg!(
-        "Tier-based claim: claimer={}, tier={}, multiplier={}%, amount={}",
-        ctx.accounts.claimer.key(),
-        user_tier,
-        tier_multiplier,
-        amount
-    );
-
-    // Step 3: Transfer CCM tokens to claimer
+    // Step 3: Transfer CCM tokens
     let seeds: &[&[u8]] = &[
         crate::constants::PROTOCOL_SEED,
         ctx.accounts.protocol_state.mint.as_ref(),
         &[ctx.accounts.protocol_state.bump],
     ];
     let signer = &[seeds];
-
-    require!(
-        ctx.accounts.treasury_ata.amount >= amount,
-        ProtocolError::InvalidAmount
-    );
 
     token_interface::transfer_checked(
         CpiContext::new_with_signer(
@@ -370,92 +292,16 @@ pub fn claim_open(
         ctx.accounts.mint.decimals,
     )?;
 
-    // Step 4 (NEW): Optional fee routing to creator pool (if provided and tier > 0)
-    // Uses tier-based fee config for dynamic distribution
-    if user_tier > 0 {
-        if let Some(creator_pool) = &ctx.accounts.creator_pool_ata {
-            // Calculate creator fee based on tier multiplier
-            // Format: basis_points = fee_config.basis_points, applied with tier multiplier
-            let fee_basis_points = ctx.accounts.fee_config.basis_points as u64;
-            let tier_mult = tier_multiplier as u64;
-
-            // Creator fee = amount * (basis_points * tier_multiplier) / 10000
-            // E.g., 100 tokens * (10 bps * 0.8x multiplier) = 100 * (10 * 80 / 100) / 10000 = 0.008 tokens
-            let creator_fee = amount
-                .checked_mul(fee_basis_points)
-                .and_then(|f| f.checked_mul(tier_mult))
-                .and_then(|f| f.checked_div(10000 * 100)) // basis points are x100 scale + tier is x100
-                .ok_or(ProtocolError::InvalidAmount)?;
-
-            if creator_fee > 0 && ctx.accounts.treasury_ata.amount >= creator_fee {
-                token_interface::transfer_checked(
-                    CpiContext::new_with_signer(
-                        ctx.accounts.token_program.to_account_info(),
-                        TransferChecked {
-                            from: ctx.accounts.treasury_ata.to_account_info(),
-                            to: creator_pool.to_account_info(),
-                            authority: ctx.accounts.protocol_state.to_account_info(),
-                            mint: ctx.accounts.mint.to_account_info(),
-                        },
-                        signer,
-                    ),
-                    creator_fee,
-                    ctx.accounts.mint.decimals,
-                )?;
-
-                msg!(
-                    "Creator fee routed: amount={}, tier_multiplier={}%",
-                    creator_fee,
-                    tier_multiplier
-                );
-            }
-        }
-    }
-
-    // Step 5: Mark claimed
+    // Step 4: Mark claimed
     epoch.claimed_bitmap[byte_i] |= bit;
-    epoch.total_claimed = epoch
-        .total_claimed
-        .checked_add(amount)
-        .ok_or(ProtocolError::InvalidAmount)?;
+    epoch.total_claimed = epoch.total_claimed.saturating_add(amount);
     Ok(())
 }
 
-/// Simple hex decoder (avoids external hex crate dependency)
-fn decode_hex_32(hex_str: &str) -> Result<[u8; 32]> {
-    let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-    require!(hex_str.len() == 64, ProtocolError::InvalidProof);
-
-    let mut result = [0u8; 32];
-    for i in 0..32 {
-        let byte_str = &hex_str[i * 2..i * 2 + 2];
-        result[i] = u8::from_str_radix(byte_str, 16)
-            .map_err(|_| ProtocolError::InvalidProof)?;
-    }
-    Ok(result)
-}
-
-/// Compute participation leaf to match aggregator's makeParticipationLeaf
-/// Leaf = keccak256(user_hash || channel || epoch)
-/// This matches: apps/gateway/src/lib/participation-merkle.ts:13-28
-pub fn compute_participation_leaf(user_hash_hex: &str, channel: &str, epoch: u64) -> Result<[u8; 32]> {
-    // Parse user_hash from hex string (32 bytes)
-    let user_hash = decode_hex_32(user_hash_hex)?;
-
-    // Encode channel as UTF-8 bytes
-    let channel_bytes = channel.as_bytes();
-
-    // Encode epoch as u64 little-endian
-    let epoch_bytes = epoch.to_le_bytes();
-
-    // keccak256(user_hash || channel || epoch)
-    Ok(keccak::hashv(&[&user_hash, channel_bytes, &epoch_bytes]).to_bytes())
-}
-
-// Legacy function kept for backwards compatibility with other claim types
 pub fn compute_leaf(claimer: &Pubkey, index: u32, amount: u64, id: &str) -> [u8; 32] {
-    let idx = index.to_le_bytes();
-    let amt = amount.to_le_bytes();
+    // Note: Off-chain must mirror this exact hashing scheme
+    let mut idx = index.to_le_bytes();
+    let mut amt = amount.to_le_bytes();
     let id_bytes = id.as_bytes();
     keccak::hashv(&[claimer.as_ref(), &idx, &amt, id_bytes]).to_bytes()
 }

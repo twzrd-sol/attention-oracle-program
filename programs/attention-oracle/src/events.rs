@@ -38,11 +38,12 @@ pub struct PassportRevoked {
 }
 
 #[event]
-pub struct ClaimTiered {
-    pub claimer: Pubkey,
-    pub amount: u64,
-    pub tier: u8,
-    pub tier_multiplier: u8, // 0-100 representing 0.0x to 1.0x
-    pub epoch: u64,
-    pub claimed_at: i64,
+pub struct TransferFeeEvent {
+    pub transfer_amount: u64,
+    pub total_fee: u64,
+    pub treasury_fee: u64,
+    pub creator_fee: u64,
+    pub creator_tier: u8,
+    pub tier_multiplier: u32, // stored as fixed-point (e.g., 2000 = 0.2)
+    pub timestamp: i64,
 }
