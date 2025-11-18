@@ -11,10 +11,10 @@ out/
 build/
 dist/
 
-# Environment files
+# Environment files (never commit secrets)
 .env
-.env.local
-.env.*.local
+.env*
+**/.env*
 
 # IDE
 .vscode/
@@ -45,6 +45,9 @@ logs/
 *.key
 .keys/
 
+# Common key/config directories
+keys/
+
 # Database
 *.db
 *.sqlite
@@ -52,6 +55,18 @@ logs/
 # OS files
 Thumbs.db
 .DS_Store
+
+# Repo hygiene (avoid committing internal or binary artifacts)
+archive/
+backups/
+claim-ui-export/
+verify-snapshot/
+test-ledger/
+submission_clean_*.zip
+gateway/
+infra/
+db/
+tmp_channels.txt
 
 # Internal deployment docs (keep private)
 DEPLOYMENT_STATUS.md
