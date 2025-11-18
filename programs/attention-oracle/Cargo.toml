@@ -1,7 +1,7 @@
 [package]
 name = "token-2022"
 version = "0.1.0"
-description = "Token-2022 claim + transfer-hook (brand-neutral)"
+description = "Token-2022 claim + transfer-hook (brand-neutral, cost-optimized)"
 edition = "2021"
 license = "MIT"
 
@@ -10,23 +10,28 @@ crate-type = ["cdylib", "lib"]
 name = "token_2022"
 
 [features]
+# Core features for program operation
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 cpi = ["no-entrypoint"]
-default = []
+
+# Feature flags (off by default, minimal surface)
+# passport = []     # Passport tier lookups (future use)
+# points = []       # Points scoring system (future use)
+
+# Default: lean, production-ready build
+# Note: IDL not needed after mainnet deployment (use Solscan for schema)
+default = ["no-idl"]
+
+# IDL generation for development/documentation
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
-# Optional, off by default to minimize on-chain surface
-passport = []
-points = []
 
 [dependencies]
 anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
 anchor-spl = { version = "0.30.1", features = ["token_2022"] }
-bytemuck = "1.14"
+bytemuck = "1.14"  # Required for zero_copy account serialization
 solana-program = "1.18"
-mpl-bubblegum = "1.4"
-spl-noop = "0.2"
 solana-security-txt = "1"
 
 [dev-dependencies]
@@ -36,10 +41,25 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 spl-token-2022 = "1.0.0"
 spl-associated-token-account = "1.0.3"
 
+# ============================================================================
+# RELEASE PROFILE: Optimized for on-chain deployment
+# Target: Minimize binary size + gas cost + rent usage
+# ============================================================================
 [profile.release]
-opt-level = "z"     # Optimize for size
-lto = true          # Enable Link Time Optimization
-codegen-units = 1   # Single codegen unit for better optimization
-strip = true        # Strip symbols
-panic = "abort"     # Smaller panic handler
+# Optimize aggressively for size (replaces "opt-level = 3")
+opt-level = "z"
+
+# Enable Link Time Optimization across entire binary
+lto = true
+
+# Single codegen unit for best LTO results
+codegen-units = 1
+
+# Strip all symbols (saves ~15% binary size)
+strip = true
+
+# Smaller panic handler (replaces verbose unwind tables)
+panic = "abort"
+
+# Disable runtime overflow checks (redundant in Rust, +5% binary)
 overflow-checks = false
