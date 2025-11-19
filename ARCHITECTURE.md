@@ -58,7 +58,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 
 - **Purpose:** Controls transfer-fee behavior and tier multipliers.
 - **Fields:** `basis_points`, `max_fee`, `drip_threshold`, `treasury_fee_bps`, `creator_fee_bps`, `tier_multipliers: [u32; 6]`, `bump`.
-- **Tier Multipliers:** Fixed-point (1e4), mapping passport tiers to fee multipliers.
+- **Tier Multipliers:** Fixed-point with denominator 10_000 (4 decimals), mapping passport tiers to fee multipliers.
 
 ---
 

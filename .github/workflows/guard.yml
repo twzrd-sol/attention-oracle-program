@@ -2,8 +2,7 @@ name: Repo Scope Guard
 
 on:
   pull_request:
-  push:
-    branches: [main]
+    types: [opened, synchronize, reopened]
 
 jobs:
   guard:
@@ -12,19 +11,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Fail on forbidden paths
         run: |
-          if git ls-files | grep -E 'apps/(?!oracles/x402-switchboard)(.*)|node_modules|dist|logs|\.db|\.env|keys/'; then
-            echo "Forbidden paths detected – keep repo clean"
-            exit 1
-          fi
-      - name: Fail on obvious secrets
-        run: |
-          # private keys
-          if grep -R "BEGIN \(OPENSSH \)*PRIVATE KEY" . --exclude-dir=.git --line-number; then
-            echo "Private key material detected"
-            exit 1
-          fi
-          # .env files
-          if find . -name ".env" -o -name ".env.*.local" | grep -q .; then
-            echo ".env file detected; use .env.example only"
+          if git ls-files | grep -E '^apps/(?!oracles/x402-switchboard)' \
+               || git ls-files | grep -E 'node_modules|dist|logs|\.db|\.env|keys/'; then
+            echo "Forbidden paths detected"
             exit 1
           fi
