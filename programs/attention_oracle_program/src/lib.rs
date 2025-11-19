@@ -119,7 +119,7 @@ pub struct UpdateRoot<'info> {
     pub oracle_authority: Signer<'info>,
 
     #[account(
-        init_if_needed,
+        init,
         payer = oracle_authority,
         space = EpochRoot::LEN,
         seeds = [b"epoch_root", &keccak_hash(channel.as_bytes()), &epoch.to_le_bytes()],
