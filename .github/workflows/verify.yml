@@ -37,9 +37,13 @@ jobs:
           solana --version
           rustc --version
       - name: Clippy zero
-        env:
-          RUSTFLAGS: -Aunexpected_cfgs
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Build program + IDL
+        run: anchor build
+        env:
+          SOLANA_VERSION: 2.0.3
+          ANCHOR_VERSION: 0.32.1
+          RUST_TOOLCHAIN: 1.91.0
       - name: Verify build + IDL
         run: |
           anchor build
