@@ -1,4 +1,4 @@
-## Production-ready crate config (Agave 3.0 + Rust 1.89)
+## Production-ready crate config (Agave 3.0.10 SBF=rustc 1.84.1; workspace Rust 1.91.1)
 [package]
 name = "attention-oracle-token-2022"
 version = "0.2.0"

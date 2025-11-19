@@ -6,7 +6,7 @@ Builder-neutral Solana Token-2022 program plus a single oracle demo. Every other
 
 This repository contains only the on-chain protocol and minimal reference oracle:
 
-- `programs/token_2022` – mainnet program GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop (Anchor 0.32.1 + Agave 3.0)
+- `programs/token_2022` – mainnet program GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop (Anchor 0.32.1 + Agave 3.0.10)
 - `oracles/x402-switchboard` – reference implementation
 
 All off-chain services (listener, aggregator, UI, gateway) are private and live in separate repos.
@@ -57,20 +57,19 @@ cargo build-sbf
 anchor build
 ```
 
-## Build Notes (Rust 1.89 vs current SBF toolchain)
+## Build Notes (Toolchains)
 
-The on-chain crate pins `rust-version = "1.89"`. Today’s Solana SBF toolchain (CLI 3.0.0) still ships `rustc 1.84.1`, so `anchor build/test` fails unless you either:
+- Workspace Rust: `1.91.1` (fmt/lints, general dev via rustup).
+- Agave SBF builder (Solana CLI `3.0.10`): uses `rustc 1.84.1-sbpf` internally.
+- Program crate `rust-version`: set to `"1.84"` to match the SBF toolchain so `anchor build` stays green.
 
-1. Install a Solana toolchain that bundles rustc 1.89+ (once available, preferred), or
-2. Temporarily relax the crate’s `rust-version` to `1.84` for local testing, then restore it before tagging releases.
-
-We keep the source on 1.89 and document the mismatch instead of downgrading the program.
+This split is expected: developers use modern stable Rust for workflow, while the SBF compiler version is managed by Agave. When the platform tools bump SBF Rust, we can raise the crate `rust-version` accordingly.
 
 ## Test
 
 ```bash
 cd programs/token_2022
-anchor test   # requires rustc 1.89 per Build Notes
+anchor test
 ```
 
 ## Oracle Demo (x402 + Switchboard)
