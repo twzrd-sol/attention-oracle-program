@@ -18,6 +18,8 @@ jobs:
           components: clippy
       - name: Add cargo to PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Allow unexpected cfgs during IDL build
+        run: echo "RUSTFLAGS=-Aunexpected_cfgs" >> $GITHUB_ENV
       - name: Install Anchor (avm 0.32.1)
         run: |
           cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
@@ -34,6 +36,10 @@ jobs:
           anchor --version
           solana --version
           rustc --version
+      - name: Clippy zero
+        env:
+          RUSTFLAGS: -Aunexpected_cfgs
+        run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Verify build + IDL
         run: |
           anchor build
