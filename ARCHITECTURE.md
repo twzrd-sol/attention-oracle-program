@@ -2,6 +2,7 @@
 
 **Program ID:** `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`  
 **Version:** 0.2.0 (Agave 3.0 Compatible)
+**Note:** Public-facing overview; no secrets or private infra are documented here.
 
 ## 1. High-Level Overview
 
@@ -188,10 +189,9 @@ my-solana-dapp/
 Copy artifacts from this repo after `anchor build`:
 
 ```bash
-cd /home/twzrd/milo-token
 anchor build
-cp target/idl/token_2022.json   ~/private_twzrd/portal-v3/src/idl/
-cp target/types/token_2022.ts   ~/private_twzrd/portal-v3/src/types/
+cp target/idl/token_2022.json   <frontend>/src/idl/
+cp target/types/token_2022.ts   <frontend>/src/types/
 ```
 
 ---
@@ -201,16 +201,12 @@ cp target/types/token_2022.ts   ~/private_twzrd/portal-v3/src/types/
 To prove that the on-chain binary matches this source tree:
 
 ```bash
-cd /home/twzrd/milo-token
-cargo clean
-cargo build-sbf    # builds token_2022.so
-anchor build       # regenerates IDL
+# Local reproducible build
+anchor clean && anchor build
 
-# Then, from your verifier environment:
-solana-verify build \
-  --library-name token_2022 \
-  --program-id GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+# Verifier environment (e.g., GitHub Actions runner):
+# Compare on-chain program with this source using Anchor's verifier
+anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --current-dir
 ```
 
 A successful verification indicates the bytecode on-chain is compiled from this exact source, which is what explorers and auditors rely on when marking a program as "Verified".
-
