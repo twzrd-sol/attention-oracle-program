@@ -18,10 +18,22 @@ jobs:
           components: clippy
       - name: Add cargo to PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install Anchor (avm 0.32.1)
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          $HOME/.cargo/bin/avm install 0.32.1
+          $HOME/.cargo/bin/avm use 0.32.1
+      - name: Add Anchor to PATH
+        run: echo "$HOME/.avm/bin" >> $GITHUB_PATH
       - name: Install Agave 3.0.10
         run: sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.10/install)"
       - name: Add Agave to PATH
-        run: echo "$HOME/.local/share/agave/install/active_release/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+      - name: Versions
+        run: |
+          anchor --version
+          solana --version
+          rustc --version
       - name: Verify build + IDL
         run: |
           anchor build
