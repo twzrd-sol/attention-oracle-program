@@ -1,20 +1,15 @@
-use anchor_lang::solana_program::{
-    program::invoke_signed, rent::Rent, system_instruction, system_program,
-};
+use anchor_lang::solana_program::{program::invoke_signed, rent::Rent, system_instruction};
 use anchor_lang::{accounts::account::Account, prelude::*};
 use anchor_spl::{
     associated_token::AssociatedToken,
     token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
 
-use crate::constants::{
-    CHANNEL_BITMAP_BYTES, CHANNEL_MAX_CLAIMS, CHANNEL_RING_SLOTS, CHANNEL_STATE_SEED, PROTOCOL_SEED,
-};
+use crate::constants::{CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, PROTOCOL_SEED};
 use crate::errors::OracleError;
 use crate::instructions::claim::{compute_leaf, verify_proof};
 use crate::state::{ChannelSlot, ChannelState, ProtocolState};
 use anchor_lang::accounts::account_loader::AccountLoader;
-use std::convert::TryInto;
 
 const CHANNEL_STATE_VERSION: u8 = 1;
 

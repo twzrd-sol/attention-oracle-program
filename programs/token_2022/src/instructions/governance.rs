@@ -4,10 +4,6 @@ use crate::{
     state::{FeeConfig, FeeSplit, ProtocolState},
 };
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022;
-use anchor_spl::token_2022::spl_token_2022::extension::{
-    transfer_fee::TransferFeeConfig, BaseStateWithExtensions,
-};
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 #[derive(Accounts)]
