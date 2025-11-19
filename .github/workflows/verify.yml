@@ -45,7 +45,8 @@ jobs:
       - name: Verify build + IDL
         run: |
           anchor build
-          ls -l target/deploy/token_2022.so target/idl/token_2022.json
+          ls -l programs/token_2022/target/deploy/token_2022.so \
+            programs/token_2022/target/idl/token_2022.json
       - name: Verify on-chain matches source (main only)
         if: github.ref == 'refs/heads/main'
         env:
