@@ -1,0 +1,18 @@
+name: Repo Scope Guard
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on forbidden paths
+        run: |
+          if git ls-files | grep -E 'apps/(?!oracles/x402-switchboard)(.*)|node_modules|dist|logs|\.db|\.env|keys/'; then
+            echo "Forbidden paths detected – keep repo clean"
+            exit 1
+          fi

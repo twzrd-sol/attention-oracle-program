@@ -2,6 +2,29 @@
 
 Builder-neutral Solana Token-2022 program plus a single oracle demo. Every other service (listener, aggregator, UI, CLI, SDK) now lives in private repos while we rebuild from first principles.
 
+## Repo Scope (Open-Core)
+
+This repository contains only the on-chain protocol and minimal reference oracle:
+
+- `programs/token_2022` – mainnet program GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop (Anchor 0.32.1 + Agave 3.0)
+- `oracles/x402-switchboard` – reference implementation
+
+All off-chain services (listener, aggregator, UI, gateway) are private and live in separate repos.
+
+## Secrets & Keys Policy
+
+- No private keys or .env values are ever committed.
+- Keys live in `~/.config/solana/` or local `keys/` (gitignored).
+- Reference via env only:
+  ```env
+  ANCHOR_WALLET=~/.config/solana/id.json
+  AO_PROGRAM_ID=GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+  RPC_URL=https://api.mainnet-beta.solana.com
+  ```
+- CI uses GitHub Secrets for deployment keys – never plaintext.
+
+Fork/modify safely. This is the verifiable source of truth for the deployed program.
+
 ## Scope
 
 - `programs/token_2022/` — Anchor 0.32.1 program deployed as `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`.
