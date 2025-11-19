@@ -94,3 +94,15 @@ The demo is stateless and provided strictly for reference.
 ## License
 
 Dual MIT / Apache-2.0 (see `LICENSE` / `LICENSE-APACHE`).
+
+## Canonical Architecture
+
+The production flow is designed around the ring buffer and passports. Legacy epoch-state instructions are compiled out by default.
+
+1. Ingest off-chain events in a private aggregator.
+2. Publish channel roots via `set_channel_merkle_root` (per-channel ring buffer) or `set_merkle_root_ring` when built with the `demo` feature.
+3. Users claim CCM via `claim_channel_open` (and `claim_channel_open_with_receipt` when cNFT receipts are desired).
+4. Users accumulate long-lived reputation via the passport instructions (`mint_passport_open`, `upgrade_passport_open`, etc.).
+5. Transfer fees are dynamically allocated by the `transfer_hook` based on passport tier, and harvested later via off-chain keepers listening for `TransferFeeEvent` / `FeesHarvested`.
+
+Legacy epoch-state instructions (`claim`, `claim_open`, `set_merkle_root`, `set_merkle_root_open`, `claim_points_open`, and epoch-close helpers) are only compiled when the `legacy` feature is enabled and are intended for migrations and historical cleanup.

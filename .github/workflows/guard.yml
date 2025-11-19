@@ -16,3 +16,15 @@ jobs:
             echo "Forbidden paths detected – keep repo clean"
             exit 1
           fi
+      - name: Fail on obvious secrets
+        run: |
+          # private keys
+          if grep -R "BEGIN \(OPENSSH \)*PRIVATE KEY" . --exclude-dir=.git --line-number; then
+            echo "Private key material detected"
+            exit 1
+          fi
+          # .env files
+          if find . -name ".env" -o -name ".env.*.local" | grep -q .; then
+            echo ".env file detected; use .env.example only"
+            exit 1
+          fi

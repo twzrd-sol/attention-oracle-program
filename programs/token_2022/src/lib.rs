@@ -18,72 +18,7 @@ pub use events::*;
 pub use instructions::*;
 pub use state::*;
 
-// Re-export Anchor-generated client account modules at the crate root so the
-// v0.30 codegen remains compatible with newer Rust toolchains.
-#[allow(unused_imports)]
-pub(crate) use instructions::admin::__client_accounts_set_paused;
-#[allow(unused_imports)]
-pub(crate) use instructions::admin::__client_accounts_set_paused_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::admin::__client_accounts_set_policy;
-#[allow(unused_imports)]
-pub(crate) use instructions::admin::__client_accounts_set_policy_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::admin::__client_accounts_update_publisher;
-#[allow(unused_imports)]
-pub(crate) use instructions::admin::__client_accounts_update_publisher_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::channel::__client_accounts_claim_channel;
-#[allow(unused_imports)]
-pub(crate) use instructions::channel::__client_accounts_claim_channel_with_receipt;
-#[allow(unused_imports)]
-pub(crate) use instructions::channel::__client_accounts_set_channel_merkle_root;
-#[allow(unused_imports)]
-pub(crate) use instructions::claim::__client_accounts_claim;
-#[allow(unused_imports)]
-pub(crate) use instructions::claim::__client_accounts_claim_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::cleanup::__client_accounts_close_epoch_state;
-#[allow(unused_imports)]
-pub(crate) use instructions::cleanup::__client_accounts_close_epoch_state_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::cleanup::__client_accounts_force_close_epoch_state_legacy;
-#[allow(unused_imports)]
-pub(crate) use instructions::cleanup::__client_accounts_force_close_epoch_state_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::governance::__client_accounts_update_fee_config;
-#[allow(unused_imports)]
-pub(crate) use instructions::hooks::__client_accounts_transfer_hook;
-#[allow(unused_imports)]
-pub(crate) use instructions::initialize_mint::__client_accounts_initialize_mint;
-#[allow(unused_imports)]
-pub(crate) use instructions::initialize_mint::__client_accounts_initialize_mint_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::liquidity::__client_accounts_trigger_liquidity_drip;
-#[allow(unused_imports)]
-pub(crate) use instructions::merkle::__client_accounts_set_merkle_root;
-#[allow(unused_imports)]
-pub(crate) use instructions::merkle::__client_accounts_set_merkle_root_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::merkle_ring::__client_accounts_claim_with_ring;
-#[allow(unused_imports)]
-pub(crate) use instructions::merkle_ring::__client_accounts_initialize_channel;
-#[allow(unused_imports)]
-pub(crate) use instructions::merkle_ring::__client_accounts_set_merkle_root_ring;
-#[allow(unused_imports)]
-pub(crate) use instructions::passport::__client_accounts_mint_passport_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::passport::__client_accounts_reissue_passport_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::passport::__client_accounts_revoke_passport_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::passport::__client_accounts_upgrade_passport_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::passport::__client_accounts_upgrade_passport_proved;
-#[allow(unused_imports)]
-pub(crate) use instructions::points::__client_accounts_claim_points_open;
-#[allow(unused_imports)]
-pub(crate) use instructions::points::__client_accounts_require_points;
+
 
 declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
@@ -111,7 +46,8 @@ pub mod token_2022 {
         instructions::initialize_mint::handler(ctx, fee_basis_points, max_fee)
     }
 
-    /// Initialize a permissionless protocol instance keyed by the mint
+    /// Initialize a permissionless protocol instance keyed by the mint (legacy epoch path)
+    #[cfg(feature = "legacy")]
     pub fn initialize_mint_open(
         ctx: Context<InitializeMintOpen>,
         fee_basis_points: u16,
@@ -120,7 +56,8 @@ pub mod token_2022 {
         instructions::initialize_mint::handler_open(ctx, fee_basis_points, max_fee)
     }
 
-    /// Set merkle root for an epoch (unchanged from v2)
+    /// Set merkle root for an epoch (legacy epoch_state path)
+    #[cfg(feature = "legacy")]
     pub fn set_merkle_root(
         ctx: Context<SetMerkleRoot>,
         root: [u8; 32],
@@ -131,7 +68,8 @@ pub mod token_2022 {
         instructions::merkle::set_merkle_root(ctx, root, epoch, claim_count, streamer_key)
     }
 
-    /// Claim Token-2022 tokens via Merkle proof (admin-gated singleton)
+    /// Claim Token-2022 tokens via Merkle proof (admin-gated singleton, legacy epoch_state path)
+    #[cfg(feature = "legacy")]
     pub fn claim(
         ctx: Context<Claim>,
         streamer_index: u8,
@@ -143,8 +81,9 @@ pub mod token_2022 {
         instructions::claim::claim(ctx, streamer_index, index, amount, id, proof)
     }
 
-    /// Claim Token-2022 tokens via Merkle proof (permissionless, mint-keyed)
+    /// Claim Token-2022 tokens via Merkle proof (permissionless, mint-keyed, legacy epoch_state path)
     /// Optional: Require TWZRD L1 receipt if protocol_state.require_receipt=true
+    #[cfg(feature = "legacy")]
     pub fn claim_open(
         ctx: Context<ClaimOpen>,
         streamer_index: u8,
@@ -205,7 +144,8 @@ pub mod token_2022 {
         instructions::governance::harvest_and_distribute_fees(ctx)
     }
 
-    /// Permissionless merkle root set (keyed by mint)
+    /// Permissionless merkle root set (keyed by mint, legacy epoch_state path)
+    #[cfg(feature = "legacy")]
     pub fn set_merkle_root_open(
         ctx: Context<SetMerkleRootOpen>,
         root: [u8; 32],
@@ -270,7 +210,8 @@ pub mod token_2022 {
         instructions::admin::update_admin(ctx, new_admin)
     }
 
-    /// Claim non-transferable Points using a Merkle proof (open variant)
+    /// Claim non-transferable Points using a Merkle proof (open variant, legacy epoch_state path)
+    #[cfg(feature = "legacy")]
     pub fn claim_points_open(
         ctx: Context<ClaimPointsOpen>,
         index: u32,
@@ -317,7 +258,8 @@ pub mod token_2022 {
         )
     }
 
-    /// Admin-gated cleanup: close an epoch_state PDA and reclaim lamports to admin
+    /// Admin-gated cleanup: close an epoch_state PDA and reclaim lamports to admin (legacy epoch_state path)
+    #[cfg(feature = "legacy")]
     pub fn close_epoch_state(
         ctx: Context<CloseEpochState>,
         epoch: u64,
@@ -327,6 +269,7 @@ pub mod token_2022 {
     }
 
     /// Emergency: close legacy epoch_state without ProtocolState (no mint in seeds)
+    #[cfg(feature = "legacy")]
     pub fn force_close_epoch_state_legacy(
         ctx: Context<ForceCloseEpochStateLegacy>,
         epoch: u64,
@@ -336,6 +279,7 @@ pub mod token_2022 {
     }
 
     /// Emergency: close open epoch_state without ProtocolState (mint in seeds)
+    #[cfg(feature = "legacy")]
     pub fn force_close_epoch_state_open(
         ctx: Context<ForceCloseEpochStateOpen>,
         epoch: u64,
@@ -358,12 +302,14 @@ pub mod token_2022 {
     //     instructions::liquidity::trigger_drip(ctx, tier)
     // }
 
-    /// Initialize channel ring buffer (one-time setup per channel)
+    /// Initialize channel ring buffer (one-time setup per channel) [demo]
+    #[cfg(feature = "demo")]
     pub fn initialize_channel(ctx: Context<InitializeChannel>, streamer_key: Pubkey) -> Result<()> {
         instructions::merkle_ring::initialize_channel(ctx, streamer_key)
     }
 
-    /// Set merkle root using ring buffer (10-slot circular buffer)
+    /// Set merkle root using ring buffer (10-slot circular buffer) [demo]
+    #[cfg(feature = "demo")]
     pub fn set_merkle_root_ring(
         ctx: Context<SetMerkleRootRing>,
         root: [u8; 32],
@@ -374,7 +320,8 @@ pub mod token_2022 {
         instructions::merkle_ring::set_merkle_root_ring(ctx, root, epoch, claim_count, streamer_key)
     }
 
-    /// Claim tokens using ring buffer state
+    /// Claim tokens using ring buffer state [demo]
+    #[cfg(feature = "demo")]
     pub fn claim_with_ring(
         ctx: Context<ClaimWithRing>,
         epoch: u64,
@@ -386,7 +333,8 @@ pub mod token_2022 {
         instructions::merkle_ring::claim_with_ring(ctx, epoch, index, amount, proof, streamer_key)
     }
 
-    /// Close old epoch state accounts to recover rent
+    /// Close old epoch state accounts to recover rent [demo]
+    #[cfg(feature = "demo")]
     pub fn close_old_epoch_state(ctx: Context<CloseOldEpochState>) -> Result<()> {
         instructions::merkle_ring::close_old_epoch_state(ctx)
     }

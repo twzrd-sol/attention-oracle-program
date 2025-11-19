@@ -20,6 +20,10 @@ no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 # Optional, off by default to keep binary lean
 receipts = []
+# Legacy epoch-state / merkle instructions (off by default)
+legacy = []
+# Demo-only ring buffer helpers (old path; off by default)
+demo = []
 
 [dependencies]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
