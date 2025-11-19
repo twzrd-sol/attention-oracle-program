@@ -2,7 +2,7 @@ name: Verify Program
 on:
   workflow_dispatch: {}
   push:
-    branches: [ upgrade/** ]
+    branches: [ upgrade/**, main ]
 jobs:
   verify:
     runs-on: ubuntu-24.04
