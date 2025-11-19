@@ -1,0 +1,34 @@
+name: Verify Program
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ upgrade/** ]
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    env:
+      PROGRAM_ID: GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust 1.91.1
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.1
+      - name: Install Avm (Anchor 0.32.x)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "source $HOME/.cargo/env" >> $GITHUB_ENV
+          source $HOME/.cargo/env
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          $HOME/.cargo/bin/avm install 0.32.1
+          $HOME/.cargo/bin/avm use 0.32.1
+      - name: Install Solana CLI 3.0.10
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.10/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+      - name: Verify on-chain program matches this source
+        working-directory: programs/token_2022
+        run: |
+          source $HOME/.cargo/env
+          anchor --version
+          anchor verify "$PROGRAM_ID" --provider.cluster mainnet --current-dir
