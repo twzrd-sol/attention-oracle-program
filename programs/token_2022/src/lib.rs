@@ -1,4 +1,9 @@
 #![allow(ambiguous_glob_reexports)]
+// Hygiene: Enforce standard lints
+#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+// Allow common Anchor patterns
+#![allow(clippy::result_large_err)]
+#![allow(clippy::module_name_repetitions)]
 
 use anchor_lang::prelude::*;
 
