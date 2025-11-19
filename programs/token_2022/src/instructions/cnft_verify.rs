@@ -119,7 +119,10 @@ mod tests {
         let mut combined = Vec::new();
         combined.extend_from_slice(&first);
         combined.extend_from_slice(&second);
-        let root = keccak::hash(&combined).to_bytes();
+        let mut hasher = Keccak256::new();
+        hasher.update(&combined);
+        let mut root = [0u8; 32];
+        root.copy_from_slice(&hasher.finalize()[..32]);
 
         // Verify leaf1 with leaf2 as sibling
         let proof = vec![leaf2];
