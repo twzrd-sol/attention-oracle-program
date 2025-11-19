@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::{
-    constants::{PASSPORT_SEED, PROTOCOL_SEED},
+    constants::{passport_pda, PROTOCOL_SEED},
     errors::OracleError,
     events::TransferFeeEvent,
     state::{FeeConfig, PassportRegistry, ProtocolState},
@@ -78,18 +78,28 @@ pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
 
     // Search remaining_accounts for matching PassportRegistry
     for account_info in ctx.remaining_accounts.iter() {
+        // Only consider accounts owned by this program
+        if account_info.owner != ctx.program_id {
+            continue;
+        }
+
         if let Ok(data) = account_info.try_borrow_data() {
             if let Ok(registry) = PassportRegistry::try_deserialize(&mut &data[..]) {
+                // Ensure this is the correct PDA for the registry entry
+                let expected_pda = passport_pda(ctx.program_id, &registry.user_hash);
+                if expected_pda != account_info.key() {
+                    continue;
+                }
+
                 if registry.owner == transfer_owner {
                     creator_tier = registry.tier;
-                    // Tier mapping: 0 => 0; 1..=6 => table indices 0..=5
-                    if creator_tier > 0 {
-                        let idx = core::cmp::min(
-                            (creator_tier - 1) as usize,
-                            fee_config.tier_multipliers.len() - 1,
-                        );
-                        tier_multiplier = fee_config.tier_multipliers[idx];
-                    }
+
+                    // Tier mapping: index = tier (0 = 0%, 1 = 20%, ..., 5 = 100%)
+                    let idx = core::cmp::min(
+                        creator_tier as usize,
+                        fee_config.tier_multipliers.len() - 1,
+                    );
+                    tier_multiplier = fee_config.tier_multipliers[idx];
                     break;
                 }
             }

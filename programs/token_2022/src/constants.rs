@@ -8,7 +8,7 @@ pub const LIQUIDITY_ENGINE_SEED: &[u8] = b"liquidity_engine";
 pub const CHANNEL_STATE_SEED: &[u8] = b"channel_state";
 
 pub const CHANNEL_RING_SLOTS: usize = 10;
-pub const CHANNEL_MAX_CLAIMS: usize = 1024;
+pub const CHANNEL_MAX_CLAIMS: usize = 4096;
 pub const CHANNEL_BITMAP_BYTES: usize = (CHANNEL_MAX_CLAIMS + 7) / 8;
 pub const MAX_EPOCH_CLAIMS: u32 = 1_000_000;
 pub const MAX_ID_BYTES: usize = 64;
@@ -77,7 +77,7 @@ pub const BONUS_MULTIPLIER_BITS: u64 = 1;
 // Tier 3: Established creator (0.6x)
 // Tier 4: Featured creator (0.8x)
 // Tier 5+: Elite creator (1.0x)
-pub const TIER_MULTIPLIERS: [f64; 6] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+pub const TIER_MULTIPLIERS: [u32; 6] = [0, 2000, 4000, 6000, 8000, 10000];
 
 // Fee split basis points (total = 10 BPS = 0.1%)
 pub const TREASURY_FEE_BASIS_POINTS: u16 = 5; // 0.05% to treasury

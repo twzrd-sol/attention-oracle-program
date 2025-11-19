@@ -1,0 +1,37 @@
+name: Repo Scope Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on forbidden paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILES="$(git ls-files)"
+          # 1) Forbid anything under apps/ except apps/oracles/x402-switchboard
+          if echo "$FILES" | grep -E '^apps/' | grep -Ev '^apps/oracles/x402-switchboard(/|$)' | grep -q .; then
+            echo "Forbidden paths under apps/ (except apps/oracles/x402-switchboard)"
+            exit 1
+          fi
+          # 2) Forbid vendored/build/keys directories anywhere in tree
+          if echo "$FILES" | grep -E '(^|/)(node_modules|dist|logs|keys)(/|$)' | grep -q .; then
+            echo "Forbidden vendored/build/keys paths detected"
+            exit 1
+          fi
+          # 3) Forbid .env files (but allow .env.example)
+          if echo "$FILES" | grep -E '(^|/)\.env($|/)' | grep -q .; then
+            echo "Forbidden .env path detected"
+            exit 1
+          fi
+          # 4) Forbid database artifacts (*.db)
+          if echo "$FILES" | grep -E '\.db($|/|\.)' | grep -q .; then
+            echo "Forbidden database artifact detected"
+            exit 1
+          fi
+          echo "Guard passed."
