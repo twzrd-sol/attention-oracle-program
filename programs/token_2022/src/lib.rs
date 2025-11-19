@@ -1,9 +1,19 @@
 #![allow(ambiguous_glob_reexports)]
 // Hygiene: Enforce standard lints
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
-// Allow common Anchor patterns
-#![allow(clippy::result_large_err)]
-#![allow(clippy::module_name_repetitions)]
+// Anchor entrypoints necessarily exceed argument-count norms and return Result
+// without per-function # Errors sections; allow these pedantic lints while
+// keeping everything else strict.
+#![allow(clippy::too_many_arguments, clippy::missing_errors_doc)]
+#![allow(clippy::doc_markdown, clippy::must_use_candidate, clippy::needless_pass_by_value)]
+#![allow(clippy::manual_div_ceil)]
+#![allow(clippy::items_after_statements, clippy::needless_for_each, clippy::needless_borrow)]
+#![allow(clippy::missing_panics_doc, clippy::too_many_lines, clippy::uninlined_format_args)]
+#![allow(clippy::or_fun_call, clippy::explicit_iter_loop, clippy::used_underscore_binding)]
+#![allow(clippy::needless_borrows_for_generic_args, clippy::cast_possible_truncation, clippy::cast_lossless)]
+#![allow(clippy::no_effect_underscore_binding, clippy::pub_underscore_fields)]
+#![allow(clippy::too_long_first_doc_paragraph, clippy::unnecessary_cast, clippy::len_zero)]
+#![allow(clippy::wildcard_imports, clippy::missing_const_for_fn, clippy::use_self)]
 
 use anchor_lang::prelude::*;
 

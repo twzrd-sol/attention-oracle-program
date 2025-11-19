@@ -1,7 +1,7 @@
 use crate::{
     constants::{LIQUIDITY_ENGINE_SEED, PROTOCOL_SEED},
     errors::OracleError,
-    state::{LiquidityEngine, LiquidityState, ProtocolState},
+    state::{LiquidityEngine, ProtocolState},
 };
 use anchor_lang::prelude::*;
 
