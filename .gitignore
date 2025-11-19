@@ -21,6 +21,7 @@ x402-api-server/
 
 # Environment files (never commit secrets)
 .env
+.env.*.local
 .env*
 **/.env*
 # but allow tracked examples across the repo
@@ -99,3 +100,6 @@ apps/twzrd-aggregator-rs/
 apps/stream-listener-ts/
 schema_dump*.sql
 twzrd-stream-listener-*
+
+.claude/
+GILL_MIGRATION_DIRECTIVE.md
