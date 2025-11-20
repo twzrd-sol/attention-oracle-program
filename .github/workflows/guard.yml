@@ -14,24 +14,27 @@ jobs:
         run: |
           set -euo pipefail
           FILES="$(git ls-files)"
-          # 1) Forbid anything under apps/ except apps/oracles/x402-switchboard
-          if echo "$FILES" | grep -E '^apps/' | grep -Ev '^apps/oracles/x402-switchboard(/|$)' | grep -q .; then
-            echo "Forbidden paths under apps/ (except apps/oracles/x402-switchboard)"
+          # 1) Allow only: programs/token_2022, programs/attention_oracle_program, oracles/x402-switchboard
+          ALLOWED="^(programs/(token_2022|attention_oracle_program)|oracles/x402-switchboard)(/|$)"
+          FORBIDDEN_DIRS=$(echo "$FILES" | grep -E '^(programs|oracles)/' | grep -Ev "$ALLOWED" || true)
+          if [ -n "$FORBIDDEN_DIRS" ]; then
+            echo "❌ Forbidden paths detected (only token_2022, attention_oracle_program, x402-switchboard allowed):"
+            echo "$FORBIDDEN_DIRS"
             exit 1
           fi
           # 2) Forbid vendored/build/keys directories anywhere in tree
           if echo "$FILES" | grep -E '(^|/)(node_modules|dist|logs|keys)(/|$)' | grep -q .; then
-            echo "Forbidden vendored/build/keys paths detected"
+            echo "❌ Forbidden vendored/build/keys paths detected"
             exit 1
           fi
           # 3) Forbid .env files (but allow .env.example)
           if echo "$FILES" | grep -E '(^|/)\.env($|/)' | grep -q .; then
-            echo "Forbidden .env path detected"
+            echo "❌ Forbidden .env path detected"
             exit 1
           fi
           # 4) Forbid database artifacts (*.db)
           if echo "$FILES" | grep -E '\.db($|/|\.)' | grep -q .; then
-            echo "Forbidden database artifact detected"
+            echo "❌ Forbidden database artifact detected"
             exit 1
           fi
-          echo "Guard passed."
+          echo "✅ Guard passed: scope is clean"
