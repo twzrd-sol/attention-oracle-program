@@ -1,6 +1,8 @@
 [workspace]
 members = [
-    "programs/token_2022",
+    "programs/token_2022"
+]
+exclude = [
     "programs/attention_oracle_program"
 ]
 resolver = "2"
