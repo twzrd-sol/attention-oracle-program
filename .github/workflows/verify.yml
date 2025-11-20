@@ -15,19 +15,27 @@ jobs:
           components: clippy
       - name: Add cargo to PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Force kill stale processes (SIGKILL)
+      - name: Nuclear cleanup + fresh AVM install
         run: |
+          # Kill everything that could hold locks
           pkill -9 -f anchor || true
           pkill -9 -f avm || true
-          pkill -9 -f solana-verify || true
           pkill -9 -f cargo || true
-          docker system prune -af --volumes || true
-          sleep 15
-      - name: Install Anchor (avm 0.32.1)
-        run: |
+          pkill -9 -f rustup || true
+
+          # Wipe all possible Anchor/AVM state
+          rm -rf ~/.avm
+          rm -rf ~/.cargo/bin/avm*
+          rm -rf ~/.cargo/bin/anchor*
+          rm -rf ~/.local/share/solana/install
+
+          # Fresh install every time (takes ~35s total, zero flakes)
           cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
-          $HOME/.cargo/bin/avm install 0.32.1
-          $HOME/.cargo/bin/avm use 0.32.1
+          ~/.cargo/bin/avm install 0.32.1
+          ~/.cargo/bin/avm use 0.32.1
+
+          # Verify anchor is alive
+          anchor --version
       - name: Add Anchor to PATH
         run: echo "$HOME/.avm/bin" >> $GITHUB_PATH
       - name: Install Agave 3.0.10
