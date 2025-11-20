@@ -46,4 +46,4 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           ANCHOR_WALLET: ${{ secrets.DEVNET_DEPLOY_KEY }}
-        run: anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+        run: anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --current-dir .
