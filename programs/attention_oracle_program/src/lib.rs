@@ -122,11 +122,7 @@ pub struct UpdateRoot<'info> {
         init_if_needed,
         payer = oracle_authority,
         space = EpochRoot::LEN,
-        seeds = [
-            b"epoch_root",
-            keccak_hash(channel.as_bytes()).as_ref(),
-            epoch.to_le_bytes().as_ref(),
-        ],
+        seeds = [b"epoch_root" as &[u8], keccak_hash(channel.as_bytes()).as_ref(), epoch.to_le_bytes().as_ref()],
         bump,
     )]
     pub epoch_root: Account<'info, EpochRoot>,
@@ -144,11 +140,7 @@ pub struct Claim<'info> {
 
     #[account(
         mut,
-        seeds = [
-            b"epoch_root",
-            keccak_hash(channel.as_bytes()).as_ref(),
-            epoch.to_le_bytes().as_ref(),
-        ],
+        seeds = [b"epoch_root" as &[u8], keccak_hash(channel.as_bytes()).as_ref(), epoch.to_le_bytes().as_ref()],
         bump = epoch_root.bump,
     )]
     pub epoch_root: Account<'info, EpochRoot>,
