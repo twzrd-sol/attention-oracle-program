@@ -308,7 +308,7 @@ jobs:
           echo ""
           echo "🚨 MANUAL INTERVENTION REQUIRED"
 
-      - name: Alert: Rollback complete
+      - name: "Alert: Rollback complete"
         run: |
           if [ -n "${{ env.SLACK_WEBHOOK }}" ]; then
             curl -X POST ${{ env.SLACK_WEBHOOK }} \
