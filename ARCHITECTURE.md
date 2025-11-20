@@ -268,6 +268,6 @@ Hardening options (future work): multiple authorized publishers, quorum commitme
 - ID length: `MAX_ID_BYTES = 64`.
 - Token‑2022 decimals: `CCM_DECIMALS = 9`.
 - Default transfer fee: `DEFAULT_TRANSFER_FEE_BASIS_POINTS = 10` (0.10%), capped by `MAX_FEE_BASIS_POINTS = 1000` (10%).
-- Tier multipliers (fixed‑point denominator 10_000): `[0, 2000, 4000, 6000, 8000, 10000]`.
+- Tier multipliers (fixed‑point denominator 10_000): `[0, 2000, 4000, 6000, 8000, 10000]`. Tier 0 default = 0% (no verified passport).
 
 Note: CI/artifact paths in examples assume repo root. Workflows may copy artifacts to `dist/` for releases; adjust paths accordingly.
