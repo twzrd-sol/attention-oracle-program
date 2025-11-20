@@ -4,9 +4,8 @@ Builder-neutral Solana Token-2022 program plus a single oracle demo. Every other
 
 ## Repo Scope (Open-Core)
 
-This repository contains only the on-chain protocol and minimal reference oracle:
-
 - `programs/token_2022` – mainnet program GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop (Anchor 0.32.1 + Agave 3.0.10)
+- `programs/attention_oracle_program` – lightweight Merkle verifier/payout flow designed to mirror the same Program ID for clean upgrades and verification.
 - `oracles/x402-switchboard` – reference implementation
 
 All off-chain services (listener, aggregator, UI, gateway) are private and live in separate repos.
@@ -105,3 +104,7 @@ The production flow is designed around the ring buffer and passports. Legacy epo
 5. Transfer fees are dynamically allocated by the `transfer_hook` based on passport tier, and harvested later via off-chain keepers listening for `TransferFeeEvent` / `FeesHarvested`.
 
 Legacy epoch-state instructions (`claim`, `claim_open`, `set_merkle_root`, `set_merkle_root_open`, `claim_points_open`, and epoch-close helpers) are only compiled when the `legacy` feature is enabled and are intended for migrations and historical cleanup.
+
+## Attention Oracle Verifier (Lite)
+
+The `attention_oracle_program` in `programs/attention_oracle_program` mirrors the EpochRoot + Merkle verification logic with a compact claimed bitmap and CPI payout hook. It is kept aligned to Program `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` so the repo can reproduce the mainnet hash while also shipping a focused verifier for rapid integration tests.
