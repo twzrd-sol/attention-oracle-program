@@ -39,7 +39,6 @@ x402-api-server/
 # Rust/Anchor
 target/
 **/*.rs.bk
-Cargo.lock
 
 # Test artifacts
 test-ledger/
