@@ -20,7 +20,8 @@ jobs:
           pkill -f anchor || true
           pkill -f avm || true
           pkill -f solana-verify || true
-          sleep 3
+          docker system prune -af --volumes || true
+          sleep 5
       - name: Install Anchor (avm 0.32.1)
         run: |
           cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
