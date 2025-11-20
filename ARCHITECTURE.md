@@ -6,7 +6,7 @@
 
 ## 1. High-Level Overview
 
-The Attention Oracle is a **Verifiable Distribution Protocol**. Off-chain aggregators measure attention (views, chats, interactions) and publish Merkle roots on-chain. Users then claim tokens (CCM) or on-chain reputation (Passports) trustlessly.
+The Attention Oracle is a **Verifiable Distribution Protocol**. Off-chain aggregators measure attention (views, chats, interactions) and publish Merkle roots on-chain. Users then make verifiable on-chain claims against these published commitments; no trusted third party is required to validate claim inclusion or settlement.
 
 ### Canonical Flow (Production)
 
@@ -33,7 +33,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 ]`
 - **Streamer Key:**
   - Derived from a human-readable channel identifier.
-  - On-chain: `keccak256("channel:" || channel.to_lowercase_ascii())`.
+  - On-chain: `keccak256("channel:" || channel.to_ascii_lowercase())`.
 - **Why:** Lets users claim from recent epochs even as new epochs are published, without a new account per epoch.
 
 ### 🛂 PassportRegistry (Identity)
@@ -206,7 +206,68 @@ anchor clean && anchor build
 
 # Verifier environment (e.g., GitHub Actions runner):
 # Compare on-chain program with this source using Anchor's verifier
-anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --current-dir
+anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --current-dir .
 ```
 
 A successful verification indicates the bytecode on-chain is compiled from this exact source, which is what explorers and auditors rely on when marking a program as "Verified".
+
+---
+
+## 7. Verified Toolchain
+
+- Anchor: 0.32.1 (via `avm`)
+- Rust: 1.91.x (CI uses 1.91.1)
+- Solana/Agave: 3.0.x (CI installs 3.0.10)
+
+The CI pipeline builds and verifies with the versions above; use these to reproduce the green check locally.
+
+---
+
+## 8. Instruction Matrix (Auth, Accounts, Constraints)
+
+- set_channel_merkle_root
+  - Signers: `update_authority` (must equal `protocol_state.admin` or `protocol_state.publisher`).
+  - Accounts: `protocol_state` (mint‑keyed PDA), `channel_state` (ring buffer PDA), `system_program`.
+  - Constraints: epoch monotonic per slot; `streamer_key` derived from `channel`; creates `channel_state` if missing.
+
+- claim_channel_open / claim_channel_open_with_receipt
+  - Signers: `claimer`.
+  - Accounts: `protocol_state`, `channel_state`, `mint`, `treasury_ata` (PDA), `claimer_ata` (init_if_needed). Optional Bubblegum accounts when `mint_receipt = true`.
+  - Constraints: protocol not paused; slot = `epoch % CHANNEL_RING_SLOTS`; `index` in range; bitmap bit must be clear; Merkle proof over sorted Keccak pairs.
+
+- transfer_hook (Token‑2022)
+  - Signers: none (hook context).
+  - Accounts: Token‑2022 program + mint with TransferHook and TransferFeeConfig; remaining accounts may include `PassportRegistry` for fee multipliers.
+  - Behavior: computes treasury/creator fee shares; emits `TransferFeeEvent`; fee withholding handled by the mint’s extension.
+
+- Admin updates (e.g., `update_fee_config[_open]`, `update_tier_multipliers`, `harvest_fees`)
+  - Signers: admin (and/or designated authority as defined on `ProtocolState`).
+  - Constraints: updates validated to remain within configured caps.
+
+---
+
+## 9. Threat Model & Assumptions
+
+- Trust boundary: trustless with respect to inclusion/claim correctness once a Merkle root is published; trust‑minimized with respect to how off‑chain events are measured and aggregated.
+- Off‑chain aggregator is trusted to compute correct Merkle roots; on‑chain verification prevents out‑of‑set claims but cannot validate off‑chain event semantics.
+- Replay resistance via per‑slot bitmaps; double‑claims are rejected when the bit is already set.
+- Channel identifiers are normalized to ASCII lowercase before deriving `streamer_key`.
+- Program can be paused via `ProtocolState.paused` to stop claims during incidents.
+
+IP disclosure note: This document intentionally omits off‑chain scoring heuristics, data sources, thresholds, and infrastructure topology. Only the on‑chain interfaces and guarantees are described.
+
+Hardening options (future work): multiple authorized publishers, quorum commitments, and challenge windows to further reduce reliance on any single aggregator.
+
+---
+
+## 10. Constants & Limits (Reference)
+
+- Ring buffer slots: `CHANNEL_RING_SLOTS = 10`.
+- Max claims per epoch: `CHANNEL_MAX_CLAIMS = 4096` (bitmap size `CHANNEL_BITMAP_BYTES`).
+- Max epoch claims (protocol‑level cap): `MAX_EPOCH_CLAIMS = 1_000_000`.
+- ID length: `MAX_ID_BYTES = 64`.
+- Token‑2022 decimals: `CCM_DECIMALS = 9`.
+- Default transfer fee: `DEFAULT_TRANSFER_FEE_BASIS_POINTS = 10` (0.10%), capped by `MAX_FEE_BASIS_POINTS = 1000` (10%).
+- Tier multipliers (fixed‑point denominator 10_000): `[0, 2000, 4000, 6000, 8000, 10000]`. Tier 0 default = 0% (no verified passport).
+
+Note: CI/artifact paths in examples assume repo root. Workflows may copy artifacts to `dist/` for releases; adjust paths accordingly.
