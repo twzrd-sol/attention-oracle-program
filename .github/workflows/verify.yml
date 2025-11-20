@@ -61,5 +61,5 @@ jobs:
           anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop \
             --provider.cluster mainnet \
             --repo-url https://github.com/twzrd-sol/attention-oracle-program \
-            --program-name attention_oracle_program \
+            --program-name token_2022 \
             --commit-hash ${{ github.sha }}
