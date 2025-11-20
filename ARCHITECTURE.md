@@ -216,7 +216,7 @@ A successful verification indicates the bytecode on-chain is compiled from this 
 ## 7. Verified Toolchain
 
 - Anchor: 0.32.1 (via `avm`)
-- Rust: 1.91.x (CI uses 1.91.0)
+- Rust: 1.91.x (CI uses 1.91.1)
 - Solana/Agave: 3.0.x (CI installs 3.0.10)
 
 The CI pipeline builds and verifies with the versions above; use these to reproduce the green check locally.
