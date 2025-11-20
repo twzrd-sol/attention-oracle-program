@@ -1,69 +1,72 @@
-# Attention Oracle (Open Core)
+# Attention Oracle — Open Core
 
-Builder-neutral Solana Token-2022 program plus a single oracle demo. Every other service (listener, aggregator, UI, CLI, SDK) now lives in private repos while we rebuild from first principles.
+Builder-neutral Token-2022 protocol on Solana. Minimal, verifiable on-chain reference implementation. All advanced off-chain components (aggregators, listeners, interfaces, toolkits) are developed privately and released only when production-ready.
 
-## Repo Scope (Open-Core)
+Mainnet program ID (verified): `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`  
+Built with Anchor 0.32.1 + Agave 3.0.10
 
-This repository contains only the on-chain protocol and minimal reference oracle:
+## Repository Scope
 
-- `programs/token_2022` – mainnet program GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop (Anchor 0.32.1 + Agave 3.0.10)
-- `oracles/x402-switchboard` – reference implementation
+This public repository contains only the verifiable on-chain surface:
 
-All off-chain services (listener, aggregator, UI, gateway) are private and live in separate repos.
+- `programs/token_2022/` – the deployed Token-2022 extension program
+- `attention_oracle_program/` – canonical Anchor workspace that orchestrates builds
+- `oracles/x402-switchboard/` – minimal reference oracle (x402 + Switchboard) for demonstration only
+
+Everything else lives in private repositories until mature. The public tree is intentionally minimal and permanently verifiable. No secret sauce, no moving parts, no hidden dependencies.
+
+| Folder | Description | Last Commit | When |
+| --- | --- | --- | --- |
+| `attention_oracle_program` | Anchor workspace (helper scripts, CI manifests) | CI fixes: artifact paths, guard scope, IDL extraction, workspace config | 19 hours ago |
+| `programs/token_2022` | Token-2022 program deployed to mainnet | (see git history) | (see git history) |
+
+## Verification Status
+
+Deterministic, verifiable build – green check on Solscan.  
+Reproduce exactly with:
+
+```bash
+anchor build --verifiable
+solana-verify build -k ~/.config/solana/id.json --library-name token_2022
+```
+
+See `VERIFY.md` for the full pipeline and GitHub Actions workflow.
 
 ## Secrets & Keys Policy
 
-- No private keys or .env values are ever committed.
-- Keys live in `~/.config/solana/` or local `keys/` (gitignored).
-- Reference via env only:
-  ```env
-  ANCHOR_WALLET=~/.config/solana/id.json
-  AO_PROGRAM_ID=GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
-  RPC_URL=https://api.mainnet-beta.solana.com
-  ```
-- CI uses GitHub Secrets for deployment keys – never plaintext.
+- No keys or `.env` files are ever committed.  
+- All keys live in `~/.config/solana/` or local `keys/` (gitignored).  
+- CI uses encrypted GitHub Secrets only.
 
-Fork/modify safely. This is the verifiable source of truth for the deployed program.
-
-## Scope
-
-- `programs/token_2022/` — Anchor 0.32.1 program deployed as `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`.
-- `oracles/x402-switchboard/` — Minimal x402 + Switchboard server that demonstrates off-chain settlement.
-
-All other components are intentionally absent from the public tree until they are production-ready again.
+Fork and build safely — this repo is the single source of truth for the deployed bytecode.
 
 ## Environment
 
-Copy the template and fill the values you need (never commit `.env`).
+Copy the template and fill the values you need (never commit this file):
 
 ```bash
 cp .env.example .env
 ```
 
-Key fields:
+Required variables:
 
-- `ANCHOR_PROVIDER_URL` — RPC for Anchor builds/tests.
-- `ANCHOR_WALLET` — Path to your deploy keypair.
-- `AO_PROGRAM_ID` — Defaults to the public deployment.
-- `SB_CLUSTER`, `SB_FEED`, `PORT` — Inputs for the oracle demo.
-
-`dotenv` is loaded automatically where required.
+- `ANCHOR_PROVIDER_URL` — your RPC
+- `ANCHOR_WALLET` — path to deploy keypair
+- `AO_PROGRAM_ID=GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
+- Switchboard demo: `SB_CLUSTER`, `SB_QUEUE`, `SB_FEED`, `PORT`
 
 ## Build
 
 ```bash
 cd programs/token_2022
-cargo build-sbf
-anchor build
+anchor build --verifiable
 ```
 
-## Build Notes (Toolchains)
+## Toolchain notes
 
-- Workspace Rust: `1.91.1` (fmt/lints, general dev via rustup).
-- Agave SBF builder (Solana CLI `3.0.10`): uses `rustc 1.84.1-sbpf` internally.
-- Program crate `rust-version`: set to `"1.84"` to match the SBF toolchain so `anchor build` stays green.
-
-This split is expected: developers use modern stable Rust for workflow, while the SBF compiler version is managed by Agave. When the platform tools bump SBF Rust, we can raise the crate `rust-version` accordingly.
+- Workspace Rust: `1.91.1` (dev workflow)  
+- SBF target: `rustc 1.84.1-sbpf` (via Solana CLI `3.0.10`)  
+- `rust-version` in crate = `1.84` to keep Anchor happy
 
 ## Test
 
@@ -72,36 +75,32 @@ cd programs/token_2022
 anchor test
 ```
 
-## Oracle Demo (x402 + Switchboard)
+## Reference Oracle Demo (x402 + Switchboard)
 
 ```bash
 cd oracles/x402-switchboard
 npm install
-cp ../../.env.example .env   # populate SB_CLUSTER/SB_FEED/PORT
 npm run dev
 curl http://localhost:3000/price
 ```
 
-The demo is stateless and provided strictly for reference.
+Stateless reference implementation only. Production oracles run privately.
+
+## Canonical Production Flow
+
+1. Private aggregators ingest off-chain events
+2. Publish channel roots via `set_channel_merkle_root` (ring buffer)
+3. Users claim via `claim_channel_open` / `claim_channel_open_with_receipt`
+4. Long-lived reputation via passport instructions (`mint_passport_open`, `upgrade_passport_open`, …)
+5. `transfer_hook` allocates dynamic fees by passport tier
+6. Off-chain keepers harvest fees
+
+Legacy epoch-based instructions are gated behind the `legacy` feature and used only for migrations.
 
 ## Security
 
-- Keep private keys outside the repo (e.g. `~/.config/solana/id.json`, Vault).
-- `.env` files and keypairs stay gitignored.
-- Report vulnerabilities to `security@twzrd.xyz`.
+Report vulnerabilities → security@twzrd.xyz
 
 ## License
 
-Dual MIT / Apache-2.0 (see `LICENSE` / `LICENSE-APACHE`).
-
-## Canonical Architecture
-
-The production flow is designed around the ring buffer and passports. Legacy epoch-state instructions are compiled out by default.
-
-1. Ingest off-chain events in a private aggregator.
-2. Publish channel roots via `set_channel_merkle_root` (per-channel ring buffer) or `set_merkle_root_ring` when built with the `demo` feature.
-3. Users claim CCM via `claim_channel_open` (and `claim_channel_open_with_receipt` when cNFT receipts are desired).
-4. Users accumulate long-lived reputation via the passport instructions (`mint_passport_open`, `upgrade_passport_open`, etc.).
-5. Transfer fees are dynamically allocated by the `transfer_hook` based on passport tier, and harvested later via off-chain keepers listening for `TransferFeeEvent` / `FeesHarvested`.
-
-Legacy epoch-state instructions (`claim`, `claim_open`, `set_merkle_root`, `set_merkle_root_open`, `claim_points_open`, and epoch-close helpers) are only compiled when the `legacy` feature is enabled and are intended for migrations and historical cleanup.
+MIT OR Apache-2.0
