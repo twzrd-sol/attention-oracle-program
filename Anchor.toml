@@ -22,5 +22,5 @@ cluster = "mainnet"
 wallet = "~/.config/solana/id.json"
 
 [verify]
-mountPath = "programs/token_2022"
+mountPath = "."
 buildCommand = ["cargo", "build-sbf"]
