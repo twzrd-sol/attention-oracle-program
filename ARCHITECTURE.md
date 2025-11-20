@@ -227,7 +227,7 @@ The CI pipeline builds and verifies with the versions above; use these to reprod
 
 - set_channel_merkle_root
   - Signers: `update_authority` (must equal `protocol_state.admin` or `protocol_state.publisher`).
-  - Accounts: `protocol_state` (mint‑keyed PDA), `channel_state` (ring buffer PDA), `system_program`.
+  - Accounts: `protocol_state` (mint-keyed PDA), `channel_state` (ring buffer PDA), `system_program`.
   - Constraints: epoch monotonic per slot; `streamer_key` derived from `channel`; creates `channel_state` if missing.
 
 - claim_channel_open / claim_channel_open_with_receipt
@@ -235,9 +235,9 @@ The CI pipeline builds and verifies with the versions above; use these to reprod
   - Accounts: `protocol_state`, `channel_state`, `mint`, `treasury_ata` (PDA), `claimer_ata` (init_if_needed). Optional Bubblegum accounts when `mint_receipt = true`.
   - Constraints: protocol not paused; slot = `epoch % CHANNEL_RING_SLOTS`; `index` in range; bitmap bit must be clear; Merkle proof over sorted Keccak pairs.
 
-- transfer_hook (Token‑2022)
+- transfer_hook (Token-2022)
   - Signers: none (hook context).
-  - Accounts: Token‑2022 program + mint with TransferHook and TransferFeeConfig; remaining accounts may include `PassportRegistry` for fee multipliers.
+  - Accounts: Token-2022 program + mint with TransferHook and TransferFeeConfig; remaining accounts may include `PassportRegistry` for fee multipliers.
   - Behavior: computes treasury/creator fee shares; emits `TransferFeeEvent`; fee withholding handled by the mint’s extension.
 
 - Admin updates (e.g., `update_fee_config[_open]`, `update_tier_multipliers`, `harvest_fees`)
@@ -248,13 +248,13 @@ The CI pipeline builds and verifies with the versions above; use these to reprod
 
 ## 9. Threat Model & Assumptions
 
-- Trust boundary: trustless with respect to inclusion/claim correctness once a Merkle root is published; trust‑minimized with respect to how off‑chain events are measured and aggregated.
-- Off‑chain aggregator is trusted to compute correct Merkle roots; on‑chain verification prevents out‑of‑set claims but cannot validate off‑chain event semantics.
-- Replay resistance via per‑slot bitmaps; double‑claims are rejected when the bit is already set.
+- Trust boundary: trustless with respect to inclusion/claim correctness once a Merkle root is published; trust-minimized with respect to how off-chain events are measured and aggregated.
+- Off-chain aggregator is trusted to compute correct Merkle roots; on-chain verification prevents out-of-set claims but cannot validate off-chain event semantics.
+- Replay resistance via per-slot bitmaps; double-claims are rejected when the bit is already set.
 - Channel identifiers are normalized to ASCII lowercase before deriving `streamer_key`.
 - Program can be paused via `ProtocolState.paused` to stop claims during incidents.
 
-IP disclosure note: This document intentionally omits off‑chain scoring heuristics, data sources, thresholds, and infrastructure topology. Only the on‑chain interfaces and guarantees are described.
+IP disclosure note: This document intentionally omits off-chain scoring heuristics, data sources, thresholds, and infrastructure topology. Only the on-chain interfaces and guarantees are described.
 
 Hardening options (future work): multiple authorized publishers, quorum commitments, and challenge windows to further reduce reliance on any single aggregator.
 
