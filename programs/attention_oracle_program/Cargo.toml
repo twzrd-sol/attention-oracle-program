@@ -13,5 +13,9 @@ anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
 anchor-spl = "0.32.1"
 sha3 = "0.10"
 
+[features]
+default = []
+idl-build = []
+
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(docsrs)'] }
