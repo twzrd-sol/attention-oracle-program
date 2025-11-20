@@ -15,29 +15,25 @@ jobs:
           components: clippy
       - name: Add cargo to PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Nuclear cleanup + fresh AVM install
+      - name: Install Anchor CLI exactly v0.32.1 (direct from tag, bulletproof)
         run: |
-          # Kill everything that could hold locks
+          # Kill any stray processes first (defense in depth)
           pkill -9 -f anchor || true
-          pkill -9 -f avm || true
           pkill -9 -f cargo || true
-          pkill -9 -f rustup || true
 
-          # Wipe all possible Anchor/AVM state
-          rm -rf ~/.avm
-          rm -rf ~/.cargo/bin/avm*
-          rm -rf ~/.cargo/bin/anchor*
-          rm -rf ~/.local/share/solana/install
+          # Direct install – builds only the CLI, skips avm completely
+          cargo install anchor-cli \
+            --git https://github.com/coral-xyz/anchor \
+            --tag v0.32.1 \
+            --locked \
+            --force \
+            --root $HOME/.local
 
-          # Fresh install every time (takes ~35s total, zero flakes)
-          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
-          ~/.cargo/bin/avm install 0.32.1
-          ~/.cargo/bin/avm use 0.32.1
+          # Add to PATH
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-          # Verify anchor is alive
-          anchor --version
-      - name: Add Anchor to PATH
-        run: echo "$HOME/.avm/bin" >> $GITHUB_PATH
+          # Verify
+          anchor --version  # should print anchor-cli 0.32.1
       - name: Install Agave 3.0.10
         run: sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.10/install)"
       - name: Add Agave to PATH
