@@ -15,13 +15,14 @@ jobs:
           components: clippy
       - name: Add cargo to PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Kill stale anchor/avm processes
+      - name: Force kill stale processes (SIGKILL)
         run: |
-          pkill -f anchor || true
-          pkill -f avm || true
-          pkill -f solana-verify || true
+          pkill -9 -f anchor || true
+          pkill -9 -f avm || true
+          pkill -9 -f solana-verify || true
+          pkill -9 -f cargo || true
           docker system prune -af --volumes || true
-          sleep 5
+          sleep 15
       - name: Install Anchor (avm 0.32.1)
         run: |
           cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
