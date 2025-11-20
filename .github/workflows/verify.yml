@@ -8,9 +8,6 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: programs/token_2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -35,6 +32,7 @@ jobs:
           solana --version
           rustc --version
       - name: Clippy zero
+        working-directory: programs/token_2022
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Build program + IDL
         run: anchor build
