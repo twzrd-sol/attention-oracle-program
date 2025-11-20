@@ -57,4 +57,4 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           ANCHOR_WALLET: ${{ secrets.DEVNET_DEPLOY_KEY }}
-        run: anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --library-name token_2022 --repo-url https://github.com/twzrd-sol/attention-oracle-program --commit-hash ${{ github.sha }}
+        run: anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --program-name token_2022 --repo-url https://github.com/twzrd-sol/attention-oracle-program --commit-hash ${{ github.sha }}
