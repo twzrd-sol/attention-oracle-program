@@ -13,15 +13,17 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
-      - name: Add cargo to PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Install Anchor CLI exactly v0.32.1 (direct from tag, bulletproof)
+      - name: Install native dependencies (fixes hidapi + protobuf + ssl)
         run: |
-          # Kill any stray processes first (defense in depth)
-          pkill -9 -f anchor || true
-          pkill -9 -f cargo || true
-
-          # Direct install – builds only the CLI, skips avm completely
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libssl-dev \
+            libudev-dev \
+            libclang-dev \
+            protobuf-compiler
+      - name: Install Anchor CLI v0.32.1 direct (no avm, zero flakes)
+        run: |
           cargo install anchor-cli \
             --git https://github.com/coral-xyz/anchor \
             --tag v0.32.1 \
@@ -29,11 +31,8 @@ jobs:
             --force \
             --root $HOME/.local
 
-          # Add to PATH
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-          # Verify
-          anchor --version  # should print anchor-cli 0.32.1
+          anchor --version
       - name: Install Agave 3.0.10
         run: sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.10/install)"
       - name: Add Agave to PATH
