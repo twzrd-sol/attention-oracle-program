@@ -6,7 +6,7 @@
 
 ## 1. High-Level Overview
 
-The Attention Oracle is a **Verifiable Distribution Protocol**. Off-chain aggregators measure attention (views, chats, interactions) and publish Merkle roots on-chain. Users then claim tokens (CCM) or on-chain reputation (Passports) trustlessly.
+The Attention Oracle is a **Verifiable Distribution Protocol**. Off-chain aggregators measure attention (views, chats, interactions) and publish Merkle roots on-chain. Users then make verifiable on-chain claims against these published commitments; no trusted third party is required to validate claim inclusion or settlement.
 
 ### Canonical Flow (Production)
 
@@ -248,10 +248,15 @@ The CI pipeline builds and verifies with the versions above; use these to reprod
 
 ## 9. Threat Model & Assumptions
 
+- Trust boundary: trustless with respect to inclusion/claim correctness once a Merkle root is published; trust‑minimized with respect to how off‑chain events are measured and aggregated.
 - Off‑chain aggregator is trusted to compute correct Merkle roots; on‑chain verification prevents out‑of‑set claims but cannot validate off‑chain event semantics.
 - Replay resistance via per‑slot bitmaps; double‑claims are rejected when the bit is already set.
 - Channel identifiers are normalized to ASCII lowercase before deriving `streamer_key`.
 - Program can be paused via `ProtocolState.paused` to stop claims during incidents.
+
+IP disclosure note: This document intentionally omits off‑chain scoring heuristics, data sources, thresholds, and infrastructure topology. Only the on‑chain interfaces and guarantees are described.
+
+Hardening options (future work): multiple authorized publishers, quorum commitments, and challenge windows to further reduce reliance on any single aggregator.
 
 ---
 
