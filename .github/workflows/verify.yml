@@ -59,7 +59,7 @@ jobs:
           ANCHOR_WALLET: ${{ secrets.MAINNET_UPGRADE_KEY }}
         run: |
           anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop \
-            --provider.cluster mainnet-beta \
+            --provider.cluster mainnet \
             --repo-url https://github.com/twzrd-sol/attention-oracle-program \
             --program-name attention_oracle_program \
             --commit-hash ${{ github.sha }}
