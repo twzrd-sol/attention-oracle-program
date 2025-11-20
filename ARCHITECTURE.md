@@ -226,7 +226,7 @@ The CI pipeline builds and verifies with the versions above; use these to reprod
 ## 8. Instruction Matrix (Auth, Accounts, Constraints)
 
 - set_channel_merkle_root
-  - Signers: `update_authority` (must equal `protocol_state.admin` or `protocol_state.publisher`).
+  - Signers: `payer` (must equal `protocol_state.admin` or `protocol_state.publisher`).
   - Accounts: `protocol_state` (mint‑keyed PDA), `channel_state` (ring buffer PDA), `system_program`.
   - Constraints: epoch monotonic per slot; `streamer_key` derived from `channel`; creates `channel_state` if missing.
 
@@ -236,7 +236,7 @@ The CI pipeline builds and verifies with the versions above; use these to reprod
   - Constraints: protocol not paused; slot = `epoch % CHANNEL_RING_SLOTS`; `index` in range; bitmap bit must be clear; Merkle proof over sorted Keccak pairs.
 
 - transfer_hook (Token‑2022)
-  - Signers: none (hook context).
+  - Signers: payer (required by account struct, unused in hook logic).
   - Accounts: Token‑2022 program + mint with TransferHook and TransferFeeConfig; remaining accounts may include `PassportRegistry` for fee multipliers.
   - Behavior: computes treasury/creator fee shares; emits `TransferFeeEvent`; fee withholding handled by the mint’s extension.
 
