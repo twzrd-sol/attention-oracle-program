@@ -46,30 +46,28 @@ jobs:
         working-directory: programs/token_2022
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Verifiable build (Anchor Docker - deterministic)
-        run: anchor build --verifiable
-        env:
-          ANCHOR_VERSION: 0.32.1
+      - name: Build program (deterministic cargo build-sbf)
+        working-directory: programs/token_2022
+        run: cargo build-sbf --sbf-out-dir target/deploy
 
-      - name: Verify on-chain hash (PERMANENT CRYPTOGRAPHIC LOCK)
+      - name: Verify on-chain hash (PERMANENT LOCK)
         run: |
           echo "=== Downloading on-chain program ==="
           solana program dump GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop on-chain.so --url mainnet-beta
 
-          echo "=== Computing hashes (trimming on-chain padding) ==="
-          LOCAL_SIZE=$(stat -c%s target/verifiable/token_2022.so)
-          VERIFIABLE_HASH=$(sha256sum target/verifiable/token_2022.so | cut -d' ' -f1)
+          echo "=== Computing hashes (trimming on-chain account padding) ==="
+          LOCAL_HASH=$(sha256sum programs/token_2022/target/deploy/token_2022.so | cut -d' ' -f1)
+          LOCAL_SIZE=$(stat -c%s programs/token_2022/target/deploy/token_2022.so)
           ON_CHAIN_HASH=$(head -c "$LOCAL_SIZE" on-chain.so | sha256sum | cut -d' ' -f1)
 
-          echo "Verifiable build: $VERIFIABLE_HASH ($LOCAL_SIZE bytes)"
-          echo "On-chain (trimmed): $ON_CHAIN_HASH (trimmed to $LOCAL_SIZE bytes)"
+          echo "Local build (cargo build-sbf): $LOCAL_HASH ($LOCAL_SIZE bytes)"
+          echo "On-chain (trimmed):             $ON_CHAIN_HASH"
 
-          if [ "$VERIFIABLE_HASH" = "$ON_CHAIN_HASH" ]; then
-            echo "✅ VERIFIED: On-chain program cryptographically matches repository"
-            echo "   Anchor 0.32.1 deterministic Docker build = immutable proof"
-            echo "   No hash drift possible. Machine sovereign."
+          if [ "$LOCAL_HASH" = "$ON_CHAIN_HASH" ]; then
+            echo "✅ VERIFIED: On-chain matches repository (Solana 3.0.10 + Rust 1.91.1)"
+            echo "   Build command: cargo build-sbf"
+            echo "   Toolchain locked. No hash drift possible."
           else
-            echo "❌ VERIFICATION FAILED: Hash mismatch"
-            echo "   This means deployed binary ≠ source code"
+            echo "❌ VERIFICATION FAILED: On-chain ≠ repository"
             exit 1
           fi
