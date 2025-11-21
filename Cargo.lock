@@ -306,6 +306,8 @@ dependencies = [
  "mpl-bubblegum",
  "sha3",
  "solana-security-txt",
+ "spl-tlv-account-resolution 0.9.0",
+ "spl-transfer-hook-interface 0.9.0",
 ]
 
 [[package]]
@@ -2491,6 +2493,19 @@ dependencies = [
 
 [[package]]
 name = "spl-program-error"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d39b5186f42b2b50168029d81e58e800b690877ef0b30580d107659250da1d1"
+dependencies = [
+ "num-derive 0.4.2",
+ "num-traits",
+ "solana-program",
+ "spl-program-error-derive 0.4.1",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "spl-program-error"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9cdebc8b42553070b75aa5106f071fef2eb798c64a7ec63375da4b1f058688c6"
@@ -2500,8 +2515,20 @@ dependencies = [
  "solana-decode-error",
  "solana-msg",
  "solana-program-error",
- "spl-program-error-derive",
+ "spl-program-error-derive 0.5.0",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "spl-program-error-derive"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6d375dd76c517836353e093c2dbb490938ff72821ab568b545fd30ab3256b3e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "sha2 0.10.9",
+ "syn 2.0.110",
 ]
 
 [[package]]
@@ -2514,6 +2541,28 @@ dependencies = [
  "quote",
  "sha2 0.10.9",
  "syn 2.0.110",
+]
+
+[[package]]
+name = "spl-tlv-account-resolution"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd99ff1e9ed2ab86e3fd582850d47a739fec1be9f4661cba1782d3a0f26805f3"
+dependencies = [
+ "bytemuck",
+ "num-derive 0.4.2",
+ "num-traits",
+ "solana-account-info",
+ "solana-decode-error",
+ "solana-instruction",
+ "solana-msg",
+ "solana-program-error",
+ "solana-pubkey",
+ "spl-discriminator",
+ "spl-pod",
+ "spl-program-error 0.6.0",
+ "spl-type-length-value 0.7.0",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2533,8 +2582,8 @@ dependencies = [
  "solana-pubkey",
  "spl-discriminator",
  "spl-pod",
- "spl-program-error",
- "spl-type-length-value",
+ "spl-program-error 0.7.0",
+ "spl-type-length-value 0.8.0",
  "thiserror 2.0.17",
 ]
 
@@ -2605,8 +2654,8 @@ dependencies = [
  "spl-token-confidential-transfer-proof-generation",
  "spl-token-group-interface",
  "spl-token-metadata-interface",
- "spl-transfer-hook-interface",
- "spl-type-length-value",
+ "spl-transfer-hook-interface 0.10.0",
+ "spl-type-length-value 0.8.0",
  "thiserror 2.0.17",
 ]
 
@@ -2689,8 +2738,33 @@ dependencies = [
  "solana-pubkey",
  "spl-discriminator",
  "spl-pod",
- "spl-type-length-value",
+ "spl-type-length-value 0.8.0",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "spl-transfer-hook-interface"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aa7503d52107c33c88e845e1351565050362c2314036ddf19a36cd25137c043"
+dependencies = [
+ "arrayref",
+ "bytemuck",
+ "num-derive 0.4.2",
+ "num-traits",
+ "solana-account-info",
+ "solana-cpi",
+ "solana-decode-error",
+ "solana-instruction",
+ "solana-msg",
+ "solana-program-error",
+ "solana-pubkey",
+ "spl-discriminator",
+ "spl-pod",
+ "spl-program-error 0.6.0",
+ "spl-tlv-account-resolution 0.9.0",
+ "spl-type-length-value 0.7.0",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2712,10 +2786,28 @@ dependencies = [
  "solana-pubkey",
  "spl-discriminator",
  "spl-pod",
- "spl-program-error",
- "spl-tlv-account-resolution",
- "spl-type-length-value",
+ "spl-program-error 0.7.0",
+ "spl-tlv-account-resolution 0.10.0",
+ "spl-type-length-value 0.8.0",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "spl-type-length-value"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba70ef09b13af616a4c987797870122863cba03acc4284f226a4473b043923f9"
+dependencies = [
+ "bytemuck",
+ "num-derive 0.4.2",
+ "num-traits",
+ "solana-account-info",
+ "solana-decode-error",
+ "solana-msg",
+ "solana-program-error",
+ "spl-discriminator",
+ "spl-pod",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
