@@ -61,6 +61,13 @@ pub mod token_2022 {
         instructions::initialize_mint::handler(ctx, fee_basis_points, max_fee)
     }
 
+    /// Initialize ExtraAccountMetaList for transfer hook
+    pub fn initialize_extra_account_meta_list(
+        ctx: Context<InitializeExtraAccountMetaList>,
+    ) -> Result<()> {
+        instructions::extra_account_metas::initialize_extra_account_meta_list(ctx)
+    }
+
     // -------------------------------------------------------------------------
     // Canonical Claims (Ring Buffer)
     // -------------------------------------------------------------------------
