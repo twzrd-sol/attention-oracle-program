@@ -22,8 +22,14 @@ jobs:
             echo "No pull_request base SHA; falling back to HEAD-only check"
             CHANGED_FILES=$(git ls-files)
           else
-            git fetch --no-tags --prune origin "+refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}"
-            CHANGED_FILES=$(git diff --name-only "$BASE_SHA"..."$HEAD_SHA" || true)
+            # Use merge-base to be robust even if the base branch was deleted post-merge
+            MB=$(git merge-base "$HEAD_SHA" "$BASE_SHA" 2>/dev/null || echo "")
+            if [ -n "$MB" ]; then
+              CHANGED_FILES=$(git diff --name-only "$MB"..."$HEAD_SHA" || true)
+            else
+              # Fallback: compare against the immediate parent of HEAD
+              CHANGED_FILES=$(git diff --name-only "${HEAD_SHA}^"..."$HEAD_SHA" || git ls-files)
+            fi
           fi
 
           # 1) Allow only certain subtrees under programs/ and oracles/ for CHANGED files
