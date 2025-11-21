@@ -25,6 +25,13 @@ jobs:
           echo "event=${{ github.event_name }}"
           echo "github.ref=${{ github.ref }}"
           echo "inputs.ref=${{ github.event.inputs.ref }}"
+      - name: Validate ref (must be a tag)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          case "${{ github.event.inputs.ref }}" in
+            refs/tags/v*) echo "OK: tag ref" ;;
+            *) echo "Expected inputs.ref like refs/tags/v1.x.y" >&2; exit 1 ;;
+          esac
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
