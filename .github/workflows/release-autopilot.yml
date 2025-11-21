@@ -72,7 +72,7 @@ jobs:
         working-directory: programs
         run: |
           export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-          cargo build-sbf --release
+          cargo build-sbf --sbf-out-dir target/deploy
           ls -lh target/deploy/token_2022.so
 
       - name: Compute binary hash
