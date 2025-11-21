@@ -102,3 +102,47 @@ jobs:
             echo "❌ VERIFICATION FAILED: On-chain ≠ repository"
             exit 1
           fi
+
+      - name: Upload verification artifacts (binaries + hashes)
+        if: always()
+        run: |
+          # Robust collection that tolerates missing files
+          set -u
+          LOCAL_PATH=programs/token_2022/target/deploy/token_2022.so
+          set +e
+          LOCAL_SIZE=$(stat -c%s "$LOCAL_PATH")
+          STAT_RC=$?
+          LOCAL_HASH=$(sha256sum "$LOCAL_PATH" | cut -d' ' -f1)
+          HASH_RC=$?
+          ONCHAIN_FULL=$(sha256sum on-chain.so | cut -d' ' -f1)
+          FULL_RC=$?
+          if [ "$STAT_RC" -ne 0 ]; then LOCAL_SIZE=0; fi
+          if [ "$HASH_RC" -ne 0 ]; then LOCAL_HASH=unknown; fi
+          if [ "$FULL_RC" -ne 0 ]; then ONCHAIN_FULL=unknown; fi
+          if [ "$LOCAL_SIZE" -gt 0 ] 2>/dev/null; then
+            ONCHAIN_TRIMMED=$(head -c "$LOCAL_SIZE" on-chain.so | sha256sum | cut -d' ' -f1)
+            if [ "$?" -ne 0 ]; then ONCHAIN_TRIMMED=unknown; fi
+          else
+            ONCHAIN_TRIMMED=unknown
+          fi
+          set -e
+          mkdir -p verify-artifacts
+          cp -f "$LOCAL_PATH" verify-artifacts/local-token_2022.so || true
+          cp -f on-chain.so verify-artifacts/on-chain.so || true
+          cat > verify-artifacts/verification-hashes.txt << EOF
+          local_size=$LOCAL_SIZE
+          local_hash=$LOCAL_HASH
+          onchain_full_hash=$ONCHAIN_FULL
+          onchain_trimmed_hash=$ONCHAIN_TRIMMED
+          EOF
+          {
+            anchor --version || true
+            solana --version || true
+            rustc --version || true
+          } > verify-artifacts/tool-versions.txt
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-artifacts
+          path: verify-artifacts
