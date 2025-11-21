@@ -80,35 +80,35 @@ jobs:
           mkdir -p programs/token_2022/target/deploy
           cargo build-sbf --sbf-out-dir programs/token_2022/target/deploy -- -p attention-oracle-token-2022
 
-      - name: Verify on-chain hash (PERMANENT LOCK)
+      - name: Anchor native verification (authoritative)
         run: |
-          echo "=== Downloading on-chain program ==="
-          solana program dump GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop on-chain.so --url mainnet-beta
-
-          echo "=== Computing hashes (trimming on-chain account padding) ==="
-          LOCAL_PATH=programs/token_2022/target/deploy/token_2022.so
-          LOCAL_HASH=$(sha256sum "$LOCAL_PATH" | cut -d' ' -f1)
-          LOCAL_SIZE=$(stat -c%s "$LOCAL_PATH")
-          ON_CHAIN_HASH=$(head -c "$LOCAL_SIZE" on-chain.so | sha256sum | cut -d' ' -f1)
-
-          echo "Local build (cargo build-sbf): $LOCAL_HASH ($LOCAL_SIZE bytes)"
-          echo "On-chain (trimmed):             $ON_CHAIN_HASH"
-
-          if [ "$LOCAL_HASH" = "$ON_CHAIN_HASH" ]; then
-            echo "✅ VERIFIED: On-chain matches repository (Solana 3.0.10 + Rust 1.91.1)"
-            echo "   Build command: cargo build-sbf"
-            echo "   Toolchain locked. No hash drift possible."
-          else
-            echo "❌ VERIFICATION FAILED: On-chain ≠ repository"
-            exit 1
-          fi
+          # Use Anchor 0.32.1's native verification, which standardizes the build in Docker
+          # and compares against on-chain for the given Program ID.
+          anchor verify -u m -p token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+      - name: Build verifiable artifact for summary (best-effort)
+        if: always()
+        continue-on-error: true
+        run: |
+          # Produce target/verifiable/token_2022.so for consistent hashing in summary
+          anchor build --verifiable --arch sbf || true
+      - name: Dump on-chain program (for artifacts/summary)
+        if: always()
+        run: |
+          solana program dump GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop on-chain.so --url mainnet-beta || true
 
       - name: Upload verification artifacts (binaries + hashes)
         if: always()
         run: |
           # Robust collection that tolerates missing files
           set -u
-          LOCAL_PATH=programs/token_2022/target/deploy/token_2022.so
+          # Prefer verifiable artifact if present, else fallback to prior build output
+          if [ -f target/verifiable/token_2022.so ]; then
+            LOCAL_PATH=target/verifiable/token_2022.so
+          elif [ -f programs/token_2022/target/deploy/token_2022.so ]; then
+            LOCAL_PATH=programs/token_2022/target/deploy/token_2022.so
+          else
+            LOCAL_PATH=$(find target -name token_2022.so -type f | head -n1 || echo "")
+          fi
           set +e
           LOCAL_SIZE=$(stat -c%s "$LOCAL_PATH")
           STAT_RC=$?
