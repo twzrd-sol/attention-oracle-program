@@ -1,5 +1,8 @@
 [workspace]
-members = ["programs/token_2022"]
+members = [
+  "programs/token_2022",
+  "programs/attention_oracle_program"
+]
 
 [features]
 seeds = false

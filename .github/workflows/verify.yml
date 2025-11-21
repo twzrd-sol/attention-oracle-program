@@ -82,15 +82,14 @@ jobs:
 
       - name: Anchor native verification (authoritative)
         run: |
-          # Use Anchor 0.32.1's native verification, which standardizes the build in Docker
-          # and compares against on-chain for the given Program ID.
-          anchor verify -u m -p token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+          # Use Anchor 0.32.1's native verification for the Enforcer program
+          anchor verify -u m -p attention_oracle_program GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
       - name: Build verifiable artifact for summary (best-effort)
         if: always()
         continue-on-error: true
         run: |
-          # Produce target/verifiable/token_2022.so for consistent hashing in summary
-          anchor build --verifiable --arch sbf || true
+          # Produce target/verifiable/<lib>.so for consistent hashing in summary
+          anchor build --verifiable --arch sbf -p attention_oracle_program || true
       - name: Dump on-chain program (for artifacts/summary)
         if: always()
         run: |
@@ -102,12 +101,12 @@ jobs:
           # Robust collection that tolerates missing files
           set -u
           # Prefer verifiable artifact if present, else fallback to prior build output
-          if [ -f target/verifiable/token_2022.so ]; then
-            LOCAL_PATH=target/verifiable/token_2022.so
-          elif [ -f programs/token_2022/target/deploy/token_2022.so ]; then
-            LOCAL_PATH=programs/token_2022/target/deploy/token_2022.so
+          if [ -f target/verifiable/attention_oracle_program.so ]; then
+            LOCAL_PATH=target/verifiable/attention_oracle_program.so
+          elif [ -f programs/attention_oracle_program/target/deploy/attention_oracle_program.so ]; then
+            LOCAL_PATH=programs/attention_oracle_program/target/deploy/attention_oracle_program.so
           else
-            LOCAL_PATH=$(find target -name token_2022.so -type f | head -n1 || echo "")
+            LOCAL_PATH=$(find target -name attention_oracle_program.so -type f | head -n1 || echo "")
           fi
           set +e
           LOCAL_SIZE=$(stat -c%s "$LOCAL_PATH")
