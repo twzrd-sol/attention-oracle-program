@@ -102,3 +102,33 @@ jobs:
             echo "❌ VERIFICATION FAILED: On-chain ≠ repository"
             exit 1
           fi
+
+      - name: Upload verification artifacts (binaries + hashes)
+        if: always()
+        run: |
+          set -euo pipefail
+          LOCAL_PATH=programs/token_2022/target/deploy/token_2022.so
+          LOCAL_SIZE=$(stat -c%s "$LOCAL_PATH" || echo 0)
+          LOCAL_HASH=$(sha256sum "$LOCAL_PATH" | cut -d' ' -f1 || echo unknown)
+          ONCHAIN_FULL=$(sha256sum on-chain.so | cut -d' ' -f1 || echo unknown)
+          ONCHAIN_TRIMMED=$( (head -c "$LOCAL_SIZE" on-chain.so | sha256sum | cut -d' ' -f1) 2>/dev/null || echo unknown )
+          mkdir -p verify-artifacts
+          cp -f "$LOCAL_PATH" verify-artifacts/local-token_2022.so || true
+          cp -f on-chain.so verify-artifacts/on-chain.so || true
+          {
+            echo "local_size=$LOCAL_SIZE";
+            echo "local_hash=$LOCAL_HASH";
+            echo "onchain_full_hash=$ONCHAIN_FULL";
+            echo "onchain_trimmed_hash=$ONCHAIN_TRIMMED";
+          } > verify-artifacts/verification-hashes.txt
+          {
+            anchor --version || true
+            solana --version || true
+            rustc --version || true
+          } > verify-artifacts/tool-versions.txt
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-artifacts
+          path: verify-artifacts
