@@ -83,9 +83,14 @@ jobs:
       - name: Anchor native verification (authoritative)
         working-directory: programs/token_2022
         run: |
-          # Use Anchor 0.32.1's native verification from the program directory
-          # against mainnet for the deployed Program ID.
-          anchor verify --provider.cluster mainnet --current-dir --program-name token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+          # Use Anchor 0.32.1's native verification against the public repo + commit
+          COMMIT=$(git rev-parse HEAD)
+          anchor verify \
+            --provider.cluster mainnet \
+            --repo-url https://github.com/twzrd-sol/attention-oracle-program \
+            --commit-hash "$COMMIT" \
+            --program-name token_2022 \
+            GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
       - name: Build verifiable artifact for summary (best-effort)
         if: always()
         continue-on-error: true
