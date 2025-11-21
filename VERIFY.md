@@ -45,8 +45,7 @@ solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-b
 # Get your local build hash
 sha256sum target/deploy/token_2022.so
 
-# v1.1.0 Expected hash: 97f9880ddf21ba9d1b50c45ed7717e7bf646f23a203bf10392329ca8e416f1cf
-# v1.2.0 Expected hash: 357047e93929b6ad8f6879575b0633d2ae97d7ec78475a48c73000d6156b8a27 (AMM-compatible)
+# v1.2.1 Expected hash (Docker build, trimmed to 534224 bytes): 8e60919edb1792fa496c20c871c10f9295334bf2b3762d482fd09078c67a0281
 ```
 
 ### 5. Verify on Solscan
@@ -54,8 +53,8 @@ Navigate to: https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dC
 
 Look for the "Verified" badge and matching source code link.
 
-**Verified Hash (v1.1.0):** `97f9880ddf21ba9d1b50c45ed7717e7bf646f23a203bf10392329ca8e416f1cf`
-**Verified Hash (v1.2.0 - AMM Compatible):** `357047e93929b6ad8f6879575b0633d2ae97d7ec78475a48c73000d6156b8a27`
+**Verified Hash (v1.2.1 - Docker Build, AMM Compatible):** `8e60919edb1792fa496c20c871c10f9295334bf2b3762d482fd09078c67a0281`
+**Deployed:** Slot 381553914, November 21, 2025
 
 ### 6. Optional: Cryptographic Proof via `solana-verify`
 ```bash
