@@ -222,7 +222,7 @@ pub struct EpochState {
     pub root: [u8; 32],
     pub claim_count: u32,
     pub mint: Pubkey,
-    pub streamer: Pubkey,
+    pub subject: Pubkey,
     pub treasury: Pubkey,
     pub timestamp: i64,
     pub bump: u8,
@@ -238,7 +238,7 @@ impl EpochState {
         32 + // root
         4 + // claim_count
         32 + // mint
-        32 + // streamer
+        32 + // subject
         32 + // treasury
         8 + // timestamp
         1 + // bump
@@ -288,7 +288,7 @@ pub struct ChannelState {
     pub version: u8,
     pub bump: u8,
     pub mint: Pubkey,
-    pub streamer: Pubkey,
+    pub subject: Pubkey,
     pub _padding: [u8; 6], // Explicit padding for u64 alignment
     pub latest_epoch: u64,
     pub slots: [ChannelSlot; CHANNEL_RING_SLOTS],

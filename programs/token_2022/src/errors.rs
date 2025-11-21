@@ -77,7 +77,7 @@ pub enum OracleError {
     #[msg("Missing required bubblegum accounts for cNFT minting")]
     MissingBubblegumAccounts,
 
-    #[msg("Invalid streamer key")]
+    #[msg("Invalid subject key")]
     InvalidStreamer,
 
     #[msg("Invalid epoch")]
