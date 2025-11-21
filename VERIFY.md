@@ -15,7 +15,7 @@ Anyone can reproduce our build and verify it matches on-chain:
 ```bash
 git clone https://github.com/twzrd-sol/attention-oracle-program.git
 cd attention-oracle-program
-git checkout v1.2.0  # Use the specific release tag (latest: v1.2.0)
+git checkout v1.1.0  # Use the specific release tag
 ```
 
 ### 2. Install Dependencies
@@ -39,47 +39,32 @@ anchor build --verifiable --arch sbf
 
 ### 4. Compare Hash
 ```bash
+# Get on-chain hash
+solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-beta
+
 # Get your local build hash
 sha256sum target/deploy/token_2022.so
 
-# Get on-chain program and trim to actual program size
-LOCAL_SIZE=$(stat -c%s target/deploy/token_2022.so)
-solana program dump GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop on-chain.so --url mainnet-beta
-head -c "$LOCAL_SIZE" on-chain.so | sha256sum
-
-# v1.2.0 Expected hash (trimmed): 357047e93929b6ad8f6879575b0633d2ae97d7ec78475a48c73000d6156b8a27
+# v1.1.0 Expected hash: 97f9880ddf21ba9d1b50c45ed7717e7bf646f23a203bf10392329ca8e416f1cf
+# v1.2.0 Expected hash: 357047e93929b6ad8f6879575b0633d2ae97d7ec78475a48c73000d6156b8a27 (AMM-compatible)
 ```
-
-**Note:** On-chain accounts are padded with zeros to their account size. We trim to the actual program size (510144 bytes) before comparing hashes. Solscan and other verification tools handle this trimming automatically.
 
 ### 5. Verify on Solscan
 Navigate to: https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 
 Look for the "Verified" badge and matching source code link.
 
-## Verified Hashes by Version
+**Verified Hash (v1.1.0):** `97f9880ddf21ba9d1b50c45ed7717e7bf646f23a203bf10392329ca8e416f1cf`
+**Verified Hash (v1.2.0 - AMM Compatible):** `357047e93929b6ad8f6879575b0633d2ae97d7ec78475a48c73000d6156b8a27`
 
-| Version | Hash (Trimmed) | Features |
-|---------|---------------|----------|
-| **v1.2.0** | `357047e93929b6ad8f6879575b0633d2ae97d7ec78475a48c73000d6156b8a27` | AMM-compatible, Audit Mode |
-| v1.1.1 | `e6bda5c18d1ac7efbec7f7761d48f326ea73fcbe3753873c4de3c5f19a017322` | Production hooks |
-| v1.1.0 | `647b8bd464d3837f03f0e68b4823cfc719e1e4793c3c72c7d5cdc09bbf816cb2` | Initial verified release |
-
-**Current on-chain:** v1.2.0 (deployed Nov 21, 2025)
-
-## Understanding On-Chain vs Local Hashes
-
-When comparing hashes, it's important to understand how Solana stores programs:
-
-- **Local build** (`target/deploy/token_2022.so`): 510144 bytes - the actual compiled program
-- **On-chain account**: 830936 bytes - includes padding (zero-filled slack space)
-
-When you dump the on-chain program with `solana program dump`, you get the entire account including padding. To verify it matches the local build, you must:
-
-1. Compare only the first 510144 bytes of the on-chain dump
-2. Or rebuild locally and compare to the trimmed on-chain binary
-
-This is why verification tools like Solscan trim before comparing. The hashes will only match when both binaries are the same size.
+### 6. Optional: Cryptographic Proof via `solana-verify`
+```bash
+solana-verify verify -u m \
+  --program-id GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop \
+  --commit v1.1.0 \
+  twzrd-sol/attention-oracle-program
+```
+The command above fetches this repository at `v1.1.0`, performs the deterministic build in a containerized environment, and compares the resulting ELF hash with the one deployed on mainnet.
 
 ## Build Environment
 
@@ -108,11 +93,10 @@ Just deterministic builds and cryptographic proofs.
 ## Questions?
 
 If hashes don't match:
-1. Ensure you're on the correct git tag (v1.2.0 for latest)
+1. Ensure you're on the correct git tag
 2. Check tool versions match exactly
 3. Try `cargo clean && anchor clean` before building
-4. Make sure to trim on-chain binary to program size before comparing
-5. Open an issue with your build output
+4. Open an issue with your build output
 
 ---
 

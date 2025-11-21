@@ -6,7 +6,7 @@
 
 ## 1. High-Level Overview
 
-The Attention Oracle is a **Verifiable Distribution Protocol**. Off-chain aggregators measure and aggregate signals (events, interactions, metrics) and publish Merkle roots on-chain. Users then claim tokens (CCM) or on-chain reputation (Passports) trustlessly.
+The Attention Oracle is a **Verifiable Distribution Protocol**. Off-chain aggregators measure attention (views, chats, interactions) and publish Merkle roots on-chain. Users then make verifiable on-chain claims against these published commitments; no trusted third party is required to validate claim inclusion or settlement.
 
 ### Canonical Flow (Production)
 
@@ -33,7 +33,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 ]`
 - **Subject ID:**
   - Derived from a human-readable channel identifier.
-  - On-chain: `keccak256("channel:" || channel.to_lowercase_ascii())`.
+  - On-chain: `keccak256("channel:" || channel.to_ascii_lowercase())`.
 - **Why:** Lets users claim from recent epochs even as new epochs are published, without a new account per epoch.
 
 ### 🛂 PassportRegistry (Identity)
@@ -44,7 +44,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
   user_hash,
 ]`
 - **Fields:** `owner`, `user_hash`, `tier`, `score`, `epoch_count`, `weighted_presence`, `badges`, `tree`, `leaf_hash`, `updated_at`, `bump`.
-- **Usage:** Read by `transfer_hook` to apply tier-based fee multipliers.
+- **Usage:** Read by `transfer_hook` to apply creator-tier multipliers.
 
 ### ⚙️ ProtocolState
 
@@ -57,7 +57,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 ### 💸 FeeConfig
 
 - **Purpose:** Controls transfer-fee behavior and tier multipliers.
-- **Fields:** `basis_points`, `max_fee`, `drip_threshold`, `treasury_fee_bps`, `entity_fee_bps`, `tier_multipliers: [u32; 6]`, `bump`.
+- **Fields:** `basis_points`, `max_fee`, `drip_threshold`, `treasury_fee_bps`, `creator_fee_bps`, `tier_multipliers: [u32; 6]`, `bump`.
 - **Tier Multipliers:** Fixed-point with denominator 10_000 (4 decimals), mapping passport tiers to fee multipliers.
 
 ---
@@ -105,15 +105,15 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 
 - **Role:** Dynamic fee allocation based on passport tier. Registered as a Token-2022 transfer hook.
 - **Behavior:**
-  - Computes base treasury + entity fee BPS for a given transfer amount.
+  - Computes base treasury + creator BPS for a given transfer amount.
   - Scans `remaining_accounts` for a `PassportRegistry` matching the transfer owner.
-  - Applies tier multiplier (0.0–1.0 in fixed point) to compute entity fee share.
+  - Applies tier multiplier (0.0–1.0 in fixed point) to compute creator share.
   - Emits `TransferFeeEvent` (no direct token movement; Token-2022 handles withheld fees).
 
 ### Passports (`mint_passport_open`, `upgrade_passport_open`, etc.)
 
 - Mint, upgrade, reissue, and revoke on-chain reputation tied to `user_hash`.
-- Used by transfer hooks and off-chain systems as a durable measure of entity participation and trust.
+- Used by transfer hooks and off-chain systems as a durable measure of fandom/engagement.
 
 ---
 
@@ -142,9 +142,21 @@ By default, `legacy` and `demo` are **off**, keeping the IDL and binary focused 
 
 ---
 
-## 5. Solana Kit / Frontend Integration
+## 5. Frontend Integration
 
-### Subject ID Derivation (TypeScript)
+### Subject ID Derivation
+
+The protocol derives a deterministic `subject_id` from a human-readable channel identifier using Keccak-256:
+
+**On-chain (Rust):**
+```rust
+// programs/token_2022/src/state/merkle_ring.rs
+let preimage = format!("channel:{}", channel.to_ascii_lowercase());
+let hash = keccak256(preimage.as_bytes());
+let subject_id = Pubkey::from(hash.0);
+```
+
+**Client-side (TypeScript - Web3.js v1):**
 
 ```ts
 import { keccak_256 } from "@noble/hashes/sha3";
@@ -154,24 +166,34 @@ export const PROGRAM_ID = new PublicKey(
   "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 );
 
-export const getSubjectId = (channel: string): PublicKey => {
+export function getSubjectId(channel: string): PublicKey {
   const lower = channel.toLowerCase();
   const preimage = Buffer.from(`channel:${lower}`);
-  const hash = keccak_256(preimage); // 32 bytes
+  const hash = keccak_256(preimage); // Returns 32-byte Uint8Array
   return new PublicKey(hash);
-};
+}
 
-export const getChannelStatePda = (
+export function getChannelStatePda(
   mint: PublicKey,
   channel: string
-): PublicKey => {
+): [PublicKey, number] {
   const subjectId = getSubjectId(channel);
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("channel_state"), mint.toBuffer(), subjectId.toBuffer()],
+    [
+      Buffer.from("channel_state"),
+      mint.toBuffer(),
+      subjectId.toBuffer()
+    ],
     PROGRAM_ID
-  )[0];
-};
+  );
+}
 ```
+
+**Integration Notes:**
+- Channel identifiers are normalized to ASCII lowercase before hashing
+- The hash output (32 bytes) is directly used as a Solana public key
+- PDA seeds: `["channel_state", mint_pubkey, subject_id]`
+- See `VERIFY.md` for reproducible builds and IDL extraction
 
 ### Project Layout (example)
 
@@ -206,7 +228,68 @@ anchor clean && anchor build
 
 # Verifier environment (e.g., GitHub Actions runner):
 # Compare on-chain program with this source using Anchor's verifier
-anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --current-dir
+anchor verify GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --current-dir .
 ```
 
 A successful verification indicates the bytecode on-chain is compiled from this exact source, which is what explorers and auditors rely on when marking a program as "Verified".
+
+---
+
+## 7. Verified Toolchain
+
+- Anchor: 0.32.1 (via `avm`)
+- Rust: 1.91.x (CI uses 1.91.1)
+- Solana/Agave: 3.0.x (CI installs 3.0.10)
+
+The CI pipeline builds and verifies with the versions above; use these to reproduce the green check locally.
+
+---
+
+## 8. Instruction Matrix (Auth, Accounts, Constraints)
+
+- set_channel_merkle_root
+  - Signers: `payer` (must equal `protocol_state.admin` or `protocol_state.publisher`).
+  - Accounts: `protocol_state` (mint‑keyed PDA), `channel_state` (ring buffer PDA), `system_program`.
+  - Constraints: epoch monotonic per slot; `subject_id` derived from `channel`; creates `channel_state` if missing.
+
+- claim_channel_open / claim_channel_open_with_receipt
+  - Signers: `claimer`.
+  - Accounts: `protocol_state`, `channel_state`, `mint`, `treasury_ata` (PDA), `claimer_ata` (init_if_needed). Optional Bubblegum accounts when `mint_receipt = true`.
+  - Constraints: protocol not paused; slot = `epoch % CHANNEL_RING_SLOTS`; `index` in range; bitmap bit must be clear; Merkle proof over sorted Keccak pairs.
+
+- transfer_hook (Token‑2022)
+  - Signers: payer (required by account struct, unused in hook logic).
+  - Accounts: Token‑2022 program + mint with TransferHook and TransferFeeConfig; remaining accounts may include `PassportRegistry` for fee multipliers.
+  - Behavior: computes treasury/creator fee shares; emits `TransferFeeEvent`; fee withholding handled by the mint’s extension.
+
+- Admin updates (e.g., `update_fee_config[_open]`, `update_tier_multipliers`, `harvest_fees`)
+  - Signers: admin (and/or designated authority as defined on `ProtocolState`).
+  - Constraints: updates validated to remain within configured caps.
+
+---
+
+## 9. Threat Model & Assumptions
+
+- Trust boundary: trustless with respect to inclusion/claim correctness once a Merkle root is published; trust‑minimized with respect to how off‑chain events are measured and aggregated.
+- Off‑chain aggregator is trusted to compute correct Merkle roots; on‑chain verification prevents out‑of‑set claims but cannot validate off‑chain event semantics.
+- Replay resistance via per‑slot bitmaps; double‑claims are rejected when the bit is already set.
+- Channel identifiers are normalized to ASCII lowercase before deriving `subject_id`.
+- Program can be paused via `ProtocolState.paused` to stop claims during incidents.
+
+IP disclosure note: This document intentionally omits off‑chain scoring heuristics, data sources, thresholds, and infrastructure topology. Only the on‑chain interfaces and guarantees are described.
+
+Hardening options (future work): multiple authorized publishers, quorum commitments, and challenge windows to further reduce reliance on any single aggregator.
+
+---
+
+## 10. Constants & Limits (Reference)
+
+- Ring buffer slots: `CHANNEL_RING_SLOTS = 10`.
+- Max claims per epoch: `CHANNEL_MAX_CLAIMS = 4096` (bitmap size `CHANNEL_BITMAP_BYTES`).
+- Max epoch claims (protocol‑level cap): `MAX_EPOCH_CLAIMS = 1_000_000`.
+- ID length: `MAX_ID_BYTES = 64`.
+- Token‑2022 decimals: `CCM_DECIMALS = 9`.
+- Default transfer fee: `DEFAULT_TRANSFER_FEE_BASIS_POINTS = 10` (0.10%), capped by `MAX_FEE_BASIS_POINTS = 1000` (10%).
+- Tier multipliers (fixed‑point denominator 10_000): `[0, 2000, 4000, 6000, 8000, 10000]`. Tier 0 default = 0% (no verified passport).
+
+Note: CI/artifact paths in examples assume repo root. Workflows may copy artifacts to `dist/` for releases; adjust paths accordingly.
