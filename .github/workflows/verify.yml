@@ -76,7 +76,9 @@ jobs:
       - name: Build program (deterministic cargo build-sbf from workspace root)
         run: |
           # Build from workspace root so workspace release profile applies
-          cargo build-sbf -p attention-oracle-token-2022 --sbf-out-dir programs/token_2022/target/deploy
+          # Pass package selection after "--" to cargo-build-sbf
+          mkdir -p programs/token_2022/target/deploy
+          cargo build-sbf --sbf-out-dir programs/token_2022/target/deploy -- -p attention-oracle-token-2022
 
       - name: Verify on-chain hash (PERMANENT LOCK)
         run: |
