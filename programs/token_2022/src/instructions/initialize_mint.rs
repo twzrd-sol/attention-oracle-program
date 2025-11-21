@@ -1,5 +1,5 @@
 use crate::{
-    constants::{ADMIN_AUTHORITY, PROTOCOL_SEED, TIER_MULTIPLIERS},
+    constants::{ADMIN_AUTHORITY, PROTOCOL_SEED},
     errors::OracleError,
     state::{FeeConfig, ProtocolState},
 };
@@ -67,8 +67,7 @@ pub fn handler(ctx: Context<InitializeMint>, fee_basis_points: u16, max_fee: u64
     fee_cfg.drip_threshold = crate::constants::DRIP_THRESHOLD;
     fee_cfg.treasury_fee_bps = crate::constants::TREASURY_FEE_BASIS_POINTS;
     fee_cfg.creator_fee_bps = crate::constants::CREATOR_FEE_BASIS_POINTS;
-    // Use canonical defaults (Tier 0 = 0%)
-    fee_cfg.tier_multipliers = TIER_MULTIPLIERS;
+    fee_cfg.tier_multipliers = [2000, 4000, 6000, 8000, 10000, 10000]; // 0.2, 0.4, 0.6, 0.8, 1.0, 1.0
     fee_cfg.bump = ctx.bumps.fee_config;
 
     Ok(())
@@ -141,8 +140,7 @@ pub fn handler_open(
     fee_cfg.drip_threshold = crate::constants::DRIP_THRESHOLD;
     fee_cfg.treasury_fee_bps = crate::constants::TREASURY_FEE_BASIS_POINTS;
     fee_cfg.creator_fee_bps = crate::constants::CREATOR_FEE_BASIS_POINTS;
-    // Use canonical defaults (Tier 0 = 0%)
-    fee_cfg.tier_multipliers = TIER_MULTIPLIERS;
+    fee_cfg.tier_multipliers = [2000, 4000, 6000, 8000, 10000, 10000]; // 0.2, 0.4, 0.6, 0.8, 1.0, 1.0
     fee_cfg.bump = ctx.bumps.fee_config;
 
     Ok(())
