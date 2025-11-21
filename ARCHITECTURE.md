@@ -6,7 +6,7 @@
 
 ## 1. High-Level Overview
 
-The Attention Oracle is a **Verifiable Distribution Protocol**. Off-chain aggregators measure attention (views, chats, interactions) and publish Merkle roots on-chain. Users then claim tokens (CCM) or on-chain reputation (Passports) trustlessly.
+The Attention Oracle is a **Verifiable Distribution Protocol**. Off-chain aggregators measure and aggregate signals (events, interactions, metrics) and publish Merkle roots on-chain. Users then claim tokens (CCM) or on-chain reputation (Passports) trustlessly.
 
 ### Canonical Flow (Production)
 
@@ -29,9 +29,9 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 - **Seeds:** `[
   b"channel_state",
   mint.key().as_ref(),
-  streamer_key.as_ref(),
+  subject_id.as_ref(),
 ]`
-- **Streamer Key:**
+- **Subject ID:**
   - Derived from a human-readable channel identifier.
   - On-chain: `keccak256("channel:" || channel.to_lowercase_ascii())`.
 - **Why:** Lets users claim from recent epochs even as new epochs are published, without a new account per epoch.
@@ -44,7 +44,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
   user_hash,
 ]`
 - **Fields:** `owner`, `user_hash`, `tier`, `score`, `epoch_count`, `weighted_presence`, `badges`, `tree`, `leaf_hash`, `updated_at`, `bump`.
-- **Usage:** Read by `transfer_hook` to apply creator-tier multipliers.
+- **Usage:** Read by `transfer_hook` to apply tier-based fee multipliers.
 
 ### ⚙️ ProtocolState
 
@@ -57,7 +57,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 ### 💸 FeeConfig
 
 - **Purpose:** Controls transfer-fee behavior and tier multipliers.
-- **Fields:** `basis_points`, `max_fee`, `drip_threshold`, `treasury_fee_bps`, `creator_fee_bps`, `tier_multipliers: [u32; 6]`, `bump`.
+- **Fields:** `basis_points`, `max_fee`, `drip_threshold`, `treasury_fee_bps`, `entity_fee_bps`, `tier_multipliers: [u32; 6]`, `bump`.
 - **Tier Multipliers:** Fixed-point with denominator 10_000 (4 decimals), mapping passport tiers to fee multipliers.
 
 ---
@@ -73,7 +73,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
   - `channel_state` – zero-copy ring buffer PDA.
 - **Inputs:** `channel: String`, `epoch: u64`, `root: [u8; 32]`.
 - **Behavior:**
-  - Derives `streamer_key` from `channel`.
+  - Derives `subject_id` from `channel`.
   - Creates `ChannelState` account if missing.
   - Enforces monotonic epoch progression per slot.
   - Writes `root` and clears the bitmap for the slot.
@@ -91,7 +91,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 - **Inputs:** `channel`, `epoch`, `index`, `amount`, `id`, `proof`.
 - **Guarantees:**
   - Protocol not paused.
-  - `ChannelState` PDA matches `[CHANNEL_STATE_SEED, mint, streamer_key]`.
+  - `ChannelState` PDA matches `[CHANNEL_STATE_SEED, mint, subject_id]`.
   - Epoch slot matches `epoch`.
   - `index` within bounds and bitmap bit clear (no double-claim).
   - Merkle proof verified using sorted Keccak pairs.
@@ -105,15 +105,15 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 
 - **Role:** Dynamic fee allocation based on passport tier. Registered as a Token-2022 transfer hook.
 - **Behavior:**
-  - Computes base treasury + creator BPS for a given transfer amount.
+  - Computes base treasury + entity fee BPS for a given transfer amount.
   - Scans `remaining_accounts` for a `PassportRegistry` matching the transfer owner.
-  - Applies tier multiplier (0.0–1.0 in fixed point) to compute creator share.
+  - Applies tier multiplier (0.0–1.0 in fixed point) to compute entity fee share.
   - Emits `TransferFeeEvent` (no direct token movement; Token-2022 handles withheld fees).
 
 ### Passports (`mint_passport_open`, `upgrade_passport_open`, etc.)
 
 - Mint, upgrade, reissue, and revoke on-chain reputation tied to `user_hash`.
-- Used by transfer hooks and off-chain systems as a durable measure of fandom/engagement.
+- Used by transfer hooks and off-chain systems as a durable measure of entity participation and trust.
 
 ---
 
@@ -144,7 +144,7 @@ By default, `legacy` and `demo` are **off**, keeping the IDL and binary focused 
 
 ## 5. Solana Kit / Frontend Integration
 
-### Streamer Key Derivation (TypeScript)
+### Subject ID Derivation (TypeScript)
 
 ```ts
 import { keccak_256 } from "@noble/hashes/sha3";
@@ -154,7 +154,7 @@ export const PROGRAM_ID = new PublicKey(
   "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 );
 
-export const getStreamerKey = (channel: string): PublicKey => {
+export const getSubjectId = (channel: string): PublicKey => {
   const lower = channel.toLowerCase();
   const preimage = Buffer.from(`channel:${lower}`);
   const hash = keccak_256(preimage); // 32 bytes
@@ -165,9 +165,9 @@ export const getChannelStatePda = (
   mint: PublicKey,
   channel: string
 ): PublicKey => {
-  const streamerKey = getStreamerKey(channel);
+  const subjectId = getSubjectId(channel);
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("channel_state"), mint.toBuffer(), streamerKey.toBuffer()],
+    [Buffer.from("channel_state"), mint.toBuffer(), subjectId.toBuffer()],
     PROGRAM_ID
   )[0];
 };
