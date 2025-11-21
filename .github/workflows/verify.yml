@@ -155,7 +155,7 @@ jobs:
           echo "## Verify Program Summary" >> "$GITHUB_STEP_SUMMARY"
           if [ -f verify-artifacts/verification-hashes.txt ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "Hashes" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Hashes" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
             awk -F= 'BEGIN{print "| Key | Value |\n|---|---|"} {gsub(/^[[:space:]]+/, "", $1); printf("| %s | %s |\n", $1, $2)}' verify-artifacts/verification-hashes.txt >> "$GITHUB_STEP_SUMMARY"
           else
