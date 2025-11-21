@@ -146,3 +146,28 @@ jobs:
         with:
           name: verify-artifacts
           path: verify-artifacts
+          retention-days: 7
+
+      - name: Append verification summary
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "## Verify Program Summary" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f verify-artifacts/verification-hashes.txt ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Hashes" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            awk -F= 'BEGIN{print "| Key | Value |\n|---|---|"} {gsub(/^[[:space:]]+/, "", $1); printf("| %s | %s |\n", $1, $2)}' verify-artifacts/verification-hashes.txt >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No verification-hashes.txt available." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f verify-artifacts/tool-versions.txt ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Tool Versions" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo '```'
+              cat verify-artifacts/tool-versions.txt || true
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
