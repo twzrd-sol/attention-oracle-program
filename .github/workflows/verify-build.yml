@@ -57,20 +57,17 @@ jobs:
           cargo install --locked anchor-cli --version 0.32.1
           anchor --version
 
-      - name: Build SBF
-        working-directory: programs/token_2022
+      - name: Build SBF (Docker - Deterministic)
         run: |
           export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-          solana --version || true
-          which cargo-build-sbf || true
-          mkdir -p target/deploy
-          cargo build-sbf --sbf-out-dir target/deploy
+          anchor build --verifiable
+          ls -lh target/deploy/token_2022.so
 
       - name: Locate artifact
         id: locate
         run: |
-          SO=$(find programs/token_2022/target -type f -name 'token_2022.so' | head -n 1)
-          if [ -z "$SO" ]; then echo "No token_2022.so found under programs/target" >&2; exit 1; fi
+          SO="target/deploy/token_2022.so"
+          if [ ! -f "$SO" ]; then echo "No token_2022.so found at $SO" >&2; exit 1; fi
           echo "so=$SO" >> $GITHUB_OUTPUT
           ls -lh "$SO"
 
