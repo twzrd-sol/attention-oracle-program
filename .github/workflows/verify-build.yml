@@ -59,7 +59,7 @@ jobs:
           solana --version || true
           which cargo-build-sbf || true
           mkdir -p target/deploy
-          cargo build-sbf --sbf-out-dir target/deploy
+          cargo build-sbf --sbf-out-dir target/deploy -- --release
 
       - name: Locate artifact
         id: locate
