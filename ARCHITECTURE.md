@@ -142,9 +142,21 @@ By default, `legacy` and `demo` are **off**, keeping the IDL and binary focused 
 
 ---
 
-## 5. Solana Kit / Frontend Integration
+## 5. Frontend Integration
 
-### Streamer Key Derivation (TypeScript)
+### Streamer Key Derivation
+
+The protocol derives a deterministic `streamer_key` from a human-readable channel identifier using Keccak-256:
+
+**On-chain (Rust):**
+```rust
+// programs/token_2022/src/state/merkle_ring.rs
+let preimage = format!("channel:{}", channel.to_ascii_lowercase());
+let hash = keccak256(preimage.as_bytes());
+let streamer_key = Pubkey::from(hash.0);
+```
+
+**Client-side (TypeScript - Web3.js v1):**
 
 ```ts
 import { keccak_256 } from "@noble/hashes/sha3";
@@ -154,24 +166,34 @@ export const PROGRAM_ID = new PublicKey(
   "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 );
 
-export const getStreamerKey = (channel: string): PublicKey => {
+export function getStreamerKey(channel: string): PublicKey {
   const lower = channel.toLowerCase();
   const preimage = Buffer.from(`channel:${lower}`);
-  const hash = keccak_256(preimage); // 32 bytes
+  const hash = keccak_256(preimage); // Returns 32-byte Uint8Array
   return new PublicKey(hash);
-};
+}
 
-export const getChannelStatePda = (
+export function getChannelStatePda(
   mint: PublicKey,
   channel: string
-): PublicKey => {
+): [PublicKey, number] {
   const streamerKey = getStreamerKey(channel);
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("channel_state"), mint.toBuffer(), streamerKey.toBuffer()],
+    [
+      Buffer.from("channel_state"),
+      mint.toBuffer(),
+      streamerKey.toBuffer()
+    ],
     PROGRAM_ID
-  )[0];
-};
+  );
+}
 ```
+
+**Integration Notes:**
+- Channel identifiers are normalized to ASCII lowercase before hashing
+- The hash output (32 bytes) is directly used as a Solana public key
+- PDA seeds: `["channel_state", mint_pubkey, streamer_key]`
+- See `VERIFY.md` for reproducible builds and IDL extraction
 
 ### Project Layout (example)
 
