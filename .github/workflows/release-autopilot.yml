@@ -69,7 +69,7 @@ jobs:
           key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build SBF (Reproducible)
-        working-directory: programs
+        working-directory: programs/token_2022
         run: |
           export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
           cargo build-sbf --sbf-out-dir target/deploy
@@ -78,14 +78,14 @@ jobs:
       - name: Compute binary hash
         id: hash
         run: |
-          SHA=$(sha256sum programs/target/deploy/token_2022.so | cut -d' ' -f1)
+          SHA=$(sha256sum programs/token_2022/target/deploy/token_2022.so | cut -d' ' -f1)
           echo "sha256=$SHA" >> $GITHUB_OUTPUT
           echo "✅ Binary SHA256: $SHA"
 
       - name: Get binary size
         id: size
         run: |
-          SIZE=$(stat -c%s programs/target/deploy/token_2022.so)
+          SIZE=$(stat -c%s programs/token_2022/target/deploy/token_2022.so)
           echo "bytes=$SIZE" >> $GITHUB_OUTPUT
           echo "✅ Binary size: $SIZE bytes"
 
