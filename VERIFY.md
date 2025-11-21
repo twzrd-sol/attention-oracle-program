@@ -48,7 +48,7 @@ solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-b
 # Get your local build hash
 sha256sum target/deploy/token_2022.so
 
-# Expected hash: 647b8bd464d3837f03f0e68b4823cfc719e1e4793c3c72c7d5cdc09bbf816cb2
+# Expected hash: e6bda5c18d1ac7efbec7f7761d48f326ea73fcbe3753873c4de3c5f19a017322
 ```
 
 ### 5. Verify on Solscan
@@ -56,7 +56,7 @@ Navigate to: https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dC
 
 Look for the "Verified" badge and matching source code link.
 
-**Verified Hash:** `647b8bd464d3837f03f0e68b4823cfc719e1e4793c3c72c7d5cdc09bbf816cb2`
+**Verified Hash:** `e6bda5c18d1ac7efbec7f7761d48f326ea73fcbe3753873c4de3c5f19a017322`
 
 ## Build Environment
 
