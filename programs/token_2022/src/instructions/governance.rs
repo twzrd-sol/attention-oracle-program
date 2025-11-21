@@ -130,6 +130,65 @@ pub fn update_tier_multipliers(
 }
 
 // ============================================================================
+// Enforcer Configuration (Week 2+)
+// ============================================================================
+
+/// Update enforcer settings: score threshold, tax rate, and revert policy
+/// IMPORTANT: This instruction reallocates the FeeConfig account if needed
+#[derive(Accounts)]
+pub struct UpdateEnforcerConfig<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    /// Protocol state (mint-keyed)
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// Fee configuration PDA (may need realloc for new fields)
+    #[account(
+        mut,
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref(), b"fee_config"],
+        bump = fee_config.bump,
+        realloc = FeeConfig::LEN,
+        realloc::payer = authority,
+        realloc::zero = false,
+    )]
+    pub fee_config: Account<'info, FeeConfig>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn update_enforcer_config(
+    ctx: Context<UpdateEnforcerConfig>,
+    min_score_threshold: u64,
+    tax_bps: u16,
+    revert_if_below: bool,
+) -> Result<()> {
+    // Validate parameters
+    require!(tax_bps <= 1000, OracleError::InvalidTaxBps);
+
+    let fee_cfg = &mut ctx.accounts.fee_config;
+
+    // Update enforcer fields
+    fee_cfg.min_score_threshold = min_score_threshold;
+    fee_cfg.tax_bps = tax_bps;
+    fee_cfg.revert_if_below = revert_if_below;
+
+    msg!(
+        "Enforcer config updated: threshold={}, tax_bps={}, revert={}",
+        min_score_threshold,
+        tax_bps,
+        revert_if_below
+    );
+
+    Ok(())
+}
+
+// ============================================================================
 // Fee Harvesting (Token-2022 Withheld Tokens)
 // ============================================================================
 

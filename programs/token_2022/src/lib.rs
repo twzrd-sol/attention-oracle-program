@@ -153,6 +153,16 @@ pub mod token_2022 {
         instructions::governance::update_tier_multipliers(ctx, new_multipliers)
     }
 
+    /// Governance: update enforcer configuration (score threshold, tax rate, revert policy)
+    pub fn update_enforcer_config(
+        ctx: Context<UpdateEnforcerConfig>,
+        min_score_threshold: u64,
+        tax_bps: u16,
+        revert_if_below: bool,
+    ) -> Result<()> {
+        instructions::governance::update_enforcer_config(ctx, min_score_threshold, tax_bps, revert_if_below)
+    }
+
     /// Harvest withheld fees from Token-2022 mint and distribute to treasury/creator pool
     pub fn harvest_fees(ctx: Context<HarvestFees>) -> Result<()> {
         instructions::governance::harvest_and_distribute_fees(ctx)

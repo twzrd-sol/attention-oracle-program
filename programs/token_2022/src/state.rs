@@ -73,6 +73,23 @@ pub struct FeeConfig {
 
     /// Bump seed
     pub bump: u8,
+
+    // -------------------------------------------------------------------------
+    // ENFORCER FIELDS (Week 2+)
+    // -------------------------------------------------------------------------
+
+    /// Minimum attention score required for VIP status (tax-free transfers)
+    /// If 0, enforcer is dormant (no score checks performed)
+    /// Example: 3000 = users with score >= 3000 pay no tax
+    pub min_score_threshold: u64,
+
+    /// Tax rate in basis points for tourists (score < threshold)
+    /// Example: 300 = 3% tax on transfers from low-score accounts
+    pub tax_bps: u16,
+
+    /// If true, revert transfers from users below threshold (hard mode)
+    /// If false, allow transfer but emit tax liability (soft mode)
+    pub revert_if_below: bool,
 }
 
 impl FeeConfig {
@@ -83,7 +100,10 @@ impl FeeConfig {
         2 +    // treasury_fee_bps
         2 +    // creator_fee_bps
         (4 * 6) + // tier_multipliers (6 u32s)
-        1; // bump
+        1 +    // bump
+        8 +    // min_score_threshold
+        2 +    // tax_bps
+        1; // revert_if_below
 }
 
 /// Fee distribution split

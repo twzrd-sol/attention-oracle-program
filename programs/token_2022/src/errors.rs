@@ -116,4 +116,14 @@ pub enum OracleError {
 
     #[msg("Missing transfer fee extension")]
     MissingTransferFeeExtension,
+
+    // Enforcer errors
+    #[msg("Attention score below minimum threshold - transfer blocked")]
+    ScoreBelowThreshold,
+
+    #[msg("Invalid tax basis points (max 1000 = 10%)")]
+    InvalidTaxBps,
+
+    #[msg("Enforcer threshold cannot exceed max score")]
+    InvalidThreshold,
 }
