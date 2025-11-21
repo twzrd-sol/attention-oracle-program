@@ -7,7 +7,7 @@ use anchor_lang::prelude::*;
 
 /// Initialize channel ring buffer (one-time setup per channel)
 #[derive(Accounts)]
-#[instruction(streamer_key: Pubkey)]
+#[instruction(subject_id: Pubkey)]
 pub struct InitializeChannel<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -19,12 +19,12 @@ pub struct InitializeChannel<'info> {
     pub protocol_state: Account<'info, ProtocolState>,
 
     /// Channel state PDA - will be created if doesn't exist
-    /// Seeds: [CHANNEL_STATE_SEED, mint, streamer_key] - NO EPOCH
+    /// Seeds: [CHANNEL_STATE_SEED, mint, subject_id] - NO EPOCH
     #[account(
         init_if_needed,
         payer = payer,
         space = ChannelState::LEN,
-        seeds = [CHANNEL_STATE_SEED, protocol_state.mint.as_ref(), streamer_key.as_ref()],
+        seeds = [CHANNEL_STATE_SEED, protocol_state.mint.as_ref(), subject_id.as_ref()],
         bump
     )]
     pub channel_state: AccountLoader<'info, ChannelState>,
@@ -32,24 +32,24 @@ pub struct InitializeChannel<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn initialize_channel(ctx: Context<InitializeChannel>, streamer_key: Pubkey) -> Result<()> {
+pub fn initialize_channel(ctx: Context<InitializeChannel>, subject_id: Pubkey) -> Result<()> {
     let channel_state = &mut ctx.accounts.channel_state.load_init()?;
 
     channel_state.version = 1;
     channel_state.bump = ctx.bumps.channel_state;
     channel_state.mint = ctx.accounts.protocol_state.mint;
-    channel_state.streamer = streamer_key;
+    channel_state.subject = subject_id;
     channel_state.latest_epoch = 0;
 
     // Slots are already zeroed by init
 
-    msg!("Channel initialized for streamer: {}", streamer_key);
+    msg!("Channel initialized for subject: {}", subject_id);
     Ok(())
 }
 
 /// Set merkle root using ring buffer (replaces old per-epoch accounts)
 #[derive(Accounts)]
-#[instruction(root: [u8; 32], epoch: u64, claim_count: u16, streamer_key: Pubkey)]
+#[instruction(root: [u8; 32], epoch: u64, claim_count: u16, subject_id: Pubkey)]
 pub struct SetMerkleRootRing<'info> {
     #[account(mut)]
     pub update_authority: Signer<'info>,
@@ -64,7 +64,7 @@ pub struct SetMerkleRootRing<'info> {
     /// Channel state - must exist (call initialize_channel first)
     #[account(
         mut,
-        seeds = [CHANNEL_STATE_SEED, protocol_state.mint.as_ref(), streamer_key.as_ref()],
+        seeds = [CHANNEL_STATE_SEED, protocol_state.mint.as_ref(), subject_id.as_ref()],
         bump
     )]
     pub channel_state: AccountLoader<'info, ChannelState>,
@@ -77,7 +77,7 @@ pub fn set_merkle_root_ring(
     root: [u8; 32],
     epoch: u64,
     claim_count: u16,
-    streamer_key: Pubkey,
+    subject_id: Pubkey,
 ) -> Result<()> {
     let protocol = &ctx.accounts.protocol_state;
 
@@ -96,7 +96,7 @@ pub fn set_merkle_root_ring(
         OracleError::ChannelNotInitialized
     );
     require!(
-        channel_state.streamer == streamer_key,
+        channel_state.subject == subject_id,
         OracleError::InvalidStreamer
     );
 
@@ -121,7 +121,7 @@ pub fn set_merkle_root_ring(
 
 /// Claim tokens using ring buffer state
 #[derive(Accounts)]
-#[instruction(epoch: u64, index: u32, amount: u64, proof: Vec<[u8; 32]>, streamer_key: Pubkey)]
+#[instruction(epoch: u64, index: u32, amount: u64, proof: Vec<[u8; 32]>, subject_id: Pubkey)]
 pub struct ClaimWithRing<'info> {
     #[account(mut)]
     pub claimer: Signer<'info>,
@@ -136,7 +136,7 @@ pub struct ClaimWithRing<'info> {
 
     #[account(
         mut,
-        seeds = [CHANNEL_STATE_SEED, protocol_state.mint.as_ref(), streamer_key.as_ref()],
+        seeds = [CHANNEL_STATE_SEED, protocol_state.mint.as_ref(), subject_id.as_ref()],
         bump
     )]
     pub channel_state: AccountLoader<'info, ChannelState>,
@@ -152,7 +152,7 @@ pub fn claim_with_ring(
     index: u32,
     amount: u64,
     proof: Vec<[u8; 32]>,
-    streamer_key: Pubkey,
+    subject_id: Pubkey,
 ) -> Result<()> {
     let channel_state = &mut ctx.accounts.channel_state.load_mut()?;
 
@@ -162,7 +162,7 @@ pub fn claim_with_ring(
         OracleError::ChannelNotInitialized
     );
     require!(
-        channel_state.streamer == streamer_key,
+        channel_state.subject == subject_id,
         OracleError::InvalidStreamer
     );
 

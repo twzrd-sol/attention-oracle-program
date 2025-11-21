@@ -299,27 +299,27 @@ pub mod token_2022 {
         root: [u8; 32],
         epoch: u64,
         claim_count: u32,
-        streamer_key: Pubkey,
+        subject_id: Pubkey,
     ) -> Result<()> {
-        instructions::merkle::set_merkle_root(ctx, root, epoch, claim_count, streamer_key)
+        instructions::merkle::set_merkle_root(ctx, root, epoch, claim_count, subject_id)
     }
 
     #[cfg(feature = "legacy")]
     pub fn claim(
         ctx: Context<Claim>,
-        streamer_index: u8,
+        subject_index: u8,
         index: u32,
         amount: u64,
         id: String,
         proof: Vec<[u8; 32]>,
     ) -> Result<()> {
-        instructions::claim::claim(ctx, streamer_index, index, amount, id, proof)
+        instructions::claim::claim(ctx, subject_index, index, amount, id, proof)
     }
 
     #[cfg(feature = "legacy")]
     pub fn claim_open(
         ctx: Context<ClaimOpen>,
-        streamer_index: u8,
+        subject_index: u8,
         index: u32,
         amount: u64,
         id: String,
@@ -330,7 +330,7 @@ pub mod token_2022 {
     ) -> Result<()> {
         instructions::claim::claim_open(
             ctx,
-            streamer_index,
+            subject_index,
             index,
             amount,
             id,
@@ -347,9 +347,9 @@ pub mod token_2022 {
         root: [u8; 32],
         epoch: u64,
         claim_count: u32,
-        streamer_key: Pubkey,
+        subject_id: Pubkey,
     ) -> Result<()> {
-        instructions::merkle::set_merkle_root_open(ctx, root, epoch, claim_count, streamer_key)
+        instructions::merkle::set_merkle_root_open(ctx, root, epoch, claim_count, subject_id)
     }
 
     #[cfg(feature = "legacy")]
@@ -367,28 +367,28 @@ pub mod token_2022 {
     pub fn close_epoch_state(
         ctx: Context<CloseEpochState>,
         epoch: u64,
-        streamer_key: Pubkey,
+        subject_id: Pubkey,
     ) -> Result<()> {
-        instructions::cleanup::close_epoch_state(ctx, epoch, streamer_key)
+        instructions::cleanup::close_epoch_state(ctx, epoch, subject_id)
     }
 
     #[cfg(feature = "legacy")]
     pub fn force_close_epoch_state_legacy(
         ctx: Context<ForceCloseEpochStateLegacy>,
         epoch: u64,
-        streamer_key: Pubkey,
+        subject_id: Pubkey,
     ) -> Result<()> {
-        instructions::cleanup::force_close_epoch_state_legacy(ctx, epoch, streamer_key)
+        instructions::cleanup::force_close_epoch_state_legacy(ctx, epoch, subject_id)
     }
 
     #[cfg(feature = "legacy")]
     pub fn force_close_epoch_state_open(
         ctx: Context<ForceCloseEpochStateOpen>,
         epoch: u64,
-        streamer_key: Pubkey,
+        subject_id: Pubkey,
         mint: Pubkey,
     ) -> Result<()> {
-        instructions::cleanup::force_close_epoch_state_open(ctx, epoch, streamer_key, mint)
+        instructions::cleanup::force_close_epoch_state_open(ctx, epoch, subject_id, mint)
     }
 
     // -------------------------------------------------------------------------
@@ -396,8 +396,8 @@ pub mod token_2022 {
     // -------------------------------------------------------------------------
 
     #[cfg(feature = "demo")]
-    pub fn initialize_channel(ctx: Context<InitializeChannel>, streamer_key: Pubkey) -> Result<()> {
-        instructions::merkle_ring::initialize_channel(ctx, streamer_key)
+    pub fn initialize_channel(ctx: Context<InitializeChannel>, subject_id: Pubkey) -> Result<()> {
+        instructions::merkle_ring::initialize_channel(ctx, subject_id)
     }
 
     #[cfg(feature = "demo")]
@@ -406,9 +406,9 @@ pub mod token_2022 {
         root: [u8; 32],
         epoch: u64,
         claim_count: u16,
-        streamer_key: Pubkey,
+        subject_id: Pubkey,
     ) -> Result<()> {
-        instructions::merkle_ring::set_merkle_root_ring(ctx, root, epoch, claim_count, streamer_key)
+        instructions::merkle_ring::set_merkle_root_ring(ctx, root, epoch, claim_count, subject_id)
     }
 
     #[cfg(feature = "demo")]
@@ -418,9 +418,9 @@ pub mod token_2022 {
         index: u32,
         amount: u64,
         proof: Vec<[u8; 32]>,
-        streamer_key: Pubkey,
+        subject_id: Pubkey,
     ) -> Result<()> {
-        instructions::merkle_ring::claim_with_ring(ctx, epoch, index, amount, proof, streamer_key)
+        instructions::merkle_ring::claim_with_ring(ctx, epoch, index, amount, proof, subject_id)
     }
 
     #[cfg(feature = "demo")]

@@ -73,7 +73,7 @@ pub struct Claim<'info> {
 
 pub fn claim(
     ctx: Context<Claim>,
-    _streamer_index: u8,
+    _subject_index: u8,
     index: u32,
     amount: u64,
     id: String,
@@ -96,7 +96,7 @@ pub fn claim(
         &[
             EPOCH_STATE_SEED,
             &epoch.epoch.to_le_bytes(),
-            epoch.streamer.as_ref(),
+            epoch.subject.as_ref(),
         ],
         ctx.program_id,
     )
@@ -207,7 +207,7 @@ pub struct ClaimOpen<'info> {
 
 pub fn claim_open(
     ctx: Context<ClaimOpen>,
-    _streamer_index: u8,
+    _subject_index: u8,
     index: u32,
     amount: u64,
     id: String,
@@ -230,7 +230,7 @@ pub fn claim_open(
         &[
             EPOCH_STATE_SEED,
             &epoch.epoch.to_le_bytes(),
-            epoch.streamer.as_ref(),
+            epoch.subject.as_ref(),
             ctx.accounts.protocol_state.mint.as_ref(),
         ],
         ctx.program_id,

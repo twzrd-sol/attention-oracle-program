@@ -13,11 +13,11 @@ use anchor_lang::accounts::account_loader::AccountLoader;
 
 const CHANNEL_STATE_VERSION: u8 = 1;
 
-fn derive_streamer_key(channel: &str) -> Pubkey {
+fn derive_subject_id(channel: &str) -> Pubkey {
     let mut lower = channel.as_bytes().to_vec();
     // Convert ASCII bytes to lowercase in-place (avoids allocation for Unicode)
     lower.iter_mut().for_each(|b| *b = b.to_ascii_lowercase());
-    // Brand- and platform-neutral prefix to derive a stable streamer key
+    // Brand- and platform-neutral prefix to derive a stable subject key
     let hash = keccak_hashv(&[b"channel:", lower.as_slice()]);
     Pubkey::new_from_array(hash)
 }
@@ -69,11 +69,11 @@ pub fn set_channel_merkle_root(
     let is_publisher =
         protocol_state.publisher != Pubkey::default() && signer == protocol_state.publisher;
     require!(is_admin || is_publisher, OracleError::Unauthorized);
-    let streamer_key = derive_streamer_key(&channel);
+    let subject_id = derive_subject_id(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,
         protocol_state.mint.as_ref(),
-        streamer_key.as_ref(),
+        subject_id.as_ref(),
     ];
     let (expected_pda, bump) = Pubkey::find_program_address(&seeds, ctx.program_id);
     require_keys_eq!(
@@ -105,7 +105,7 @@ pub fn set_channel_merkle_root(
             &[&[
                 CHANNEL_STATE_SEED,
                 protocol_state.mint.as_ref(),
-                streamer_key.as_ref(),
+                subject_id.as_ref(),
                 &[bump],
             ]],
         )?;
@@ -125,7 +125,7 @@ pub fn set_channel_merkle_root(
         channel_state.version = CHANNEL_STATE_VERSION;
         channel_state.bump = bump;
         channel_state.mint = protocol_state.mint;
-        channel_state.streamer = streamer_key;
+        channel_state.subject = subject_id;
         channel_state.latest_epoch = 0;
         // slots already zeroed by account creation
     }
@@ -140,7 +140,7 @@ pub fn set_channel_merkle_root(
         OracleError::InvalidMint
     );
     require!(
-        channel_state.streamer == streamer_key,
+        channel_state.subject == subject_id,
         OracleError::InvalidChannelState
     );
 
@@ -212,11 +212,11 @@ pub fn claim_channel_open(
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
-    let streamer_key = derive_streamer_key(&channel);
+    let subject_id = derive_subject_id(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,
         protocol_state.mint.as_ref(),
-        streamer_key.as_ref(),
+        subject_id.as_ref(),
     ];
     let (expected_pda, _) = Pubkey::find_program_address(&seeds, ctx.program_id);
     require_keys_eq!(
@@ -237,7 +237,7 @@ pub fn claim_channel_open(
         OracleError::InvalidMint
     );
     require!(
-        channel_state.streamer == streamer_key,
+        channel_state.subject == subject_id,
         OracleError::InvalidChannelState
     );
 
@@ -375,11 +375,11 @@ pub fn claim_channel_open_with_receipt(
     mint_receipt: bool,
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
-    let streamer_key = derive_streamer_key(&channel);
+    let subject_id = derive_subject_id(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,
         protocol_state.mint.as_ref(),
-        streamer_key.as_ref(),
+        subject_id.as_ref(),
     ];
     let (expected_pda, _) = Pubkey::find_program_address(&seeds, ctx.program_id);
     require_keys_eq!(
@@ -400,7 +400,7 @@ pub fn claim_channel_open_with_receipt(
         OracleError::InvalidMint
     );
     require!(
-        channel_state.streamer == streamer_key,
+        channel_state.subject == subject_id,
         OracleError::InvalidChannelState
     );
 
