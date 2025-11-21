@@ -15,7 +15,7 @@ Anyone can reproduce our build and verify it matches on-chain:
 ```bash
 git clone https://github.com/twzrd-sol/attention-oracle-program.git
 cd attention-oracle-program
-git checkout v1.1.0  # Use the specific release tag
+git checkout v1.2.1  # Use the specific release tag
 ```
 
 ### 2. Install Dependencies
@@ -31,22 +31,23 @@ avm install 0.32.1
 avm use 0.32.1
 ```
 
-### 3. Build Deterministically
+### 3. Verifiable Build + On-Chain Match (Anchor 0.32.1)
 ```bash
-# This produces a verifiable build
+# Deterministic Docker build
 anchor build --verifiable --arch sbf
+
+# Optional: inspect local verifiable artifact
+ls -lh target/verifiable/token_2022.so
+sha256sum target/verifiable/token_2022.so
+
+# One-shot trustless verification against mainnet
+anchor verify -p token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 ```
 
-### 4. Compare Hash
-```bash
-# Get on-chain hash
-solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-beta
+Expected (v1.2.1 verifiable build):
 
-# Get your local build hash
-sha256sum target/deploy/token_2022.so
-
-# v1.2.1 Expected hash (Docker build, trimmed to 534224 bytes): 8e60919edb1792fa496c20c871c10f9295334bf2b3762d482fd09078c67a0281
-```
+- Size: `534,224` bytes
+- SHA256: `8e60919edb1792fa496c20c871c10f9295334bf2b3762d482fd09078c67a0281`
 
 ### 5. Verify on Solscan
 Navigate to: https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
@@ -56,14 +57,15 @@ Look for the "Verified" badge and matching source code link.
 **Verified Hash (v1.2.1 - Docker Build, AMM Compatible):** `8e60919edb1792fa496c20c871c10f9295334bf2b3762d482fd09078c67a0281`
 **Deployed:** Slot 381553914, November 21, 2025
 
-### 6. Optional: Cryptographic Proof via `solana-verify`
+### 4. Optional: Cryptographic Proof via `solana-verify`
 ```bash
-solana-verify verify -u m \
+solana-verify verify-from-repo \
+  https://github.com/twzrd-sol/attention-oracle-program \
   --program-id GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop \
-  --commit v1.1.0 \
-  twzrd-sol/attention-oracle-program
+  --commit-hash 41d9debf56702259d7dcf1f318d839df947a00b3 \
+  --library-name token_2022
 ```
-The command above fetches this repository at `v1.1.0`, performs the deterministic build in a containerized environment, and compares the resulting ELF hash with the one deployed on mainnet.
+The command above fetches this repository at the `v1.2.1` commit, performs the deterministic build in a containerized environment, and compares the resulting ELF hash with the one deployed on mainnet.
 
 ## Build Environment
 
