@@ -6,7 +6,7 @@ use crate::{
 use anchor_lang::prelude::*;
 
 #[derive(Accounts)]
-#[instruction(root: [u8;32], epoch: u64, claim_count: u32, streamer_key: Pubkey)]
+#[instruction(root: [u8;32], epoch: u64, claim_count: u32, subject_id: Pubkey)]
 pub struct SetMerkleRoot<'info> {
     #[account(mut)]
     pub update_authority: Signer<'info>,
@@ -19,12 +19,12 @@ pub struct SetMerkleRoot<'info> {
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    /// Epoch state for this (streamer, epoch)
+    /// Epoch state for this (subject, epoch)
     #[account(
         init_if_needed,
         payer = update_authority,
         space = EpochState::space_for(claim_count as usize),
-        seeds = [EPOCH_STATE_SEED, &epoch.to_le_bytes(), streamer_key.as_ref()],
+        seeds = [EPOCH_STATE_SEED, &epoch.to_le_bytes(), subject_id.as_ref()],
         bump
     )]
     pub epoch_state: Account<'info, EpochState>,
@@ -37,7 +37,7 @@ pub fn set_merkle_root(
     root: [u8; 32],
     epoch: u64,
     claim_count: u32,
-    streamer_key: Pubkey,
+    subject_id: Pubkey,
 ) -> Result<()> {
     let protocol = &ctx.accounts.protocol_state;
     // Authorization: admin or allowlisted publisher
@@ -61,7 +61,7 @@ pub fn set_merkle_root(
     epoch_state.root = root;
     epoch_state.claim_count = claim_count;
     epoch_state.mint = protocol.mint;
-    epoch_state.streamer = streamer_key;
+    epoch_state.subject = subject_id;
     epoch_state.treasury = protocol.treasury; // PDA authority that owns the treasury ATA
     epoch_state.timestamp = ts;
     epoch_state.total_claimed = 0;
@@ -76,7 +76,7 @@ pub fn set_merkle_root(
 
 // Open variant: protocol_state keyed by mint; epoch_state seeds include mint to avoid collisions
 #[derive(Accounts)]
-#[instruction(root: [u8;32], epoch: u64, claim_count: u32, streamer_key: Pubkey)]
+#[instruction(root: [u8;32], epoch: u64, claim_count: u32, subject_id: Pubkey)]
 pub struct SetMerkleRootOpen<'info> {
     #[account(mut)]
     pub update_authority: Signer<'info>,
@@ -89,12 +89,12 @@ pub struct SetMerkleRootOpen<'info> {
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    /// Epoch state for (streamer, epoch, mint)
+    /// Epoch state for (subject, epoch, mint)
     #[account(
         init_if_needed,
         payer = update_authority,
         space = EpochState::space_for(claim_count as usize),
-        seeds = [EPOCH_STATE_SEED, &epoch.to_le_bytes(), streamer_key.as_ref(), protocol_state.mint.as_ref()],
+        seeds = [EPOCH_STATE_SEED, &epoch.to_le_bytes(), subject_id.as_ref(), protocol_state.mint.as_ref()],
         bump
     )]
     pub epoch_state: Account<'info, EpochState>,
@@ -107,7 +107,7 @@ pub fn set_merkle_root_open(
     root: [u8; 32],
     epoch: u64,
     claim_count: u32,
-    streamer_key: Pubkey,
+    subject_id: Pubkey,
 ) -> Result<()> {
     let protocol = &ctx.accounts.protocol_state;
     // Authorization: admin or allowlisted publisher
@@ -130,7 +130,7 @@ pub fn set_merkle_root_open(
     epoch_state.root = root;
     epoch_state.claim_count = claim_count;
     epoch_state.mint = protocol.mint;
-    epoch_state.streamer = streamer_key;
+    epoch_state.subject = subject_id;
     epoch_state.treasury = protocol.treasury;
     epoch_state.timestamp = ts;
     epoch_state.total_claimed = 0;

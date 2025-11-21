@@ -16,8 +16,9 @@ pub struct TransferObserved {
 
 #[derive(Accounts)]
 pub struct TransferHook<'info> {
-    /// Signer paying fees if any CPI allocations are needed (unused for now)
-    pub payer: Signer<'info>,
+    /// Owner or delegate initiating the transfer
+    /// For AMM swaps, this will be the AMM program's delegate authority
+    pub authority: Signer<'info>,
 
     /// Global protocol state (mint-keyed for open variant)
     #[account(
@@ -36,24 +37,32 @@ pub struct TransferHook<'info> {
     /// CCM mint (Token‑2022)
     pub mint: InterfaceAccount<'info, Mint>,
 
-    /// Optional source/destination accounts for future withheld-fee harvests
+    /// Source token account
     #[account(mut)]
-    pub _source: Option<InterfaceAccount<'info, TokenAccount>>,
+    pub source: InterfaceAccount<'info, TokenAccount>,
+
+    /// Destination token account
     #[account(mut)]
-    pub _destination: Option<InterfaceAccount<'info, TokenAccount>>,
+    pub destination: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
 /// Dynamic transfer hook: calculates fees based on passport tier and emits event
-/// with fee breakdown. Treasury receives fixed 0.05%, creator receives 0.05% * tier multiplier.
-/// Fees are withheld by Token-2022's transfer fee extension and harvested separately.
+/// with fee breakdown. Allows AMM delegate transfers for Jupiter routing.
+/// AUDIT MODE: Fees are calculated but NOT deducted (mint lacks Transfer Fee extension).
 pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
     require!(amount > 0, OracleError::InvalidAmount);
 
     let ts = Clock::get()?.unix_timestamp;
     let fee_config = &ctx.accounts.fee_config;
+
+    // Detect delegate transfer (AMM swap): authority != source.owner
+    let is_delegate_transfer = ctx.accounts.authority.key() != ctx.accounts.source.owner;
+
+    // For passport tier lookup, use source token account owner (not delegate)
+    let transfer_owner = ctx.accounts.source.owner;
 
     // Calculate base fees in basis points (from fee_config)
     let treasury_fee_bps = fee_config.treasury_fee_bps;
@@ -66,15 +75,6 @@ pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
     // Lookup passport tier for transfer initiator (via remaining_accounts)
     let mut creator_tier: u8 = 0;
     let mut tier_multiplier: u32 = 0; // Default 0.0x for unverified
-
-    // Determine transfer owner for matching (prefer token account owner)
-    let transfer_owner = ctx
-        .accounts
-        ._source
-        .as_ref()
-        .map(|s| s.owner)
-        .or_else(|| ctx.accounts._destination.as_ref().map(|d| d.owner))
-        .unwrap_or_else(|| ctx.accounts.payer.key());
 
     // Search remaining_accounts for matching PassportRegistry
     for account_info in ctx.remaining_accounts.iter() {
@@ -110,7 +110,9 @@ pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
     let creator_fee = (creator_fee_unscaled as u128 * tier_multiplier as u128 / 10000) as u64;
     let total_fee = treasury_fee.saturating_add(creator_fee);
 
-    // Emit event for indexers/keepers (fees accumulated in mint, harvested separately)
+    // Emit event for indexers/keepers
+    // NOTE: Fees are calculated for audit purposes but NOT deducted
+    // (mint does not have Transfer Fee extension, only Transfer Hook extension)
     emit!(TransferFeeEvent {
         transfer_amount: amount,
         total_fee,
@@ -121,7 +123,9 @@ pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
         timestamp: ts,
     });
 
-    // Note: No CPI transfers here; fees are withheld by Token-2022 and distributed via harvest
+    // Allow all transfers (including AMM delegate transfers)
+    // No CPI transfers or fee deductions in this audit-mode hook
     let _ = &ctx.accounts.protocol_state;
+    let _ = is_delegate_transfer; // Acknowledged for future use
     Ok(())
 }
