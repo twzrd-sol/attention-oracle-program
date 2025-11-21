@@ -45,17 +45,31 @@ jobs:
       - name: Clippy zero
         working-directory: programs/token_2022
         run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Build program + IDL
-        run: anchor build
+
+      - name: Verifiable build (Anchor Docker - deterministic)
+        run: anchor build --verifiable
         env:
-          SOLANA_VERSION: 2.0.3
           ANCHOR_VERSION: 0.32.1
-          RUST_TOOLCHAIN: 1.91.0
-      - name: Verify build + IDL
-        run: ls -l target/deploy/token_2022.so target/idl/token_2022.json
-      # Note: On-chain verification is done manually after deployment
-      # CI only validates that the program builds successfully
-      # For manual verification, run:
-      # solana-verify verify-from-repo -y --program-id GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop \
-      #   --library-name token_2022 https://github.com/twzrd-sol/attention-oracle-program \
-      #   --commit-hash $(git rev-parse HEAD) --mount-path .
+
+      - name: Verify on-chain hash (PERMANENT CRYPTOGRAPHIC LOCK)
+        run: |
+          echo "=== Downloading on-chain program ==="
+          solana program dump GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop on-chain.so --url mainnet-beta
+
+          echo "=== Computing hashes (trimming on-chain padding) ==="
+          LOCAL_SIZE=$(stat -c%s target/verifiable/token_2022.so)
+          VERIFIABLE_HASH=$(sha256sum target/verifiable/token_2022.so | cut -d' ' -f1)
+          ON_CHAIN_HASH=$(head -c "$LOCAL_SIZE" on-chain.so | sha256sum | cut -d' ' -f1)
+
+          echo "Verifiable build: $VERIFIABLE_HASH ($LOCAL_SIZE bytes)"
+          echo "On-chain (trimmed): $ON_CHAIN_HASH (trimmed to $LOCAL_SIZE bytes)"
+
+          if [ "$VERIFIABLE_HASH" = "$ON_CHAIN_HASH" ]; then
+            echo "✅ VERIFIED: On-chain program cryptographically matches repository"
+            echo "   Anchor 0.32.1 deterministic Docker build = immutable proof"
+            echo "   No hash drift possible. Machine sovereign."
+          else
+            echo "❌ VERIFICATION FAILED: Hash mismatch"
+            echo "   This means deployed binary ≠ source code"
+            exit 1
+          fi
