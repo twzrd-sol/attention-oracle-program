@@ -81,10 +81,11 @@ jobs:
           cargo build-sbf --sbf-out-dir programs/token_2022/target/deploy -- -p attention-oracle-token-2022
 
       - name: Anchor native verification (authoritative)
+        working-directory: programs/token_2022
         run: |
-          # Use Anchor 0.32.1's native verification, which standardizes the build in Docker
-          # and compares against on-chain for the given Program ID.
-          anchor verify -p token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+          # Use Anchor 0.32.1's native verification from the program directory
+          # against mainnet for the deployed Program ID.
+          anchor verify --provider.cluster mainnet --current-dir --program-name token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
       - name: Build verifiable artifact for summary (best-effort)
         if: always()
         continue-on-error: true
