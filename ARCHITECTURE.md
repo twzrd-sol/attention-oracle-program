@@ -29,9 +29,9 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 - **Seeds:** `[
   b"channel_state",
   mint.key().as_ref(),
-  streamer_key.as_ref(),
+  subject_id.as_ref(),
 ]`
-- **Streamer Key:**
+- **Subject ID:**
   - Derived from a human-readable channel identifier.
   - On-chain: `keccak256("channel:" || channel.to_ascii_lowercase())`.
 - **Why:** Lets users claim from recent epochs even as new epochs are published, without a new account per epoch.
@@ -73,7 +73,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
   - `channel_state` – zero-copy ring buffer PDA.
 - **Inputs:** `channel: String`, `epoch: u64`, `root: [u8; 32]`.
 - **Behavior:**
-  - Derives `streamer_key` from `channel`.
+  - Derives `subject_id` from `channel`.
   - Creates `ChannelState` account if missing.
   - Enforces monotonic epoch progression per slot.
   - Writes `root` and clears the bitmap for the slot.
@@ -91,7 +91,7 @@ Legacy epoch-state instructions are gated behind the `legacy` feature and are in
 - **Inputs:** `channel`, `epoch`, `index`, `amount`, `id`, `proof`.
 - **Guarantees:**
   - Protocol not paused.
-  - `ChannelState` PDA matches `[CHANNEL_STATE_SEED, mint, streamer_key]`.
+  - `ChannelState` PDA matches `[CHANNEL_STATE_SEED, mint, subject_id]`.
   - Epoch slot matches `epoch`.
   - `index` within bounds and bitmap bit clear (no double-claim).
   - Merkle proof verified using sorted Keccak pairs.
@@ -144,16 +144,16 @@ By default, `legacy` and `demo` are **off**, keeping the IDL and binary focused 
 
 ## 5. Frontend Integration
 
-### Streamer Key Derivation
+### Subject ID Derivation
 
-The protocol derives a deterministic `streamer_key` from a human-readable channel identifier using Keccak-256:
+The protocol derives a deterministic `subject_id` from a human-readable channel identifier using Keccak-256:
 
 **On-chain (Rust):**
 ```rust
 // programs/token_2022/src/state/merkle_ring.rs
 let preimage = format!("channel:{}", channel.to_ascii_lowercase());
 let hash = keccak256(preimage.as_bytes());
-let streamer_key = Pubkey::from(hash.0);
+let subject_id = Pubkey::from(hash.0);
 ```
 
 **Client-side (TypeScript - Web3.js v1):**
@@ -166,7 +166,7 @@ export const PROGRAM_ID = new PublicKey(
   "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 );
 
-export function getStreamerKey(channel: string): PublicKey {
+export function getSubjectId(channel: string): PublicKey {
   const lower = channel.toLowerCase();
   const preimage = Buffer.from(`channel:${lower}`);
   const hash = keccak_256(preimage); // Returns 32-byte Uint8Array
@@ -177,12 +177,12 @@ export function getChannelStatePda(
   mint: PublicKey,
   channel: string
 ): [PublicKey, number] {
-  const streamerKey = getStreamerKey(channel);
+  const subjectId = getSubjectId(channel);
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from("channel_state"),
       mint.toBuffer(),
-      streamerKey.toBuffer()
+      subjectId.toBuffer()
     ],
     PROGRAM_ID
   );
@@ -192,7 +192,7 @@ export function getChannelStatePda(
 **Integration Notes:**
 - Channel identifiers are normalized to ASCII lowercase before hashing
 - The hash output (32 bytes) is directly used as a Solana public key
-- PDA seeds: `["channel_state", mint_pubkey, streamer_key]`
+- PDA seeds: `["channel_state", mint_pubkey, subject_id]`
 - See `VERIFY.md` for reproducible builds and IDL extraction
 
 ### Project Layout (example)
@@ -250,7 +250,7 @@ The CI pipeline builds and verifies with the versions above; use these to reprod
 - set_channel_merkle_root
   - Signers: `payer` (must equal `protocol_state.admin` or `protocol_state.publisher`).
   - Accounts: `protocol_state` (mint‑keyed PDA), `channel_state` (ring buffer PDA), `system_program`.
-  - Constraints: epoch monotonic per slot; `streamer_key` derived from `channel`; creates `channel_state` if missing.
+  - Constraints: epoch monotonic per slot; `subject_id` derived from `channel`; creates `channel_state` if missing.
 
 - claim_channel_open / claim_channel_open_with_receipt
   - Signers: `claimer`.
@@ -273,7 +273,7 @@ The CI pipeline builds and verifies with the versions above; use these to reprod
 - Trust boundary: trustless with respect to inclusion/claim correctness once a Merkle root is published; trust‑minimized with respect to how off‑chain events are measured and aggregated.
 - Off‑chain aggregator is trusted to compute correct Merkle roots; on‑chain verification prevents out‑of‑set claims but cannot validate off‑chain event semantics.
 - Replay resistance via per‑slot bitmaps; double‑claims are rejected when the bit is already set.
-- Channel identifiers are normalized to ASCII lowercase before deriving `streamer_key`.
+- Channel identifiers are normalized to ASCII lowercase before deriving `subject_id`.
 - Program can be paused via `ProtocolState.paused` to stop claims during incidents.
 
 IP disclosure note: This document intentionally omits off‑chain scoring heuristics, data sources, thresholds, and infrastructure topology. Only the on‑chain interfaces and guarantees are described.
