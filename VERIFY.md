@@ -42,14 +42,21 @@ cargo build-sbf
 
 ### 4. Compare Hash
 ```bash
-# Get on-chain hash
-solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-beta
-
 # Get your local build hash
-sha256sum target/deploy/token_2022.so
+LOCAL_HASH=$(sha256sum programs/token_2022/target/deploy/token_2022.so | cut -d' ' -f1)
+LOCAL_SIZE=$(stat -c%s programs/token_2022/target/deploy/token_2022.so)
+
+# Get on-chain program and trim to actual program size
+solana program dump GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop on-chain.so --url mainnet-beta
+ON_CHAIN_HASH=$(head -c "$LOCAL_SIZE" on-chain.so | sha256sum | cut -d' ' -f1)
+
+echo "Local:    $LOCAL_HASH"
+echo "On-chain: $ON_CHAIN_HASH"
 
 # Expected hash: e6bda5c18d1ac7efbec7f7761d48f326ea73fcbe3753873c4de3c5f19a017322
 ```
+
+**Note:** On-chain accounts are padded with zeros to their account size. We trim to the actual program size (510936 bytes) before comparing hashes. Solscan and other verification tools handle this trimming automatically.
 
 ### 5. Verify on Solscan
 Navigate to: https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
@@ -57,6 +64,20 @@ Navigate to: https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dC
 Look for the "Verified" badge and matching source code link.
 
 **Verified Hash:** `e6bda5c18d1ac7efbec7f7761d48f326ea73fcbe3753873c4de3c5f19a017322`
+
+## Understanding On-Chain vs Local Hashes
+
+When comparing hashes, it's important to understand how Solana stores programs:
+
+- **Local build** (`target/deploy/token_2022.so`): 510936 bytes - the actual compiled program
+- **On-chain account**: 830936 bytes - includes 320000 bytes of padding (zero-filled slack space)
+
+When you dump the on-chain program with `solana program dump`, you get the entire account including padding. To verify it matches the local build, you must:
+
+1. Compare only the first 510936 bytes of the on-chain dump
+2. Or rebuild locally and compare to the trimmed on-chain binary
+
+This is why verification tools like Solscan trim before comparing. The hashes will only match when both binaries are the same size.
 
 ## Build Environment
 
