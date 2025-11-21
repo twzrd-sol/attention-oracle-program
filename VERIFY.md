@@ -15,7 +15,7 @@ Anyone can reproduce our build and verify it matches on-chain:
 ```bash
 git clone https://github.com/twzrd-sol/attention-oracle-program.git
 cd attention-oracle-program
-git checkout v2.0.0  # Use the specific release tag
+git checkout v1.1.0  # Use the specific release tag
 ```
 
 ### 2. Install Dependencies
@@ -34,7 +34,7 @@ avm use 0.32.1
 ### 3. Build Deterministically
 ```bash
 # This produces a verifiable build
-anchor build --verifiable
+anchor build --verifiable --arch sbf
 ```
 
 ### 4. Compare Hash
@@ -43,9 +43,9 @@ anchor build --verifiable
 solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-beta
 
 # Get your local build hash
-sha256sum target/verifiable/token_2022.so
+sha256sum target/deploy/token_2022.so
 
-# Expected hash: 51186292830050f1555d5593ce8ca61bdc590c1cd5138bc571a420194111112d
+# v1.1.0 Expected hash: 647b8bd464d3837f03f0e68b4823cfc719e1e4793c3c72c7d5cdc09bbf816cb2
 ```
 
 ### 5. Verify on Solscan
@@ -53,7 +53,7 @@ Navigate to: https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dC
 
 Look for the "Verified" badge and matching source code link.
 
-**Verified Hash:** `51186292830050f1555d5593ce8ca61bdc590c1cd5138bc571a420194111112d`
+**Verified Hash (v1.1.0):** `647b8bd464d3837f03f0e68b4823cfc719e1e4793c3c72c7d5cdc09bbf816cb2`
 
 ## Build Environment
 
