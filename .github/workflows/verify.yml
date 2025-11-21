@@ -46,9 +46,11 @@ jobs:
         working-directory: programs/token_2022
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Clean build (prevent cache poisoning)
-        working-directory: programs/token_2022
-        run: cargo clean
+      - name: Nuclear clean (destroy ALL cache)
+        run: |
+          rm -rf programs/token_2022/target
+          rm -rf target
+          cargo clean --manifest-path programs/token_2022/Cargo.toml
 
       - name: Build program (deterministic cargo build-sbf)
         working-directory: programs/token_2022
