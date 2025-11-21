@@ -61,13 +61,23 @@ jobs:
         run: |
           export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
           anchor build --verifiable
-          ls -lh target/deploy/token_2022.so
+          # Anchor creates the binary but we need to find it
+          find . -name "token_2022.so" -type f | head -5
 
       - name: Locate artifact
         id: locate
         run: |
+          # After anchor build --verifiable, binary is in target/deploy/
+          SO=$(find target -name "token_2022.so" -type f | head -n 1)
+          if [ -z "$SO" ]; then
+            echo "No token_2022.so found under target/" >&2
+            find . -name "*.so" -type f | head -10
+            exit 1
+          fi
+          # Copy to standard location for consistency
+          mkdir -p target/deploy
+          cp "$SO" target/deploy/token_2022.so
           SO="target/deploy/token_2022.so"
-          if [ ! -f "$SO" ]; then echo "No token_2022.so found at $SO" >&2; exit 1; fi
           echo "so=$SO" >> $GITHUB_OUTPUT
           ls -lh "$SO"
 
