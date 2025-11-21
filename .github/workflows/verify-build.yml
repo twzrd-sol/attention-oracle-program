@@ -46,6 +46,11 @@ jobs:
             ${{ runner.os }}-cargo-${{ matrix.solana }}-
             ${{ runner.os }}-cargo-
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config libssl-dev
+
       - name: Install Anchor CLI 0.32.1 (best-effort)
         continue-on-error: true
         run: |
@@ -59,7 +64,7 @@ jobs:
           solana --version || true
           which cargo-build-sbf || true
           mkdir -p target/deploy
-          cargo build-sbf --sbf-out-dir target/deploy -- --release
+          cargo build-sbf --sbf-out-dir target/deploy
 
       - name: Locate artifact
         id: locate
