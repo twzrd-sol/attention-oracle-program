@@ -43,8 +43,7 @@ jobs:
           solana --version
           rustc --version
       - name: Clippy zero
-        working-directory: programs/token_2022
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy -p attention-oracle-token-2022 --all-targets --all-features -- -D warnings
 
       - name: Nuclear clean (destroy ALL cache)
         run: |
@@ -52,9 +51,10 @@ jobs:
           rm -rf target
           cargo clean --manifest-path programs/token_2022/Cargo.toml
 
-      - name: Build program (deterministic cargo build-sbf)
-        working-directory: programs/token_2022
-        run: cargo build-sbf --sbf-out-dir target/deploy
+      - name: Build program (deterministic cargo build-sbf from workspace root)
+        run: |
+          # Build from workspace root so workspace release profile applies
+          cargo build-sbf -p attention-oracle-token-2022 --sbf-out-dir programs/token_2022/target/deploy
 
       - name: Verify on-chain hash (PERMANENT LOCK)
         run: |
@@ -62,8 +62,9 @@ jobs:
           solana program dump GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop on-chain.so --url mainnet-beta
 
           echo "=== Computing hashes (trimming on-chain account padding) ==="
-          LOCAL_HASH=$(sha256sum programs/token_2022/target/deploy/token_2022.so | cut -d' ' -f1)
-          LOCAL_SIZE=$(stat -c%s programs/token_2022/target/deploy/token_2022.so)
+          LOCAL_PATH=programs/token_2022/target/deploy/token_2022.so
+          LOCAL_HASH=$(sha256sum "$LOCAL_PATH" | cut -d' ' -f1)
+          LOCAL_SIZE=$(stat -c%s "$LOCAL_PATH")
           ON_CHAIN_HASH=$(head -c "$LOCAL_SIZE" on-chain.so | sha256sum | cut -d' ' -f1)
 
           echo "Local build (cargo build-sbf): $LOCAL_HASH ($LOCAL_SIZE bytes)"
