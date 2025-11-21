@@ -84,7 +84,7 @@ jobs:
         run: |
           # Use Anchor 0.32.1's native verification, which standardizes the build in Docker
           # and compares against on-chain for the given Program ID.
-          anchor verify -u m -p token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+          anchor verify -p token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
       - name: Build verifiable artifact for summary (best-effort)
         if: always()
         continue-on-error: true
