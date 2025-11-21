@@ -13,8 +13,8 @@ Anyone can reproduce our build and verify it matches on-chain:
 
 ### 1. Clone This Repository
 ```bash
-git clone https://github.com/twzrd-sol/milo-token.git
-cd milo-token
+git clone https://github.com/twzrd-sol/attention-oracle-program.git
+cd attention-oracle-program
 git checkout v2.0.0  # Use the specific release tag
 ```
 
