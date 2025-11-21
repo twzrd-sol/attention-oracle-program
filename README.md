@@ -1,101 +1,41 @@
-# Attention Oracle — Open Core
+# Attention Oracle — Verifiable Token‑2022 Program
 
-Builder-neutral Token-2022 protocol on Solana. Minimal, verifiable on-chain reference implementation. All advanced off-chain components (aggregators, listeners, interfaces, toolkits) are developed privately and released only when production-ready.
+This repository contains the minimal, verifiable on‑chain program that is deployed to Solana mainnet. All off‑chain components and any non‑critical code live in private repos. The public tree is kept intentionally small to guarantee reproducibility and trustless verification.
 
-Mainnet program ID (verified): `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`  
-Built with Anchor 0.32.1 + Agave 3.0.10
+- Program ID: `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
+- Program: `programs/token_2022/`
+- Toolchain: Anchor 0.32.1 + Agave 3.0.10 + Rust 1.91.1
 
-## Repository Scope
+## What’s Included (and why)
 
-This public repository contains only the verifiable on-chain surface:
+- Only `programs/token_2022/` is published. This is the exact code used to produce the deployed binary. Keeping the public tree to this program ensures anyone can rebuild the same bytes and compare them to what’s on‑chain.
 
-- `programs/token_2022/` – the deployed Token-2022 extension program
-- `attention_oracle_program/` – canonical Anchor workspace that orchestrates builds
-- `oracles/x402-switchboard/` – minimal reference oracle (x402 + Switchboard) for demonstration only
+## One‑Command Verification
 
-Everything else lives in private repositories until mature. The public tree is intentionally minimal and permanently verifiable. No secret sauce, no moving parts, no hidden dependencies.
-
-| Folder | Description | Last Commit | When |
-| --- | --- | --- | --- |
-| `attention_oracle_program` | Anchor workspace (helper scripts, CI manifests) | CI fixes: artifact paths, guard scope, IDL extraction, workspace config | 19 hours ago |
-| `programs/token_2022` | Token-2022 program deployed to mainnet | (see git history) | (see git history) |
-
-## Verification Status
-
-Deterministic, verifiable build – green check on Solscan.  
-Reproduce exactly with:
+Use Anchor’s native verifiable pipeline (Dockerized, deterministic):
 
 ```bash
-anchor build --verifiable
-solana-verify build -k ~/.config/solana/id.json --library-name token_2022
+# From repo root
+anchor verify -u m -p token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 ```
 
-See `VERIFY.md` for the full pipeline and GitHub Actions workflow.
+This reproduces the binary in the pinned container and compares it to mainnet. Our CI runs the same check on release tags.
 
-## Secrets & Keys Policy
+## Expected Verifiable Build (v1.2.1)
 
-- No keys or `.env` files are ever committed.  
-- All keys live in `~/.config/solana/` or local `keys/` (gitignored).  
-- CI uses encrypted GitHub Secrets only.
+- Size: `534,224` bytes
+- SHA256: `8e60919edb1792fa496c20c871c10f9295334bf2b3762d482fd09078c67a0281`
 
-Fork and build safely — this repo is the single source of truth for the deployed bytecode.
+If your local build or environment differs, re‑run in Docker via `anchor build --verifiable` or use the CI workflow on the `v1.2.1` tag.
 
-## Environment
+## CI: What We Publish
 
-Copy the template and fill the values you need (never commit this file):
-
-```bash
-cp .env.example .env
-```
-
-Required variables:
-
-- `ANCHOR_PROVIDER_URL` — your RPC
-- `ANCHOR_WALLET` — path to deploy keypair
-- `AO_PROGRAM_ID=GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
-- Switchboard demo: `SB_CLUSTER`, `SB_QUEUE`, `SB_FEED`, `PORT`
-
-## Build
-
-```bash
-cd programs/token_2022
-anchor build --verifiable
-```
-
-## Toolchain notes
-
-- Workspace Rust: `1.91.1` (dev workflow)  
-- SBF target: `rustc 1.84.1-sbpf` (via Solana CLI `3.0.10`)  
-- `rust-version` in crate = `1.84` to keep Anchor happy
-
-## Test
-
-```bash
-cd programs/token_2022
-anchor test
-```
-
-## Reference Oracle Demo (x402 + Switchboard)
-
-```bash
-cd oracles/x402-switchboard
-npm install
-npm run dev
-curl http://localhost:3000/price
-```
-
-Stateless reference implementation only. Production oracles run privately.
-
-## Canonical Production Flow
-
-1. Private aggregators ingest off-chain events
-2. Publish channel roots via `set_channel_merkle_root` (ring buffer)
-3. Users claim via `claim_channel_open` / `claim_channel_open_with_receipt`
-4. Long-lived reputation via passport instructions (`mint_passport_open`, `upgrade_passport_open`, …)
-5. `transfer_hook` allocates dynamic fees by passport tier
-6. Off-chain keepers harvest fees
-
-Legacy epoch-based instructions are gated behind the `legacy` feature and used only for migrations.
+Our GitHub Actions workflow (Verify Program) does the following on tags:
+- Runs `anchor verify` against mainnet for the Program ID above
+- Builds a verifiable artifact and uploads:
+  - `local` verifiable `.so`
+  - `on-chain.so` dump
+  - A summary with local size/hash, on‑chain trimmed hash, and tool versions
 
 ## Security
 
@@ -103,4 +43,4 @@ Report vulnerabilities → security@twzrd.xyz
 
 ## License
 
-MIT OR Apache-2.0
+MIT OR Apache‑2.0
