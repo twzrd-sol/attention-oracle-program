@@ -74,24 +74,21 @@ jobs:
           echo "so=$SO" >> $GITHUB_OUTPUT
           ls -lh "$SO"
 
-      - name: Compute SHA256 (2.3.0 only)
+      - name: Compute SHA256
         id: sha
-        if: matrix.solana == '2.3.0'
         run: |
           SO="${{ steps.locate.outputs.so }}"
           echo "sha256=$(sha256sum "$SO" | cut -d' ' -f1)" >> $GITHUB_OUTPUT
           ls -lh "$SO"
 
-      - name: Extract IDL (best-effort, 2.3.0 only)
-        if: matrix.solana == '2.3.0'
+      - name: Extract IDL (best-effort)
         continue-on-error: true
         run: |
           mkdir -p target/idl
           anchor idl parse -f programs/token_2022/src/lib.rs -o target/idl/token_2022.json || true
           test -f target/idl/token_2022.json && jq length target/idl/token_2022.json || true
 
-      - name: Upload artifacts (2.3.0 only)
-        if: matrix.solana == '2.3.0'
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sbf-artifacts
@@ -99,8 +96,7 @@ jobs:
             ${{ steps.locate.outputs.so }}
             target/idl/token_2022.json
 
-      - name: Summary (2.3.0 only)
-        if: matrix.solana == '2.3.0'
+      - name: Summary
         run: |
           echo "Binary SHA256: ${{ steps.sha.outputs.sha256 }}" | tee -a $GITHUB_STEP_SUMMARY
 
