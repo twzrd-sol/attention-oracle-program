@@ -108,7 +108,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download 2.3.0 artifacts
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: sbf-artifacts
