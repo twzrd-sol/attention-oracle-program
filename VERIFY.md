@@ -45,7 +45,8 @@ solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-b
 # Get your local build hash
 sha256sum target/deploy/token_2022.so
 
-# v1.1.0 Expected hash: 647b8bd464d3837f03f0e68b4823cfc719e1e4793c3c72c7d5cdc09bbf816cb2
+# v1.1.0 Expected hash: 97f9880ddf21ba9d1b50c45ed7717e7bf646f23a203bf10392329ca8e416f1cf
+# v1.2.0 Expected hash: 357047e93929b6ad8f6879575b0633d2ae97d7ec78475a48c73000d6156b8a27 (AMM-compatible)
 ```
 
 ### 5. Verify on Solscan
@@ -53,7 +54,17 @@ Navigate to: https://solscan.io/account/GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dC
 
 Look for the "Verified" badge and matching source code link.
 
-**Verified Hash (v1.1.0):** `647b8bd464d3837f03f0e68b4823cfc719e1e4793c3c72c7d5cdc09bbf816cb2`
+**Verified Hash (v1.1.0):** `97f9880ddf21ba9d1b50c45ed7717e7bf646f23a203bf10392329ca8e416f1cf`
+**Verified Hash (v1.2.0 - AMM Compatible):** `357047e93929b6ad8f6879575b0633d2ae97d7ec78475a48c73000d6156b8a27`
+
+### 6. Optional: Cryptographic Proof via `solana-verify`
+```bash
+solana-verify verify -u m \
+  --program-id GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop \
+  --commit v1.1.0 \
+  twzrd-sol/attention-oracle-program
+```
+The command above fetches this repository at `v1.1.0`, performs the deterministic build in a containerized environment, and compares the resulting ELF hash with the one deployed on mainnet.
 
 ## Build Environment
 
