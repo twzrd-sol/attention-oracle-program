@@ -12,7 +12,7 @@ on:
 
 env:
   PROGRAM_ID: GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
-  SOLANA_VERSION: '2.3.0'
+  SOLANA_VERSION: '3.0.10'
   ANCHOR_VERSION: '0.32.1'
 
 jobs:
@@ -57,7 +57,7 @@ jobs:
           solana --version
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.84.0
+        uses: dtolnay/rust-toolchain@1.91.1
 
       - name: Cache dependencies
         uses: actions/cache@v4
@@ -170,7 +170,7 @@ jobs:
 
           - Solana CLI: ${{ env.SOLANA_VERSION }}
           - Anchor: ${{ env.ANCHOR_VERSION }}
-          - Rust: 1.84.0
+          - Rust: 1.91.1
 
           ## Verification
 

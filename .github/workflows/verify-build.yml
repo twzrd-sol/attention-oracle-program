@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        solana: [ '2.3.0', 'stable' ]
+        solana: [ '3.0.10' ]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,8 +32,8 @@ jobs:
           echo "Installing Solana CLI channel: $CH"
           sh -c "$(curl -sSfL https://release.anza.xyz/$CH/install)"
 
-      - name: Install Rust toolchain (1.84.0)
-        uses: dtolnay/rust-toolchain@1.84.0
+      - name: Install Rust toolchain (1.91.1)
+        uses: dtolnay/rust-toolchain@1.91.1
 
       - name: Cache Cargo registry and git
         uses: actions/cache@v4
