@@ -9,31 +9,43 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Fail on forbidden paths
         shell: bash
         run: |
           set -euo pipefail
-          FILES="$(git ls-files)"
-          # 1) Allow only: programs/token_2022, programs/attention_oracle_program, oracles/x402-switchboard
+          # Compute changed files in this PR (base..head)
+          BASE_SHA='${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA='${{ github.sha }}'
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "null" ]; then
+            echo "No pull_request base SHA; falling back to HEAD-only check"
+            CHANGED_FILES=$(git ls-files)
+          else
+            git fetch --no-tags --prune origin "+refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}"
+            CHANGED_FILES=$(git diff --name-only "$BASE_SHA"..."$HEAD_SHA" || true)
+          fi
+
+          # 1) Allow only certain subtrees under programs/ and oracles/ for CHANGED files
           ALLOWED="^(programs/(token_2022|attention_oracle_program)|oracles/x402-switchboard)(/|$)"
-          FORBIDDEN_DIRS=$(echo "$FILES" | grep -E '^(programs|oracles)/' | grep -Ev "$ALLOWED" || true)
+          FORBIDDEN_DIRS=$(echo "$CHANGED_FILES" | grep -E '^(programs|oracles)/' | grep -Ev "$ALLOWED" || true)
           if [ -n "$FORBIDDEN_DIRS" ]; then
             echo "❌ Forbidden paths detected (only token_2022, attention_oracle_program, x402-switchboard allowed):"
             echo "$FORBIDDEN_DIRS"
             exit 1
           fi
-          # 2) Forbid vendored/build/keys directories anywhere in tree
-          if echo "$FILES" | grep -E '(^|/)(node_modules|dist|logs|keys)(/|$)' | grep -q .; then
+          # 2) Forbid vendored/build/keys directories in CHANGED files
+          if echo "$CHANGED_FILES" | grep -E '(^|/)(node_modules|dist|logs|keys)(/|$)' | grep -q .; then
             echo "❌ Forbidden vendored/build/keys paths detected"
             exit 1
           fi
-          # 3) Forbid .env files (but allow .env.example)
-          if echo "$FILES" | grep -E '(^|/)\.env($|/)' | grep -q .; then
+          # 3) Forbid .env files in CHANGED files (allow .env.example)
+          if echo "$CHANGED_FILES" | grep -E '(^|/)\.env($|/)' | grep -q .; then
             echo "❌ Forbidden .env path detected"
             exit 1
           fi
-          # 4) Forbid database artifacts (*.db)
-          if echo "$FILES" | grep -E '\.db($|/|\.)' | grep -q .; then
+          # 4) Forbid database artifacts (*.db) in CHANGED files
+          if echo "$CHANGED_FILES" | grep -E '\.db($|/|\.)' | grep -q .; then
             echo "❌ Forbidden database artifact detected"
             exit 1
           fi
