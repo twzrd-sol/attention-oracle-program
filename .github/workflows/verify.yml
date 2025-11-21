@@ -163,7 +163,7 @@ jobs:
           fi
           if [ -f verify-artifacts/tool-versions.txt ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "Tool Versions" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Tool Versions" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
             {
               echo '```'
