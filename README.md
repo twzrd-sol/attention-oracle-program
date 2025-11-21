@@ -16,10 +16,10 @@ Use Anchor’s native verifiable pipeline (Dockerized, deterministic):
 
 ```bash
 # From repo root
-anchor verify -u m -p token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+anchor verify -p token_2022 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 ```
 
-This reproduces the binary in the pinned container and compares it to mainnet. Our CI runs the same check on release tags.
+This builds in the pinned container and compares the trimmed executable section to mainnet. Our CI runs the same check on release tags.
 
 ## Expected Verifiable Build (v1.2.1)
 
