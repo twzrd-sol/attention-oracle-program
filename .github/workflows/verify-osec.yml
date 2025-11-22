@@ -1,0 +1,94 @@
+name: OtterSec Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      program_id:
+        description: "On-chain program address"
+        required: true
+        default: "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+      lib_name:
+        description: "Library name from Cargo.toml"
+        required: true
+        default: "token_2022"
+      commit_hash:
+        description: "Commit hash to verify (leave empty to use current SHA)"
+        required: false
+
+jobs:
+  verify-osec:
+    runs-on: ubuntu-latest
+    name: Verify with OtterSec API
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine commit hash
+        id: commit
+        run: |
+          if [ -n "${{ github.event.inputs.commit_hash }}" ]; then
+            COMMIT="${{ github.event.inputs.commit_hash }}"
+          else
+            COMMIT="${{ github.sha }}"
+          fi
+          echo "hash=$COMMIT" >> $GITHUB_OUTPUT
+          echo "Using commit hash: $COMMIT"
+
+      - name: Submit verification to OtterSec API
+        id: verify
+        run: |
+          RESPONSE=$(curl -s -X POST https://verify.osec.io/verify \
+            -H "Content-Type: application/json" \
+            -d '{
+              "repository": "https://github.com/${{ github.repository }}",
+              "commit": "${{ steps.commit.outputs.hash }}",
+              "program_id": "${{ github.event.inputs.program_id }}",
+              "lib_name": "${{ github.event.inputs.lib_name }}"
+            }')
+          
+          echo "response<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESPONSE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          echo "Full Response:"
+          echo "$RESPONSE"
+          
+          # Try to extract status URL if it exists in the response
+          STATUS_URL=$(echo "$RESPONSE" | grep -oP '(?<="status_url":")[^"]*' || echo "")
+          if [ -n "$STATUS_URL" ]; then
+            echo "status_url=$STATUS_URL" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Display verification results
+        run: |
+          echo "## OtterSec Verification Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Inputs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Program ID:** \`${{ github.event.inputs.program_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Library Name:** \`${{ github.event.inputs.lib_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit Hash:** \`${{ steps.commit.outputs.hash }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### API Response" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          echo '${{ steps.verify.outputs.response }}' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${{ steps.verify.outputs.status_url }}" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Status URL" >> $GITHUB_STEP_SUMMARY
+            echo "Check verification status at: ${{ steps.verify.outputs.status_url }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Print status URL to logs
+        if: steps.verify.outputs.status_url != ''
+        run: |
+          echo "=========================================="
+          echo "Verification Status URL:"
+          echo "${{ steps.verify.outputs.status_url }}"
+          echo "=========================================="
+          echo ""
+          echo "Click the URL above to check the verification status on OtterSec."
