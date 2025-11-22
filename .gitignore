@@ -6,15 +6,14 @@ yarn-debug.log*
 yarn-error.log*
 package-lock.json
 
-# Next.js
+# Next.js output
 .next/
 out/
 build/
 dist/
 
-# Exclude app subtrees by default (will add allow-list when ready)
+# Private app subtrees (kept out of public scope)
 apps/*
-apps/stream-listener-ts/
 apps/twzrd-aggregator-rs/
 portal-v3/
 x402-api-server/
@@ -24,54 +23,45 @@ x402-api-server/
 .env.*.local
 .env*
 **/.env*
-# but allow tracked examples across the repo
 !.env.example
 !**/.env.example
 
-# IDE
+# Editors/OS
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
 
-# Rust/Anchor
+# Rust / Anchor
 target/
 **/*.rs.bk
-
-# Test artifacts
-test-ledger/
 .anchor/
+test-ledger/
 
 # Logs
 logs/
 *.log
 
-# Keys (CRITICAL - Never commit keys!)
-*.json
-!package*.json
-!tsconfig.json
+# Keys (critical: never commit secrets)
 *.pem
 *.key
 .keys/
-
-# Common key/config directories
 keys/
+*.json
+!package*.json
+!tsconfig.json
 
-# Database
+# Databases
 *.db
 *.sqlite
 
-# OS files
-Thumbs.db
-.DS_Store
-
-# Repo hygiene (avoid committing internal or binary artifacts)
+# Repo hygiene (binary/internal artifacts)
 backups/
 claim-ui-export/
 verify-snapshot/
-test-ledger/
 submission_clean_*.zip
 gateway/
 infra/
@@ -91,15 +81,14 @@ apps/worker-v2/
 apps/ctw-*/
 apps/_deprecated-*/
 apps/_archive/
-# Public repo scope (only program + oracle)
+
+# Public repo scope (program + oracle only)
 docs/
 cli/
 sdk/
 scripts/
 apps/twzrd-aggregator-rs/
-apps/stream-listener-ts/
 schema_dump*.sql
-twzrd-stream-listener-*
 
 .claude/
 GILL_MIGRATION_DIRECTIVE.md
