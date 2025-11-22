@@ -67,7 +67,7 @@ pub mod x402_on_demand {
         ix_data.extend_from_slice(&adjusted_reward.to_le_bytes());
 
         let attention_oracle_pid =
-            Pubkey::from_str("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS").unwrap();
+            Pubkey::from_str("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop").unwrap();
 
         let mint_reward_ix = Instruction {
             program_id: attention_oracle_pid,
