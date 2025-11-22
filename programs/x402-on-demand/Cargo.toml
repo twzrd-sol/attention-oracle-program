@@ -7,6 +7,14 @@ edition = "2021"
 crate-type = ["cdylib", "lib"]
 name = "x402_on_demand"
 
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
 [dependencies]
 anchor-lang = "0.32.1"
 anchor-spl = { version = "0.32.1", features = ["token_2022"] }
