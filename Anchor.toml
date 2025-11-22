@@ -1,5 +1,5 @@
 [workspace]
-members = ["programs/token_2022"]
+members = ["programs/token_2022", "programs/x402-on-demand"]
 
 [features]
 seeds = false
@@ -8,14 +8,17 @@ skip-lint = true
 [programs.localnet]
 token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 attention_oracle_program = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+x402_on_demand = "7buCx5353jtT5rsmNr8U6Xe7a41sL1pmkZwzYCCSAmKF"
 
 [programs.devnet]
 token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 attention_oracle_program = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+x402_on_demand = "7buCx5353jtT5rsmNr8U6Xe7a41sL1pmkZwzYCCSAmKF"
 
 [programs.mainnet]
 token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 attention_oracle_program = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+x402_on_demand = "7buCx5353jtT5rsmNr8U6Xe7a41sL1pmkZwzYCCSAmKF"
 
 [provider]
 cluster = "mainnet"
