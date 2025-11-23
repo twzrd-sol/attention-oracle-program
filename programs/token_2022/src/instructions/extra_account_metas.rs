@@ -41,7 +41,9 @@ pub fn initialize_extra_account_meta_list(
                 Seed::Literal {
                     bytes: b"protocol".to_vec(),
                 },
-                Seed::AccountKey { index: 2 }, // Index 2 = mint in transfer_checked
+                // Execute account order: 0=source, 1=mint, 2=destination, 3=authority, 4=validation
+                // Use index 1 for the mint
+                Seed::AccountKey { index: 1 },
             ],
             false, // is_signer
             false, // is_writable
@@ -53,7 +55,7 @@ pub fn initialize_extra_account_meta_list(
                 Seed::Literal {
                     bytes: b"protocol".to_vec(),
                 },
-                Seed::AccountKey { index: 2 }, // Index 2 = mint
+                Seed::AccountKey { index: 1 }, // mint account in execute
                 Seed::Literal {
                     bytes: b"fee_config".to_vec(),
                 },

@@ -17,22 +17,22 @@ pub struct InitializeMint<'info> {
     /// Token-2022 mint (created externally with spl-token CLI)
     pub token_mint: InterfaceAccount<'info, SplMint>,
 
-    /// Protocol state PDA
+    /// Protocol state PDA (mint-keyed)
     #[account(
         init,
         payer = admin,
         space = ProtocolState::LEN,
-        seeds = [PROTOCOL_SEED],
+        seeds = [PROTOCOL_SEED, token_mint.key().as_ref()],
         bump
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    /// Fee configuration PDA
+    /// Fee configuration PDA (mint-keyed)
     #[account(
         init,
         payer = admin,
         space = FeeConfig::LEN,
-        seeds = [PROTOCOL_SEED, b"fee_config"],
+        seeds = [PROTOCOL_SEED, token_mint.key().as_ref(), b"fee_config"],
         bump
     )]
     pub fee_config: Account<'info, FeeConfig>,

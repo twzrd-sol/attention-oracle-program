@@ -26,7 +26,7 @@ legacy = []
 demo = []
 
 [dependencies]
-anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+anchor-lang = { version = "0.32.1", features = ["init-if-needed", "interface-instructions"] }
 anchor-spl = "0.32.1"
 bytemuck = "1.19"
 sha3 = "0.10"

@@ -30,7 +30,7 @@ pub struct Claim<'info> {
     /// Global protocol state (PDA authority over treasury ATA)
     #[account(
         mut,
-        seeds = [PROTOCOL_SEED],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
         constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
     )]
@@ -71,7 +71,7 @@ pub struct Claim<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn claim(
+    pub fn claim(
     ctx: Context<Claim>,
     _subject_index: u8,
     index: u32,
@@ -124,6 +124,13 @@ pub fn claim(
     require!(
         verify_proof(&proof, leaf, epoch.root),
         OracleError::InvalidProof
+    );
+
+    // Ensure the provided mint matches the protocol instance
+    require_keys_eq!(
+        ctx.accounts.mint.key(),
+        ctx.accounts.protocol_state.mint,
+        OracleError::InvalidMint
     );
 
     // Transfer CCM from treasury PDA to claimer (use transfer_checked for Token-2022)

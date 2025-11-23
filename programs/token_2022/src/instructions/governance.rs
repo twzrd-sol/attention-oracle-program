@@ -14,7 +14,7 @@ pub struct UpdateFeeConfig<'info> {
     /// Global protocol state (authority + mint/treasury refs)
     #[account(
         mut,
-        seeds = [PROTOCOL_SEED],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
         constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
@@ -23,7 +23,7 @@ pub struct UpdateFeeConfig<'info> {
     /// Fee configuration PDA
     #[account(
         mut,
-        seeds = [PROTOCOL_SEED, b"fee_config"],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref(), b"fee_config"],
         bump = fee_config.bump
     )]
     pub fee_config: Account<'info, FeeConfig>,
