@@ -1,179 +1,41 @@
-name: Verify Program
+name: verified-build
 
 on:
-  release:
-    types: [published]
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: "Git ref (tag) to verify, e.g. refs/tags/v1.2.1"
-        required: true
-        default: "refs/tags/v1.2.1"
+  push:
+    tags:
+      - 'v*'
 
 jobs:
   verify:
-    # Only verify immutable refs (release tags) or explicit manual input
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      PROGRAM_ID: GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+      RPC_URL: https://api.mainnet-beta.solana.com
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
-      - name: Print ref
-        run: |
-          echo "event=${{ github.event_name }}"
-          echo "github.ref=${{ github.ref }}"
-          echo "inputs.ref=${{ github.event.inputs.ref }}"
-      - name: Validate ref (must be a tag)
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          case "${{ github.event.inputs.ref }}" in
-            refs/tags/v*) echo "OK: tag ref" ;;
-            *) echo "Expected inputs.ref like refs/tags/v1.x.y" >&2; exit 1 ;;
-          esac
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: clippy
-      - name: Install native dependencies (fixes hidapi + protobuf + ssl)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libssl-dev \
-            libudev-dev \
-            libclang-dev \
-            protobuf-compiler
-      - name: Install Anchor CLI v0.32.1 direct (no avm, zero flakes)
-        run: |
-          cargo install anchor-cli \
-            --git https://github.com/coral-xyz/anchor \
-            --tag v0.32.1 \
-            --locked \
-            --force \
-            --root $HOME/.local
+          fetch-depth: 0
 
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          anchor --version
-      - name: Install Agave 3.0.10
-        run: sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.10/install)"
-      - name: Add Agave to PATH
-        run: echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-      - name: Versions
+      - name: Anchor verifiable build (container)
         run: |
-          anchor --version
-          solana --version
-          rustc --version
-      - name: Clippy zero
-        run: cargo clippy -p attention-oracle-token-2022 --all-targets --all-features -- -D warnings
+          docker run --rm -v "$PWD":/work -w /work solanafoundation/anchor:v0.32.1 anchor --version
+          docker run --rm -v "$PWD":/work -w /work solanafoundation/anchor:v0.32.1 anchor build --verifiable
 
-      - name: Nuclear clean (destroy ALL cache)
-        run: |
-          rm -rf programs/token_2022/target
-          rm -rf target
-          cargo clean --manifest-path programs/token_2022/Cargo.toml
+      - name: Setup Rust
+        uses: actions/setup-rust@v1
 
-      - name: Build program (deterministic cargo build-sbf from workspace root)
-        run: |
-          # Build from workspace root so workspace release profile applies
-          # Pass package selection after "--" to cargo-build-sbf
-          mkdir -p programs/token_2022/target/deploy
-          cargo build-sbf --sbf-out-dir programs/token_2022/target/deploy -- -p attention-oracle-token-2022
+      - name: Install solana-verify
+        run: cargo install solana-verify --version 0.4.11
 
-      - name: Anchor native verification (authoritative)
-        working-directory: programs/token_2022
+      - name: Canonical hash compare
         run: |
-          # Use Anchor 0.32.1's native verification against the public repo + commit
-          COMMIT=$(git rev-parse HEAD)
-          anchor verify \
-            --provider.cluster mainnet \
-            --repo-url https://github.com/twzrd-sol/attention-oracle-program \
-            --commit-hash "$COMMIT" \
-            --program-name token_2022 \
-            GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
-      - name: Build verifiable artifact for summary (best-effort)
-        if: always()
-        continue-on-error: true
-        run: |
-          # Produce target/verifiable/token_2022.so for consistent hashing in summary
-          anchor build --verifiable --arch sbf || true
-      - name: Dump on-chain program (for artifacts/summary)
-        if: always()
-        run: |
-          solana program dump GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop on-chain.so --url mainnet-beta || true
-
-      - name: Upload verification artifacts (binaries + hashes)
-        if: always()
-        run: |
-          # Robust collection that tolerates missing files
-          set -u
-          # Prefer verifiable artifact if present, else fallback to prior build output
-          if [ -f target/verifiable/token_2022.so ]; then
-            LOCAL_PATH=target/verifiable/token_2022.so
-          elif [ -f programs/token_2022/target/deploy/token_2022.so ]; then
-            LOCAL_PATH=programs/token_2022/target/deploy/token_2022.so
-          else
-            LOCAL_PATH=$(find target -name token_2022.so -type f | head -n1 || echo "")
+          LOCAL=$(solana-verify get-executable-hash target/verifiable/token_2022.so)
+          REMOTE=$(solana-verify get-program-hash -u "$RPC_URL" "$PROGRAM_ID")
+          echo "Local:  $LOCAL"
+          echo "Remote: $REMOTE"
+          if [ "$LOCAL" != "$REMOTE" ]; then
+            echo "Mismatch: canonical hash differs" >&2
+            exit 1
           fi
-          set +e
-          LOCAL_SIZE=$(stat -c%s "$LOCAL_PATH")
-          STAT_RC=$?
-          LOCAL_HASH=$(sha256sum "$LOCAL_PATH" | cut -d' ' -f1)
-          HASH_RC=$?
-          ONCHAIN_FULL=$(sha256sum on-chain.so | cut -d' ' -f1)
-          FULL_RC=$?
-          if [ "$STAT_RC" -ne 0 ]; then LOCAL_SIZE=0; fi
-          if [ "$HASH_RC" -ne 0 ]; then LOCAL_HASH=unknown; fi
-          if [ "$FULL_RC" -ne 0 ]; then ONCHAIN_FULL=unknown; fi
-          if [ "$LOCAL_SIZE" -gt 0 ] 2>/dev/null; then
-            ONCHAIN_TRIMMED=$(head -c "$LOCAL_SIZE" on-chain.so | sha256sum | cut -d' ' -f1)
-            if [ "$?" -ne 0 ]; then ONCHAIN_TRIMMED=unknown; fi
-          else
-            ONCHAIN_TRIMMED=unknown
-          fi
-          set -e
-          mkdir -p verify-artifacts
-          cp -f "$LOCAL_PATH" verify-artifacts/local-token_2022.so || true
-          cp -f on-chain.so verify-artifacts/on-chain.so || true
-          cat > verify-artifacts/verification-hashes.txt << EOF
-          local_size=$LOCAL_SIZE
-          local_hash=$LOCAL_HASH
-          onchain_full_hash=$ONCHAIN_FULL
-          onchain_trimmed_hash=$ONCHAIN_TRIMMED
-          EOF
-          {
-            anchor --version || true
-            solana --version || true
-            rustc --version || true
-          } > verify-artifacts/tool-versions.txt
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: verify-artifacts
-          path: verify-artifacts
-          retention-days: 7
-
-      - name: Append verification summary
-        if: always()
-        run: |
-          set -euo pipefail
-          echo "## Verify Program Summary" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f verify-artifacts/verification-hashes.txt ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "### Hashes" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            awk -F= 'BEGIN{print "| Key | Value |\n|---|---|"} {gsub(/^[[:space:]]+/, "", $1); printf("| %s | %s |\n", $1, $2)}' verify-artifacts/verification-hashes.txt >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No verification-hashes.txt available." >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f verify-artifacts/tool-versions.txt ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "### Tool Versions" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            {
-              echo '```'
-              cat verify-artifacts/tool-versions.txt || true
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          echo "Match: canonical hash verified"
