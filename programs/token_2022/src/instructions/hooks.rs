@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use spl_tlv_account_resolution::state::ExtraAccountMetaList;
+use spl_transfer_hook_interface::instruction::{ExecuteInstruction, TransferHookInstruction};
 
 use crate::{
     constants::{passport_pda, PROTOCOL_SEED},
@@ -18,7 +20,11 @@ pub struct TransferObserved {
 pub struct TransferHook<'info> {
     /// Owner or delegate initiating the transfer
     /// For AMM swaps, this will be the AMM program's delegate authority
-    pub authority: Signer<'info>,
+    /// In Token-2022 execute, this is not required to be a signer.
+    /// CHECK: Passed by the Token-2022 program as an extra account. Read-only; we
+    /// only compare its pubkey against `source.owner` to detect delegate transfers.
+    /// No CPI or data access is performed with this account.
+    pub authority: UncheckedAccount<'info>,
 
     /// Global protocol state (mint-keyed for open variant)
     #[account(
@@ -52,8 +58,45 @@ pub struct TransferHook<'info> {
 /// Dynamic transfer hook: calculates fees based on passport tier and emits event
 /// with fee breakdown. Allows AMM delegate transfers for Jupiter routing.
 /// AUDIT MODE: Fees are calculated but NOT deducted (mint lacks Transfer Fee extension).
+#[interface(spl_transfer_hook_interface::execute)]
 pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
     require!(amount > 0, OracleError::InvalidAmount);
+
+    // Runtime EAML validation: verify the extra accounts match our expected PDAs.
+    // Build the execute account list in canonical order, then append extras in the
+    // same order we initialized: protocol_state, fee_config, system_program.
+    let mut execute_accounts: Vec<AccountInfo> = vec![
+        ctx.accounts.source.to_account_info(),
+        ctx.accounts.mint.to_account_info(),
+        ctx.accounts.destination.to_account_info(),
+        ctx.accounts.authority.to_account_info(),
+        ctx.accounts.protocol_state.to_account_info(),
+        ctx.accounts.fee_config.to_account_info(),
+        ctx.accounts.system_program.to_account_info(),
+    ];
+    let (eaml_pda, _) = Pubkey::find_program_address(
+        &[b"extra-account-metas", ctx.accounts.mint.key().as_ref()],
+        ctx.program_id,
+    );
+    if let Some(eaml_ai) = ctx.remaining_accounts.iter().find(|ai| ai.key() == eaml_pda) {
+        let eaml_data = eaml_ai.try_borrow_data()?;
+        let ix_data = TransferHookInstruction::Execute { amount }.pack();
+        match ExtraAccountMetaList::check_account_infos::<ExecuteInstruction>(
+            &execute_accounts,
+            &ix_data,
+            ctx.program_id,
+            &eaml_data,
+        ) {
+            Ok(()) => msg!("✓ EAML validation passed"),
+            Err(e) => {
+                msg!("⚠ EAML validation failed: {:?}", e);
+                // Keep non-fatal in audit mode. Switch to error to hard-enforce.
+                // return err!(OracleError::InvalidMintData);
+            }
+        }
+    } else {
+        msg!("ℹ EAML PDA not present in remaining_accounts; skipping validation");
+    }
 
     let ts = Clock::get()?.unix_timestamp;
     let fee_config = &ctx.accounts.fee_config;

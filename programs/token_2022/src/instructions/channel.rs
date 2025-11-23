@@ -212,6 +212,8 @@ pub fn claim_channel_open(
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
+    // Ensure provided mint matches the protocol instance
+    require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
     let subject_id = derive_subject_id(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,
@@ -375,6 +377,8 @@ pub fn claim_channel_open_with_receipt(
     mint_receipt: bool,
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
+    // Ensure provided mint matches the protocol instance
+    require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
     let subject_id = derive_subject_id(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,

@@ -14,7 +14,7 @@ pub struct CloseEpochState<'info> {
 
     /// Global protocol state - verify admin authority
     #[account(
-        seeds = [PROTOCOL_SEED],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
         constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]

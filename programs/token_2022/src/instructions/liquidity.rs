@@ -12,7 +12,7 @@ pub struct TriggerLiquidityDrip<'info> {
 
     /// Global protocol state (future: gated by governance)
     #[account(
-        seeds = [PROTOCOL_SEED],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
         constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]

@@ -1,7 +1,5 @@
-[toolchain]
-
 [features]
-resolution = true
+seeds = false
 skip-lint = false
 
 [programs.devnet]
@@ -14,8 +12,11 @@ token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "mainnet"
+cluster = "mainnet-beta"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -t 1000000 tests/**/*.ts"
+
+[programs.devnet]
+oracle_lite = "Lite111111111111111111111111111111111111111"

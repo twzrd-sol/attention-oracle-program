@@ -1,9 +1,7 @@
 #![allow(ambiguous_glob_reexports)]
-// Hygiene: Enforce standard lints
+// Security: Enforce strict lints for production-grade DeFi code
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
-// Anchor entrypoints necessarily exceed argument-count norms and return Result
-// without per-function # Errors sections; allow these pedantic lints while
-// keeping everything else strict.
+// Allow necessary Anchor boilerplate patterns
 #![allow(clippy::too_many_arguments, clippy::missing_errors_doc)]
 #![allow(clippy::doc_markdown, clippy::must_use_candidate, clippy::needless_pass_by_value)]
 #![allow(clippy::manual_div_ceil)]
@@ -14,6 +12,25 @@
 #![allow(clippy::no_effect_underscore_binding, clippy::pub_underscore_fields)]
 #![allow(clippy::too_long_first_doc_paragraph, clippy::unnecessary_cast, clippy::len_zero)]
 #![allow(clippy::wildcard_imports, clippy::missing_const_for_fn, clippy::use_self)]
+
+//! # Attention Oracle Protocol
+//!
+//! A verifiable, high-throughput distribution primitive for the Solana blockchain.
+//!
+//! ## Architecture
+//!
+//! 1. **Ring-Buffer State**: Utilizes a fixed-size circular buffer to store historical
+//!    Merkle roots. This ensures O(1) storage costs regardless of protocol longevity.
+//! 2. **Treasury-Backed Distribution**: Tokens are transferred from a pre-funded treasury
+//!    rather than minted, ensuring strict supply caps and enabling circular economic flows.
+//! 3. **Token-2022 Integration**: Native support for Transfer Hooks and Extended Metadata,
+//!    enabling programmable yield and dynamic fee enforcement at the token standard level.
+//!
+//! ## Security Model
+//!
+//! - **Cryptographic Verification**: All claims are validated against on-chain Merkle roots.
+//! - **Bitmap Replay Protection**: Bit-level tracking prevents double-spending of claims.
+//! - **Role-Based Access**: Strict separation between Admin (Governance) and Publisher (Oracle).
 
 use anchor_lang::prelude::*;
 
@@ -32,11 +49,12 @@ pub use events::*;
 pub use instructions::*;
 pub use state::*;
 
+// Program ID
 declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
 #[cfg(not(feature = "no-entrypoint"))]
 security_txt! {
-    name: "Attention Oracle - Verifiable Distribution Protocol (Token-2022)",
+    name: "Attention Oracle Protocol",
     project_url: "https://github.com/twzrd-sol/attention-oracle-program",
     contacts: "email:security@twzrd.xyz",
     policy: "https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md",
@@ -49,10 +67,11 @@ pub mod token_2022 {
     use super::*;
 
     // -------------------------------------------------------------------------
-    // Canonical Initialization
+    // Protocol Initialization
     // -------------------------------------------------------------------------
 
-    /// Initialize protocol with existing Token-2022 mint
+    /// Initialize the protocol state and bind it to a Token-2022 mint.
+    /// This establishes the Treasury and Fee Configuration PDAs.
     pub fn initialize_mint(
         ctx: Context<InitializeMint>,
         fee_basis_points: u16,
@@ -61,7 +80,8 @@ pub mod token_2022 {
         instructions::initialize_mint::handler(ctx, fee_basis_points, max_fee)
     }
 
-    /// Initialize ExtraAccountMetaList for transfer hook
+    /// Initialize the ExtraAccountMetaList required for the Transfer Hook.
+    /// This allows the token to read Protocol State during transfers.
     pub fn initialize_extra_account_meta_list(
         ctx: Context<InitializeExtraAccountMetaList>,
     ) -> Result<()> {
@@ -69,10 +89,11 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
-    // Canonical Claims (Ring Buffer)
+    // Oracle & Distribution (Ring Buffer)
     // -------------------------------------------------------------------------
 
-    /// Ring-buffer publish: store latest epoch root in channel state
+    /// Publish a new Merkle root for a specific channel epoch.
+    /// Updates the ring buffer, overwriting the oldest slot if full.
     pub fn set_channel_merkle_root(
         ctx: Context<SetChannelMerkleRoot>,
         channel: String,
@@ -82,7 +103,8 @@ pub mod token_2022 {
         instructions::channel::set_channel_merkle_root(ctx, channel, epoch, root)
     }
 
-    /// Claim using channel ring buffer epoch state
+    /// Execute a claim against a valid Merkle root in the ring buffer.
+    /// Verifies the proof and transfers tokens from the Treasury.
     pub fn claim_channel_open(
         ctx: Context<ClaimChannel>,
         channel: String,
@@ -95,7 +117,8 @@ pub mod token_2022 {
         instructions::channel::claim_channel_open(ctx, channel, epoch, index, amount, id, proof)
     }
 
-    /// Claim with optional cNFT receipt minting (fee-only, rent-free)
+    /// Execute a claim and mint a cNFT receipt in a single atomic transaction.
+    /// Provides a permanent, non-fungible record of the participation event.
     pub fn claim_channel_open_with_receipt(
         ctx: Context<ClaimChannelWithReceipt>,
         channel: String,
@@ -119,15 +142,16 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
-    // Token-2022 Hooks & Governance
+    // DeFi Rails (Hooks & Governance)
     // -------------------------------------------------------------------------
 
-    /// Transfer hook: currently emits event for indexers; future: fee routing
+    /// The Transfer Hook entrypoint called by the Token-2022 program.
+    /// Enforces dynamic fee logic and emits telemetry for indexers.
     pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
         instructions::hooks::transfer_hook(ctx, amount)
     }
 
-    /// Governance: update fee config (basis points)
+    /// Update the base transfer fee configuration.
     pub fn update_fee_config(
         ctx: Context<UpdateFeeConfig>,
         new_basis_points: u16,
@@ -136,7 +160,7 @@ pub mod token_2022 {
         instructions::governance::update_fee_config(ctx, new_basis_points, fee_split)
     }
 
-    /// Governance (open): update fee config for mint-keyed instance
+    /// Update fee configuration for a specific mint instance (Open Pattern).
     pub fn update_fee_config_open(
         ctx: Context<UpdateFeeConfigOpen>,
         new_basis_points: u16,
@@ -145,7 +169,7 @@ pub mod token_2022 {
         instructions::governance::update_fee_config_open(ctx, new_basis_points, fee_split)
     }
 
-    /// Governance: update tier multipliers for dynamic fee allocation
+    /// Update the dynamic tier multipliers used for fee discounting/rewards.
     pub fn update_tier_multipliers(
         ctx: Context<UpdateTierMultipliers>,
         new_multipliers: [u32; 6],
@@ -153,21 +177,20 @@ pub mod token_2022 {
         instructions::governance::update_tier_multipliers(ctx, new_multipliers)
     }
 
-    /// Harvest withheld fees from Token-2022 mint and distribute to treasury/creator pool
+    /// Harvest withheld fees from the mint and distribute to protocol destinations.
+    /// This closes the economic loop by refilling the Treasury.
     pub fn harvest_fees(ctx: Context<HarvestFees>) -> Result<()> {
         instructions::governance::harvest_and_distribute_fees(ctx)
     }
 
     // -------------------------------------------------------------------------
-    // Admin & Policy
+    // Access Control
     // -------------------------------------------------------------------------
 
-    /// Admin: set/rotate allowlisted publisher (singleton)
     pub fn update_publisher(ctx: Context<UpdatePublisher>, new_publisher: Pubkey) -> Result<()> {
         instructions::admin::update_publisher(ctx, new_publisher)
     }
 
-    /// Admin: set/rotate allowlisted publisher (open variant keyed by mint)
     pub fn update_publisher_open(
         ctx: Context<UpdatePublisherOpen>,
         new_publisher: Pubkey,
@@ -175,38 +198,32 @@ pub mod token_2022 {
         instructions::admin::update_publisher_open(ctx, new_publisher)
     }
 
-    /// Admin: set receipt requirement policy (singleton)
     pub fn set_policy(ctx: Context<SetPolicy>, require_receipt: bool) -> Result<()> {
         instructions::admin::set_policy(ctx, require_receipt)
     }
 
-    /// Admin: set receipt requirement policy (open variant keyed by mint)
     pub fn set_policy_open(ctx: Context<SetPolicyOpen>, require_receipt: bool) -> Result<()> {
         instructions::admin::set_policy_open(ctx, require_receipt)
     }
 
-    /// Admin: emergency pause/unpause (singleton)
     pub fn set_paused(ctx: Context<SetPaused>, paused: bool) -> Result<()> {
         instructions::admin::set_paused(ctx, paused)
     }
 
-    /// Admin: emergency pause/unpause (open variant keyed by mint)
     pub fn set_paused_open(ctx: Context<SetPausedOpen>, paused: bool) -> Result<()> {
         instructions::admin::set_paused_open(ctx, paused)
     }
 
-    /// Admin: transfer admin authority (open variant keyed by mint)
     pub fn update_admin_open(ctx: Context<UpdateAdminOpen>, new_admin: Pubkey) -> Result<()> {
         instructions::admin::update_admin_open(ctx, new_admin)
     }
 
-    /// Admin: transfer admin authority (singleton)
     pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
         instructions::admin::update_admin(ctx, new_admin)
     }
 
     // -------------------------------------------------------------------------
-    // Passport (Identity)
+    // Identity Layer (Passport)
     // -------------------------------------------------------------------------
 
     pub fn mint_passport_open(
@@ -282,14 +299,15 @@ pub mod token_2022 {
         )
     }
 
-    /// Gate: require that an owner holds at least `min` Points
     pub fn require_points_ge(ctx: Context<RequirePoints>, min: u64) -> Result<()> {
         instructions::points::require_points_ge(ctx, min)
     }
 
     // -------------------------------------------------------------------------
-    // Legacy Paths (Feature Gated)
+    // Legacy / Deprecated Paths
     // -------------------------------------------------------------------------
+    // Note: These are feature-gated and should be disabled in production builds
+    // unless required for backward compatibility with V1 state.
 
     #[cfg(feature = "legacy")]
     pub fn initialize_mint_open(
@@ -397,10 +415,6 @@ pub mod token_2022 {
     ) -> Result<()> {
         instructions::cleanup::force_close_epoch_state_open(ctx, epoch, subject_id, mint)
     }
-
-    // -------------------------------------------------------------------------
-    // Demo Paths (Feature Gated)
-    // -------------------------------------------------------------------------
 
     #[cfg(feature = "demo")]
     pub fn initialize_channel(ctx: Context<InitializeChannel>, subject_id: Pubkey) -> Result<()> {

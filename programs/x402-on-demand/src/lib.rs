@@ -10,7 +10,7 @@ use switchboard_on_demand::prelude::rust_decimal::Decimal;
 use switchboard_on_demand::program_id::{ON_DEMAND_DEVNET_PID, ON_DEMAND_MAINNET_PID};
 use std::str::FromStr;
 
-declare_id!("7buCx5353jtT5rsmNr8U6Xe7a41sL1pmkZwzYCCSAmKF");
+declare_id!("G2v5XVA4SZnZ5NVLSC7pHJp9JRWSN13jHoXQ9ebpujvB");
 
 const MINT_REWARD_DISCRIMINATOR: [u8; 8] = [66, 151, 112, 62, 139, 184, 250, 209];
 
