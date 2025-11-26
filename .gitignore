@@ -50,12 +50,31 @@ logs/
 
 # Keys (critical: never commit secrets)
 *.pem
+*.p12
+*.pfx
+*.asc
+*.gpg
+*.der
 *.key
+*.jks
 .keys/
 keys/
+.config/
+.ssh/
+*-keypair.json
+*id.json
+*wallet.json
+*.keystore
+*.jwk
 *.json
 !package*.json
 !tsconfig.json
+!components.json
+!vercel.json
+!lighthouserc.json
+
+# Secrets / Env
+.secretsallow
 
 # Databases
 *.db

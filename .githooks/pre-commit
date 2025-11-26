@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Secret/Keypair pre-commit guard for attention-oracle-program
+set -euo pipefail
+
+if [[ "${SKIP_SECRET_CHECK:-}" == "1" ]]; then
+  echo "[pre-commit] Secret checks bypassed"
+  exit 0
+fi
+
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACM | sed '/^$/d')
+[[ ${#files[@]} -eq 0 ]] && exit 0
+
+ALLOW_FILE=".secretsallow"
+failures=()
+
+scan() {
+  local f="$1"
+  git ls-files --error-unmatch "$f" >/dev/null 2>&1 || return 0
+  # filename heuristics
+  case "$f" in
+    *.pem|*.p12|*.pfx|*.asc|*.gpg|*.der) failures+=("$f: private key-like file"); return 0;;
+    *-keypair.json|*id.json|*wallet.json|*.keystore|*.jwk) failures+=("$f: keypair filename"); return 0;;
+    *.env|*.env.*) [[ "$f" =~ \\.(env\\.local\\.example)$ ]] || failures+=("$f: .env committed"); return 0;;
+  esac
+  local content
+  content=$(git show ":$f" 2>/dev/null || true)
+  if echo "$content" | grep -Eq -- '-----BEGIN (RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----'; then
+    failures+=("$f: contains private key block")
+  fi
+  if echo "$content" | grep -Eiq -- '(AWS_SECRET_ACCESS_KEY|SUPABASE_SERVICE_ROLE_KEY|GOOGLE_CLIENT_SECRET|GITHUB_TOKEN|VERCEL_TOKEN|PRIVATE_KEY|SECRET_KEY)\s*[:=]'; then
+    failures+=("$f: contains secret-like variables")
+  fi
+}
+
+for f in "${files[@]}"; do
+  # allowlist check
+  if [[ -f "$ALLOW_FILE" ]] && grep -qx -- "$f" "$ALLOW_FILE"; then continue; fi
+  scan "$f"
+done
+
+if [[ ${#failures[@]} -gt 0 ]]; then
+  echo "[pre-commit] Secret scan FAILED:" >&2
+  printf '  - %s\n' "${failures[@]}" >&2
+  exit 1
+fi
+echo "[pre-commit] OK"
+
