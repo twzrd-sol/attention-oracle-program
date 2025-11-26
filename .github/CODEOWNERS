@@ -1,0 +1,8 @@
+# Adjust to your actual GitHub team/user handles
+# Examples:
+# @twzrd-sol/admins or @your-username
+
+* @zohaibmohd
+programs/** @zohaibmohd
+scripts/** @zohaibmohd
+
