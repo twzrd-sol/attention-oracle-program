@@ -416,7 +416,7 @@ pub mod token_2022 {
         instructions::cleanup::force_close_epoch_state_open(ctx, epoch, subject_id, mint)
     }
 
-    #[cfg(feature = "demo")]
+    // Expose channel initialization in production so PDAs can be created before setting roots
     pub fn initialize_channel(ctx: Context<InitializeChannel>, subject_id: Pubkey) -> Result<()> {
         instructions::merkle_ring::initialize_channel(ctx, subject_id)
     }
