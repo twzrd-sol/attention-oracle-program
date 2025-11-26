@@ -104,12 +104,9 @@ apps/ctw-*/
 apps/_deprecated-*/
 apps/_archive/
 
-# Public repo scope (program + oracle only)
-docs/
-cli/
-sdk/
-scripts/
-apps/twzrd-aggregator-rs/
+# Public repo scope note: do not ignore scripts used for ops
+!scripts/guard-deploy.sh
+!scripts/enable-git-hooks.sh
 schema_dump*.sql
 
 .claude/
