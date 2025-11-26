@@ -1,0 +1,27 @@
+name: protect-main
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  enforce-pr-only:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Block direct pushes to main
+        run: |
+          echo "Direct pushes to main are blocked. Use Pull Requests with reviews." >&2
+          exit 1
+
+  policy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Basic secret grep
+        run: |
+          set -e
+          ! rg -n "-----BEGIN (RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----|AWS_SECRET_ACCESS_KEY|SUPABASE_SERVICE_ROLE_KEY|VERCEL_TOKEN|PRIVATE_KEY|SECRET_KEY" -S || (echo "Potential secret detected." && exit 1)
