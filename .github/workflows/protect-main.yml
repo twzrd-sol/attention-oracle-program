@@ -8,12 +8,22 @@ on:
 
 jobs:
   enforce-pr-only:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Enforce PR-only (main)
+    # Block direct pushes to main, with an explicit, auditable bypass:
+    # - Add "[allow-direct]" to the commit message, or
+    # - Temporarily set repo variable ALLOW_MAIN_PUSH=1
+    # This keeps normal policy strict while allowing controlled emergency changes.
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      !contains(github.event.head_commit.message, '[allow-direct]') &&
+      (vars.ALLOW_MAIN_PUSH != '1')
     runs-on: ubuntu-latest
     steps:
       - name: Block direct pushes to main
         run: |
           echo "Direct pushes to main are blocked. Use Pull Requests with reviews." >&2
+          echo "If this is an emergency, add '[allow-direct]' to the commit message or set repo var ALLOW_MAIN_PUSH=1 temporarily." >&2
           exit 1
 
   policy:
