@@ -1,10 +1,9 @@
 use crate::{
-    constants::{EPOCH_STATE_SEED, PROTOCOL_SEED},
+    constants::{ADMIN_AUTHORITY, EPOCH_STATE_SEED, PROTOCOL_SEED},
     errors::OracleError,
     state::{EpochState, ProtocolState},
 };
 use anchor_lang::prelude::*;
-use std::str::FromStr;
 
 #[derive(Accounts)]
 #[instruction(epoch: u64, subject_id: Pubkey)]
@@ -125,19 +124,14 @@ pub struct ForceCloseEpochStateOpen<'info> {
     pub epoch_state: Account<'info, EpochState>,
 }
 
-// Emergency admin (compile-time)
-const EMERGENCY_ADMIN_STR: &str = "AmMftc4zHgR4yYfv29awV9Q46emo2aGPFW8utP81CsBv";
-
 pub fn force_close_epoch_state_legacy(
     ctx: Context<ForceCloseEpochStateLegacy>,
     _epoch: u64,
     _subject_id: Pubkey,
 ) -> Result<()> {
-    let emergency =
-        Pubkey::from_str(EMERGENCY_ADMIN_STR).map_err(|_| error!(OracleError::Unauthorized))?;
     require_keys_eq!(
         ctx.accounts.admin.key(),
-        emergency,
+        ADMIN_AUTHORITY,
         OracleError::Unauthorized
     );
     // Timelock to reduce risk of premature close
@@ -155,11 +149,9 @@ pub fn force_close_epoch_state_open(
     _subject_id: Pubkey,
     _mint: Pubkey,
 ) -> Result<()> {
-    let emergency =
-        Pubkey::from_str(EMERGENCY_ADMIN_STR).map_err(|_| error!(OracleError::Unauthorized))?;
     require_keys_eq!(
         ctx.accounts.admin.key(),
-        emergency,
+        ADMIN_AUTHORITY,
         OracleError::Unauthorized
     );
     let now = Clock::get()?.unix_timestamp;
