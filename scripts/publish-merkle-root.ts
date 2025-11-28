@@ -1,5 +1,21 @@
 #!/usr/bin/env ts-node
 
+/**
+ * Publish merkle roots for channel epochs to mainnet.
+ *
+ * NOTE: This is the canonical publish script for mainnet.
+ * The contract on mainnet does NOT include the demo feature,
+ * so set_merkle_root_ring is unavailable. Use set_channel_merkle_root only.
+ *
+ * Usage:
+ *   ANCHOR_WALLET=~/.config/solana/amm-admin.json \
+ *   ts-node publish-merkle-root.ts <channel> <epoch> <root_hex>
+ *
+ * Example:
+ *   ANCHOR_WALLET=~/.config/solana/amm-admin.json \
+ *   ts-node publish-merkle-root.ts youtube_lofi 122523 97fbfdc785963a7fcd1c05d05fc4f893742d68292763ad2f6c500846d87826d1
+ */
+
 import {
   Connection,
   Keypair,
@@ -20,6 +36,8 @@ const PROTOCOL_SEED = Buffer.from("protocol");
 const CHANNEL_STATE_SEED = Buffer.from("channel_state");
 
 // Instruction discriminator for set_channel_merkle_root
+// From current IDL (mainnet program): [65, 24, 16, 6, 63, 105, 153, 123]
+// sha256("global:set_channel_merkle_root")[0..8]
 const SET_MERKLE_ROOT_DISCRIMINATOR = Buffer.from([
   65, 24, 16, 6, 63, 105, 153, 123
 ]);
