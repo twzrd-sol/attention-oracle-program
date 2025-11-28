@@ -6,6 +6,9 @@ yarn-debug.log*
 yarn-error.log*
 package-lock.json
 
+# Disallow Markdown files in the public repo
+*.md
+
 # Next.js output
 .next/
 out/
