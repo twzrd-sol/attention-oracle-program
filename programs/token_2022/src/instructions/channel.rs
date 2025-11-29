@@ -386,6 +386,9 @@ pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> 
     let mut data = channel_state_info.try_borrow_mut_data()?;
     data.fill(0);
 
+    // Reassign to system program to close it
+    channel_state_info.assign(&anchor_lang::system_program::ID);
+
 
     msg!(
         "Channel '{}' closed by admin: {}. Reclaimed {} lamports (~{} SOL)",
