@@ -69,7 +69,21 @@ pub fn set_channel_merkle_root(
     let is_publisher =
         protocol_state.publisher != Pubkey::default() && signer == protocol_state.publisher;
     require!(is_admin || is_publisher, OracleError::Unauthorized);
-    let subject_id = derive_subject_id(&channel);
+
+    // Create account if needed
+    let channel_state_info = ctx.accounts.channel_state.to_account_info();
+    let is_new_account = channel_state_info.owner != ctx.program_id;
+
+    // For NEW accounts: derive subject_id from channel name
+    // For EXISTING accounts: use stored subject_id to avoid migration issues
+    let subject_id = if is_new_account {
+        derive_subject_id(&channel)
+    } else {
+        // Load existing account to get stored subject
+        let existing_state = ctx.accounts.channel_state.load()?;
+        existing_state.subject
+    };
+
     let seeds = [
         CHANNEL_STATE_SEED,
         protocol_state.mint.as_ref(),
@@ -82,9 +96,7 @@ pub fn set_channel_merkle_root(
         OracleError::InvalidChannelState
     );
 
-    // Create account if needed
-    let channel_state_info = ctx.accounts.channel_state.to_account_info();
-    if channel_state_info.owner != ctx.program_id {
+    if is_new_account {
         msg!("Creating channel state account");
         let rent = Rent::get()?;
         let space = 8 + std::mem::size_of::<ChannelState>();
@@ -294,6 +306,96 @@ pub fn claim_channel_open(
         tokens,
         ctx.accounts.mint.decimals,
     )?;
+
+    Ok(())
+}
+
+// ============================================================================
+// CLOSE CHANNEL (Admin Maintenance)
+// ============================================================================
+
+/// Close a channel state account and reclaim rent to the admin.
+/// Critical for cleaning up disabled streams (e.g., Twitch migrations).
+#[derive(Accounts)]
+#[instruction(channel: String)]
+pub struct CloseChannel<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    /// Protocol state to verify admin authority
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// The channel state to close - rent refunded to admin
+    /// CHECK: PDA validated via seeds; closed manually to handle zero_copy
+    #[account(mut)]
+    pub channel_state: AccountLoader<'info, ChannelState>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> {
+    // Derive and validate subject_id matches the provided channel
+    let subject_id = derive_subject_id(&channel);
+    let protocol_state = &ctx.accounts.protocol_state;
+
+    // Verify PDA derivation
+    let seeds = [
+        CHANNEL_STATE_SEED,
+        protocol_state.mint.as_ref(),
+        subject_id.as_ref(),
+    ];
+    let (expected_pda, _bump) = Pubkey::find_program_address(&seeds, ctx.program_id);
+    require_keys_eq!(
+        expected_pda,
+        ctx.accounts.channel_state.to_account_info().key(),
+        OracleError::InvalidChannelState
+    );
+
+    // Load channel state to verify it belongs to this protocol instance
+    let channel_state = ctx.accounts.channel_state.load()?;
+    require!(
+        channel_state.mint == protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(
+        channel_state.subject == subject_id,
+        OracleError::InvalidChannelState
+    );
+
+    // Drop the borrow before closing
+    drop(channel_state);
+
+    // Close account: transfer lamports to admin, zero data, reassign to system program
+    let channel_state_info = ctx.accounts.channel_state.to_account_info();
+    let admin_info = ctx.accounts.admin.to_account_info();
+
+    // Transfer all lamports to admin
+    let lamports = channel_state_info.lamports();
+    **channel_state_info.try_borrow_mut_lamports()? = 0;
+    **admin_info.try_borrow_mut_lamports()? = admin_info
+        .lamports()
+        .checked_add(lamports)
+        .ok_or(OracleError::InvalidAmount)?;
+
+    // Zero out data
+    let mut data = channel_state_info.try_borrow_mut_data()?;
+    data.fill(0);
+
+    // Reassign to system program (marks account as closed)
+    channel_state_info.assign(&anchor_lang::system_program::ID);
+
+    msg!(
+        "Channel '{}' closed by admin: {}. Reclaimed {} lamports (~{} SOL)",
+        channel,
+        ctx.accounts.admin.key(),
+        lamports,
+        lamports as f64 / 1_000_000_000.0
+    );
 
     Ok(())
 }
