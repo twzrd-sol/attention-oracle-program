@@ -374,17 +374,23 @@ pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> 
     let channel_state_info = ctx.accounts.channel_state.to_account_info();
     let admin_info = ctx.accounts.admin.to_account_info();
 
-    // Transfer all lamports to admin
-    let lamports = channel_state_info.lamports();
-    **channel_state_info.try_borrow_mut_lamports()? = 0;
+    // Transfer all lamports to admin (scoped so borrow drops)
+    let lamports = {
+        let mut lamports_ref = channel_state_info.try_borrow_mut_lamports()?;
+        let lamports = **lamports_ref;
+        **lamports_ref = 0;
+        lamports
+    };
     **admin_info.try_borrow_mut_lamports()? = admin_info
         .lamports()
         .checked_add(lamports)
         .ok_or(OracleError::InvalidAmount)?;
 
-    // Zero out data
-    let mut data = channel_state_info.try_borrow_mut_data()?;
-    data.fill(0);
+    // Zero out data (scoped to drop borrow before CPI)
+    {
+        let mut data = channel_state_info.try_borrow_mut_data()?;
+        data.fill(0);
+    }
 
     // Reassign to system program to close it
     invoke_signed(
