@@ -387,7 +387,19 @@ pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> 
     data.fill(0);
 
     // Reassign to system program to close it
-    channel_state_info.assign(&anchor_lang::system_program::ID);
+    invoke_signed(
+        &system_instruction::assign(channel_state_info.key, &anchor_lang::system_program::ID),
+        &[
+            channel_state_info.clone(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+        &[&[
+            CHANNEL_STATE_SEED,
+            protocol_state.mint.as_ref(),
+            subject_id.as_ref(),
+            &[bump],
+        ]],
+    )?;
 
 
     msg!(
