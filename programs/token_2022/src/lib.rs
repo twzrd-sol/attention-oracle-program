@@ -141,6 +141,12 @@ pub mod token_2022 {
         )
     }
 
+    /// Close a channel state account and reclaim rent to the admin.
+    /// Critical for cleaning up disabled streams (e.g. Twitch migration).
+    pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> {
+        instructions::channel::close_channel(ctx, channel)
+    }
+
     // -------------------------------------------------------------------------
     // DeFi Rails (Hooks & Governance)
     // -------------------------------------------------------------------------
@@ -447,5 +453,15 @@ pub mod token_2022 {
     #[cfg(feature = "demo")]
     pub fn close_old_epoch_state(ctx: Context<CloseOldEpochState>) -> Result<()> {
         instructions::merkle_ring::close_old_epoch_state(ctx)
+    }
+
+    pub fn close_channel_state(ctx: Context<CloseChannelState>, subject_id: Pubkey) -> Result<()> {
+        instructions::cleanup::close_channel_state(ctx, subject_id)
+    }
+
+    pub fn force_close_channel_state_legacy(
+        ctx: Context<ForceCloseChannelStateLegacy>,
+    ) -> Result<()> {
+        instructions::cleanup::force_close_channel_state_legacy(ctx)
     }
 }
