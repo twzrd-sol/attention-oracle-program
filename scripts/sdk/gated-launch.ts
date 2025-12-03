@@ -15,7 +15,7 @@
  */
 
 import * as fs from 'fs';
-import { PumpFunSDK } from 'pumpdotfun-sdk';
+import { PumpFunSDK, calculateWithSlippageBuy } from 'pumpdotfun-sdk';
 import { AnchorProvider, Wallet } from '@coral-xyz/anchor';
 import {
   Connection,
@@ -173,13 +173,10 @@ export class GatedLaunchSDK {
   }
 
   /**
-   * Gated token launch: verify attention, then create token
-   *
-   * Two-step process (gate verification is separate tx for now):
-   * 1. Verify attention threshold via on-chain gate
-   * 2. Execute pump.fun createAndBuy
+   * Gated token launch (atomic): gate IX + create + buy in one transaction.
+   * If the gate fails, the launch never executes.
    */
-  async gatedLaunch(
+  async gatedLaunchAtomic(
     creator: Keypair,
     metadata: { name: string; symbol: string; uri: string },
     initialSolBuy: bigint,
@@ -189,48 +186,48 @@ export class GatedLaunchSDK {
     proof: Buffer[],
     minAttention: bigint = 1_000_000n,
     slippageBps: bigint = 500n
-  ): Promise<{ gateSig: string; launchResult: any }> {
-    console.log(`\n=== Gated Token Launch ===`);
-    console.log(`Creator: ${creator.publicKey.toBase58()}`);
-    console.log(`Token: ${metadata.name} (${metadata.symbol})`);
-    console.log(`Initial Buy: ${Number(initialSolBuy) / LAMPORTS_PER_SOL} SOL`);
-    console.log(`Min Attention: ${minAttention}`);
-
-    // Step 1: Verify attention gate
-    console.log(`\nStep 1: Verifying attention gate...`);
-    const gateResult = await this.simulateGate(creator.publicKey, epoch, index, amount, proof, minAttention);
-
-    if (!gateResult.success) {
-      console.error(`Gate FAILED - Launch blocked`);
-      console.error(`Logs:`, gateResult.logs);
-      throw new Error('Insufficient attention for token launch');
-    }
-
-    // Execute gate on-chain for permanent record
-    const gateSig = await this.gateCheck(creator, epoch, index, amount, proof, minAttention);
-    console.log(`Gate PASSED: ${gateSig}`);
-
-    // Step 2: Create and buy token
-    console.log(`\nStep 2: Creating token on pump.fun...`);
-    const mintKeypair = Keypair.generate();
-
-    const launchResult = await this.pumpSdk.createAndBuy(
-      creator,
-      mintKeypair,
-      {
-        name: metadata.name,
-        symbol: metadata.symbol,
-        uri: metadata.uri,
-      },
-      initialSolBuy,
-      slippageBps
+  ): Promise<{ signature?: string; mint: PublicKey }> {
+    const gateIx = this.buildGateInstruction(
+      creator.publicKey,
+      epoch,
+      index,
+      amount,
+      creator.publicKey.toBase58(),
+      proof,
+      minAttention
     );
 
-    console.log(`\n=== Launch Complete ===`);
-    console.log(`Mint: ${mintKeypair.publicKey.toBase58()}`);
-    console.log(`Gate TX: ${gateSig}`);
+    // Build pump.fun create + buy instructions (reuse SDK builders)
+    const mintKeypair = Keypair.generate();
+    const createTx = await this.pumpSdk.getCreateInstructions(
+      creator.publicKey,
+      metadata.name,
+      metadata.symbol,
+      metadata.uri,
+      mintKeypair
+    );
 
-    return { gateSig, launchResult };
+    const globalAccount = await this.pumpSdk.getGlobalAccount();
+    const buyAmount = globalAccount.getInitialBuyPrice(initialSolBuy);
+    const buyAmountWithSlippage = calculateWithSlippageBuy(initialSolBuy, slippageBps);
+    const buyTx = await this.pumpSdk.getBuyInstructions(
+      creator.publicKey,
+      mintKeypair.publicKey,
+      globalAccount.feeRecipient,
+      buyAmount,
+      buyAmountWithSlippage
+    );
+
+    const tx = new Transaction();
+    tx.add(gateIx);
+    createTx.instructions.forEach((ix) => tx.add(ix));
+    buyTx.instructions.forEach((ix) => tx.add(ix));
+
+    const sig = await sendAndConfirmTransaction(this.connection, tx, [creator, mintKeypair], {
+      commitment: 'confirmed',
+    });
+
+    return { signature: sig, mint: mintKeypair.publicKey };
   }
 
   /**
@@ -325,18 +322,19 @@ async function main() {
     console.log(`Without proof, gate will fail (expected behavior).\n`);
 
     try {
-      const result = await sdk.gatedLaunch(
+      const result = await sdk.gatedLaunchAtomic(
         keypair,
         { name, symbol, uri },
         initialSol,
         epoch,
         0,
-        minAttention, // Use min as amount for test
+        minAttention, // Use min as amount for test (replace with real attention amount)
         [],
         minAttention
       );
-      console.log(`Launch successful!`);
-      console.log(`Gate TX: ${result.gateSig}`);
+      console.log(`Launch submitted!`);
+      console.log(`Gate+Launch TX: ${result.signature}`);
+      console.log(`Mint: ${result.mint.toBase58()}`);
     } catch (err: any) {
       console.error(`Launch failed: ${err.message}`);
       console.log(`\nTo launch, you need attention >= ${minAttention} in epoch ${epoch}`);
