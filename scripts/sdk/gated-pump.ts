@@ -166,7 +166,10 @@ export class GatedPumpSDK {
   }
 
   /**
-   * Execute gated buy: CPI gate check + pump.fun buy in atomic tx
+   * Execute gated buy: gate check + pump.fun buy in atomic tx
+   *
+   * For true atomicity, pass pre-built pump.fun buy instructions.
+   * If the pump.fun SDK only exposes high-level methods, use gatedBuyTwoStep instead.
    */
   async gatedBuy(
     buyer: Keypair,
@@ -177,7 +180,7 @@ export class GatedPumpSDK {
     amount: bigint,
     proof: Buffer[],
     minAttention: bigint = 1_000_000n,
-    slippageBps: bigint = 500n // 5% default
+    pumpBuyInstructions?: TransactionInstruction[]
   ): Promise<string> {
     // Build gate instruction
     const gateIx = this.buildGateInstruction(
@@ -190,26 +193,47 @@ export class GatedPumpSDK {
       minAttention
     );
 
-    // Build pump.fun buy instruction via SDK
-    const buyResult = await this.pumpSdk.buy(
-      buyer,
-      tokenMint,
-      solAmount,
-      slippageBps
-    );
-
-    // The pump.fun SDK handles tx internally, so we prepend gate check
-    // For atomic execution, we need to build custom tx
+    // Build atomic transaction: gate check MUST pass before buy executes
     const tx = new Transaction().add(gateIx);
 
-    // Note: If pump SDK returns instruction, add it here
-    // For now, gate check is separate verification
+    // Add pump.fun buy instructions if provided
+    if (pumpBuyInstructions && pumpBuyInstructions.length > 0) {
+      pumpBuyInstructions.forEach(ix => tx.add(ix));
+    }
 
     const sig = await sendAndConfirmTransaction(this.connection, tx, [buyer], {
       commitment: 'confirmed',
     });
 
     return sig;
+  }
+
+  /**
+   * Two-step gated buy: verify gate first, then execute pump.fun buy
+   *
+   * Use this when pump.fun SDK only exposes high-level buy() method.
+   * Note: NOT atomic - gate and buy are separate transactions.
+   */
+  async gatedBuyTwoStep(
+    buyer: Keypair,
+    tokenMint: PublicKey,
+    solAmount: bigint,
+    epoch: bigint,
+    index: number,
+    amount: bigint,
+    proof: Buffer[],
+    minAttention: bigint = 1_000_000n,
+    slippageBps: bigint = 500n
+  ): Promise<{ gateSig: string; buySig: string }> {
+    // Step 1: Execute gate check (fails fast if insufficient attention)
+    const gateSig = await this.gateCheck(buyer, epoch, index, amount, proof, minAttention);
+    console.log(`Gate passed: ${gateSig}`);
+
+    // Step 2: Execute pump.fun buy (only runs if gate passed)
+    const buyResult = await this.pumpSdk.buy(buyer, tokenMint, solAmount, slippageBps);
+    const buySig = buyResult?.signature || 'unknown';
+
+    return { gateSig, buySig };
   }
 
   /**
