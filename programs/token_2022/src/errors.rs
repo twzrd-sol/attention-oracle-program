@@ -56,6 +56,9 @@ pub enum OracleError {
     #[msg("Insufficient points for gated action")]
     InsufficientPoints,
 
+    #[msg("Insufficient attention for gated action")]
+    InsufficientAttention,
+
     #[msg("Invalid input length")]
     InvalidInputLength,
 

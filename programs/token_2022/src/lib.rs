@@ -34,7 +34,7 @@
 
 use anchor_lang::prelude::*;
 
-#[cfg(not(feature = "no-entrypoint"))]
+#[cfg(all(not(feature = "no-entrypoint"), feature = "security-txt"))]
 use solana_security_txt::security_txt;
 
 pub mod constants;
@@ -52,7 +52,7 @@ pub use state::*;
 // Program ID
 declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
-#[cfg(not(feature = "no-entrypoint"))]
+#[cfg(all(not(feature = "no-entrypoint"), feature = "security-txt"))]
 security_txt! {
     name: "Attention Oracle Protocol",
     project_url: "https://github.com/twzrd-sol/attention-oracle-program",
@@ -140,6 +140,10 @@ pub mod token_2022 {
             mint_receipt,
         )
     }
+
+    // -------------------------------------------------------------------------
+    // Admin / Maintenance
+    // -------------------------------------------------------------------------
 
     /// Close a channel state account and reclaim rent to the admin.
     /// Critical for cleaning up disabled streams (e.g. Twitch migration).
@@ -310,158 +314,43 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
+    // Gated Actions (Attention Thresholds)
+    // -------------------------------------------------------------------------
+
+    /// Verify attention threshold via merkle proof (pre-claim gating).
+    /// External programs can CPI into this to gate actions based on attention.
+    pub fn require_attention_ge(
+        ctx: Context<RequireAttention>,
+        channel: String,
+        epoch: u64,
+        index: u32,
+        amount: u64,
+        id: String,
+        proof: Vec<[u8; 32]>,
+        min_attention: u64,
+    ) -> Result<()> {
+        instructions::gated::require_attention_ge(ctx, channel, epoch, index, amount, id, proof, min_attention)
+    }
+
+    /// Verify attention threshold via token balance (post-claim gating).
+    /// Simpler check for users who have already claimed their attention tokens.
+    pub fn require_attention_balance_ge(
+        ctx: Context<RequireAttentionBalance>,
+        min_balance: u64,
+    ) -> Result<()> {
+        instructions::gated::require_attention_balance_ge(ctx, min_balance)
+    }
+
+    // -------------------------------------------------------------------------
     // Legacy / Deprecated Paths
     // -------------------------------------------------------------------------
     // Note: These are feature-gated and should be disabled in production builds
     // unless required for backward compatibility with V1 state.
 
-    #[cfg(feature = "legacy")]
-    pub fn initialize_mint_open(
-        ctx: Context<InitializeMintOpen>,
-        fee_basis_points: u16,
-        max_fee: u64,
-    ) -> Result<()> {
-        instructions::initialize_mint::handler_open(ctx, fee_basis_points, max_fee)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn set_merkle_root(
-        ctx: Context<SetMerkleRoot>,
-        root: [u8; 32],
-        epoch: u64,
-        claim_count: u32,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::merkle::set_merkle_root(ctx, root, epoch, claim_count, subject_id)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn claim(
-        ctx: Context<Claim>,
-        subject_index: u8,
-        index: u32,
-        amount: u64,
-        id: String,
-        proof: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        instructions::claim::claim(ctx, subject_index, index, amount, id, proof)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn claim_open(
-        ctx: Context<ClaimOpen>,
-        subject_index: u8,
-        index: u32,
-        amount: u64,
-        id: String,
-        proof: Vec<[u8; 32]>,
-        channel: Option<String>,
-        twzrd_epoch: Option<u64>,
-        receipt_proof: Option<CnftReceiptProof>,
-    ) -> Result<()> {
-        instructions::claim::claim_open(
-            ctx,
-            subject_index,
-            index,
-            amount,
-            id,
-            proof,
-            channel,
-            twzrd_epoch,
-            receipt_proof,
-        )
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn set_merkle_root_open(
-        ctx: Context<SetMerkleRootOpen>,
-        root: [u8; 32],
-        epoch: u64,
-        claim_count: u32,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::merkle::set_merkle_root_open(ctx, root, epoch, claim_count, subject_id)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn claim_points_open(
-        ctx: Context<ClaimPointsOpen>,
-        index: u32,
-        amount: u64,
-        id: String,
-        proof: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        instructions::points::claim_points_open(ctx, index, amount, id, proof)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn close_epoch_state(
-        ctx: Context<CloseEpochState>,
-        epoch: u64,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup::close_epoch_state(ctx, epoch, subject_id)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn force_close_epoch_state_legacy(
-        ctx: Context<ForceCloseEpochStateLegacy>,
-        epoch: u64,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup::force_close_epoch_state_legacy(ctx, epoch, subject_id)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn force_close_epoch_state_open(
-        ctx: Context<ForceCloseEpochStateOpen>,
-        epoch: u64,
-        subject_id: Pubkey,
-        mint: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup::force_close_epoch_state_open(ctx, epoch, subject_id, mint)
-    }
+    // Legacy instructions removed - enable "legacy" feature if needed
 
     // Expose channel initialization in production so PDAs can be created before setting roots
     pub fn initialize_channel(ctx: Context<InitializeChannel>, subject_id: Pubkey) -> Result<()> {
         instructions::merkle_ring::initialize_channel(ctx, subject_id)
-    }
-
-    #[cfg(feature = "demo")]
-    pub fn set_merkle_root_ring(
-        ctx: Context<SetMerkleRootRing>,
-        root: [u8; 32],
-        epoch: u64,
-        claim_count: u16,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::merkle_ring::set_merkle_root_ring(ctx, root, epoch, claim_count, subject_id)
-    }
-
-    #[cfg(feature = "demo")]
-    pub fn claim_with_ring(
-        ctx: Context<ClaimWithRing>,
-        epoch: u64,
-        index: u32,
-        amount: u64,
-        proof: Vec<[u8; 32]>,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::merkle_ring::claim_with_ring(ctx, epoch, index, amount, proof, subject_id)
-    }
-
-    #[cfg(feature = "demo")]
-    pub fn close_old_epoch_state(ctx: Context<CloseOldEpochState>) -> Result<()> {
-        instructions::merkle_ring::close_old_epoch_state(ctx)
-    }
-
-    pub fn close_channel_state(ctx: Context<CloseChannelState>, subject_id: Pubkey) -> Result<()> {
-        instructions::cleanup::close_channel_state(ctx, subject_id)
-    }
-
-    pub fn force_close_channel_state_legacy(
-        ctx: Context<ForceCloseChannelStateLegacy>,
-    ) -> Result<()> {
-        instructions::cleanup::force_close_channel_state_legacy(ctx)
     }
 }
