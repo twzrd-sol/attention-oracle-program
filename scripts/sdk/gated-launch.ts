@@ -2,13 +2,6 @@
 /**
  * Attention-Gated Token Launch
  *
- * Gate pump.fun token creation behind attention thresholds.
- * Only wallets with sufficient attention can launch new tokens.
- *
- * Flow:
- * 1. Verify attention via CPI to require_attention_ge
- * 2. If gate passes, execute pump.fun createAndBuy
- *
  * Usage:
  *   npx tsx scripts/sdk/gated-launch.ts launch <name> <symbol> <uri> <initial-sol> [min-attention]
  *   npx tsx scripts/sdk/gated-launch.ts check <epoch> <amount> <min>
@@ -29,21 +22,12 @@ import {
 import jsSha3 from 'js-sha3';
 const { keccak256 } = jsSha3;
 
-// Program constants
 const PROGRAM_ID = new PublicKey('GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop');
 const CCM_MINT = new PublicKey('ESpcP35Waf5xuniehGopLULkhwNgCgDUGbd4EHrR8cWe');
 const CHANNEL_NAME = 'pump.fun';
-
-// Discriminator: sha256("global:require_attention_ge")[0..8]
 const REQUIRE_ATTENTION_GE_DISC = Buffer.from([0x78, 0x6d, 0xba, 0x18, 0xb5, 0x34, 0x46, 0x91]);
-
-// Config
 const RPC_URL = process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
 const KEYPAIR_PATH = process.env.KEYPAIR_PATH || `${process.env.HOME}/.config/solana/id.json`;
-
-// R2 claims config (for fetching proofs)
-const BUCKET = 'twzrd-claims';
-const CF_TOKEN = process.env.CLOUDFLARE_API_TOKEN || '';
 
 function deriveSubjectId(channel: string): Buffer {
   const input = `channel:${channel.toLowerCase()}`;
@@ -85,10 +69,6 @@ export class GatedLaunchSDK {
     const subjectId = deriveSubjectId(CHANNEL_NAME);
     this.channelState = deriveChannelState(CCM_MINT, subjectId);
   }
-
-  /**
-   * Build require_attention_ge instruction
-   */
   buildGateInstruction(
     owner: PublicKey,
     epoch: bigint,
@@ -130,9 +110,6 @@ export class GatedLaunchSDK {
     });
   }
 
-  /**
-   * Simulate gate check
-   */
   async simulateGate(
     owner: PublicKey,
     epoch: bigint,
@@ -154,9 +131,6 @@ export class GatedLaunchSDK {
     };
   }
 
-  /**
-   * Execute gate check (on-chain verification)
-   */
   async gateCheck(
     buyer: Keypair,
     epoch: bigint,
@@ -172,10 +146,6 @@ export class GatedLaunchSDK {
     return sendAndConfirmTransaction(this.connection, tx, [buyer], { commitment: 'confirmed' });
   }
 
-  /**
-   * Gated token launch (atomic): gate IX + create + buy in one transaction.
-   * If the gate fails, the launch never executes.
-   */
   async gatedLaunchAtomic(
     creator: Keypair,
     metadata: { name: string; symbol: string; uri: string },
@@ -186,7 +156,7 @@ export class GatedLaunchSDK {
     proof: Buffer[],
     minAttention: bigint = 1_000_000n,
     slippageBps: bigint = 500n
-  ): Promise<{ signature?: string; mint: PublicKey }> {
+  ): Promise<{ signature: string; mint: PublicKey }> {
     const gateIx = this.buildGateInstruction(
       creator.publicKey,
       epoch,
@@ -197,7 +167,6 @@ export class GatedLaunchSDK {
       minAttention
     );
 
-    // Build pump.fun create + buy instructions (reuse SDK builders)
     const mintKeypair = Keypair.generate();
     const createTx = await this.pumpSdk.getCreateInstructions(
       creator.publicKey,
@@ -230,9 +199,6 @@ export class GatedLaunchSDK {
     return { signature: sig, mint: mintKeypair.publicKey };
   }
 
-  /**
-   * Check if wallet has sufficient attention for launch
-   */
   async checkEligibility(
     wallet: PublicKey,
     epoch: bigint,
@@ -244,7 +210,6 @@ export class GatedLaunchSDK {
   }
 }
 
-// CLI
 async function main() {
   const args = process.argv.slice(2);
 
@@ -260,14 +225,8 @@ async function main() {
   const action = args[0];
   const connection = new Connection(RPC_URL, 'confirmed');
 
-  // Load keypair
-  let keypair: Keypair;
-  try {
-    const keypairData = JSON.parse(fs.readFileSync(KEYPAIR_PATH, 'utf-8'));
-    keypair = Keypair.fromSecretKey(Uint8Array.from(keypairData));
-  } catch {
-    keypair = Keypair.generate();
-  }
+  const keypairData = JSON.parse(fs.readFileSync(KEYPAIR_PATH, 'utf-8'));
+  const keypair = Keypair.fromSecretKey(Uint8Array.from(keypairData));
 
   const wallet = new Wallet(keypair);
   const provider = new AnchorProvider(connection, wallet, { commitment: 'confirmed' });
@@ -313,8 +272,6 @@ async function main() {
     const uri = args[3];
     const initialSol = BigInt(Math.floor(parseFloat(args[4]) * LAMPORTS_PER_SOL));
     const minAttention = args[5] ? BigInt(args[5]) : 1_000_000n;
-
-    // For demo: use current epoch with placeholder proof
     const epoch = BigInt(Math.floor(Date.now() / 300000) - 1);
 
     console.log(`\nNote: This is a gated launch test.`);
@@ -328,15 +285,15 @@ async function main() {
         initialSol,
         epoch,
         0,
-        minAttention, // Use min as amount for test (replace with real attention amount)
+        minAttention,
         [],
         minAttention
       );
       console.log(`Launch submitted!`);
       console.log(`Gate+Launch TX: ${result.signature}`);
       console.log(`Mint: ${result.mint.toBase58()}`);
-    } catch (err: any) {
-      console.error(`Launch failed: ${err.message}`);
+    } catch (err) {
+      console.error(`Launch failed: ${(err as Error).message}`);
       console.log(`\nTo launch, you need attention >= ${minAttention} in epoch ${epoch}`);
     }
     return;
@@ -346,7 +303,7 @@ async function main() {
   process.exit(1);
 }
 
-main().catch(err => {
+main().catch((err: Error) => {
   console.error('Error:', err.message);
   process.exit(1);
 });

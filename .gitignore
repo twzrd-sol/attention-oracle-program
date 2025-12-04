@@ -114,3 +114,4 @@ schema_dump*.sql
 
 .claude/
 GILL_MIGRATION_DIRECTIVE.md
+tmp*.mjs

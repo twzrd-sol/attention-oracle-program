@@ -1,12 +1,10 @@
-use anchor_lang::prelude::*;
-
-use crate::constants::CHANNEL_STATE_SEED;
-use crate::errors::OracleError;
-use crate::instructions::claim::{compute_leaf, verify_proof};
-use crate::state::ChannelState;
-use anchor_lang::accounts::account_loader::AccountLoader;
-
+use anchor_lang::{accounts::account_loader::AccountLoader, prelude::*};
 use sha3::{Digest, Keccak256};
+
+use crate::{
+    constants::CHANNEL_STATE_SEED, errors::OracleError,
+    instructions::claim::{compute_leaf, verify_proof}, state::ChannelState,
+};
 
 fn derive_subject_id(channel: &str) -> Pubkey {
     let mut lower = channel.as_bytes().to_vec();
@@ -26,13 +24,8 @@ fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
     arr
 }
 
-// ============================================================================
-// REQUIRE ATTENTION (Gated CPI Check)
-// ============================================================================
-
 /// Accounts required for attention-gated actions.
-/// This is a read-only check that verifies a merkle proof and attention threshold.
-/// Used by external programs (e.g., pump.fun SDK) to gate actions based on attention.
+/// Read-only verification of merkle proof and attention threshold.
 #[derive(Accounts)]
 pub struct RequireAttention<'info> {
     /// The wallet being checked (does not need to sign for read-only verification)
@@ -48,24 +41,7 @@ pub struct RequireAttention<'info> {
     pub channel_state: AccountLoader<'info, ChannelState>,
 }
 
-/// Verify that `owner` has at least `min_attention` in the specified channel/epoch.
-///
-/// This instruction does NOT claim or transfer tokens - it only verifies eligibility.
-/// External programs can CPI into this to gate actions (e.g., pump.fun buys).
-///
-/// # Arguments
-/// * `channel` - Channel name (e.g., "pump.fun")
-/// * `epoch` - Epoch number to verify against
-/// * `index` - Leaf index in the merkle tree
-/// * `amount` - Attention amount in the merkle leaf
-/// * `id` - User identifier used in leaf computation
-/// * `proof` - Merkle proof nodes
-/// * `min_attention` - Minimum attention threshold required (micro-tokens)
-///
-/// # Errors
-/// * `InsufficientAttention` - If amount < min_attention
-/// * `InvalidProof` - If merkle proof verification fails
-/// * `SlotMismatch` - If epoch is not in the ring buffer
+/// Verify attention threshold via merkle proof. Does not claim or transfer tokens.
 pub fn require_attention_ge(
     ctx: Context<RequireAttention>,
     channel: String,
@@ -76,10 +52,7 @@ pub fn require_attention_ge(
     proof: Vec<[u8; 32]>,
     min_attention: u64,
 ) -> Result<()> {
-    // Derive subject_id from channel name
     let subject_id = derive_subject_id(&channel);
-
-    // Validate channel_state PDA
     let mint_key = ctx.accounts.mint.key();
     let seeds = [CHANNEL_STATE_SEED, mint_key.as_ref(), subject_id.as_ref()];
     let (expected_pda, _) = Pubkey::find_program_address(&seeds, ctx.program_id);
@@ -89,31 +62,25 @@ pub fn require_attention_ge(
         OracleError::InvalidChannelState
     );
 
-    // Load channel state (read-only)
     let channel_state = ctx.accounts.channel_state.load()?;
-
-    // Validate mint matches
     require!(channel_state.mint == mint_key, OracleError::InvalidMint);
     require!(
         channel_state.subject == subject_id,
         OracleError::InvalidChannelState
     );
 
-    // Find the slot for this epoch
     let slot_idx = ChannelState::slot_index(epoch);
     require!(
         channel_state.slots[slot_idx].epoch == epoch,
         OracleError::SlotMismatch
     );
 
-    // Verify merkle proof
     let leaf = compute_leaf(&ctx.accounts.owner.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, channel_state.slots[slot_idx].root),
         OracleError::InvalidProof
     );
 
-    // Check attention threshold
     require!(amount >= min_attention, OracleError::InsufficientAttention);
 
     msg!(
@@ -128,9 +95,7 @@ pub fn require_attention_ge(
     Ok(())
 }
 
-/// Simple attention balance check without merkle proof.
-/// Requires the user to have already claimed and holds CCM tokens.
-/// This is a lighter-weight check for post-claim verification.
+/// Check token balance for post-claim gating.
 #[derive(Accounts)]
 pub struct RequireAttentionBalance<'info> {
     /// The wallet being checked
@@ -151,11 +116,7 @@ pub struct RequireAttentionBalance<'info> {
     pub token_program: Interface<'info, anchor_spl::token_interface::TokenInterface>,
 }
 
-/// Verify that `owner` holds at least `min_balance` CCM tokens.
-///
-/// This is a simpler check that doesn't require merkle proofs - it just checks
-/// the user's token balance. Use this for post-claim gating where users have
-/// already claimed their attention tokens.
+/// Verify token balance meets minimum threshold.
 pub fn require_attention_balance_ge(
     ctx: Context<RequireAttentionBalance>,
     min_balance: u64,

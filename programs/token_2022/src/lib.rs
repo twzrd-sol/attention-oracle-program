@@ -317,8 +317,7 @@ pub mod token_2022 {
     // Gated Actions (Attention Thresholds)
     // -------------------------------------------------------------------------
 
-    /// Verify attention threshold via merkle proof (pre-claim gating).
-    /// External programs can CPI into this to gate actions based on attention.
+    /// Verify attention threshold via merkle proof.
     pub fn require_attention_ge(
         ctx: Context<RequireAttention>,
         channel: String,
@@ -332,8 +331,7 @@ pub mod token_2022 {
         instructions::gated::require_attention_ge(ctx, channel, epoch, index, amount, id, proof, min_attention)
     }
 
-    /// Verify attention threshold via token balance (post-claim gating).
-    /// Simpler check for users who have already claimed their attention tokens.
+    /// Verify attention threshold via token balance.
     pub fn require_attention_balance_ge(
         ctx: Context<RequireAttentionBalance>,
         min_balance: u64,
