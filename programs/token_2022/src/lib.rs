@@ -150,8 +150,9 @@ pub mod token_2022 {
         amounts: Vec<u64>,
         epoch: u64,
         channel: String,
+        batch_idx: u32,
     ) -> Result<()> {
-        instructions::push_distribute::push_distribute(ctx, recipients, amounts, epoch, channel)
+        instructions::push_distribute::push_distribute(ctx, recipients, amounts, epoch, channel, batch_idx)
     }
 
     /// Close a channel state account and reclaim rent to the admin.
