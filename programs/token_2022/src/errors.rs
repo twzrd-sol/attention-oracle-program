@@ -125,4 +125,7 @@ pub enum OracleError {
 
     #[msg("Math overflow")]
     MathOverflow,
+
+    #[msg("Account already at or above target size")]
+    AccountTooLarge,
 }
