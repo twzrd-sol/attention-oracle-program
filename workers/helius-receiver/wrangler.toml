@@ -1,0 +1,24 @@
+name = "twzrd-helius-receiver"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# KV namespace for storing epoch data
+[[kv_namespaces]]
+binding = "PUMP_DATA"
+id = "REPLACE_WITH_YOUR_KV_ID"  # Set this after running: wrangler kv namespace create PUMP_DATA
+
+# Production KV (optional, for wrangler deploy --env production)
+# [[env.production.kv_namespaces]]
+# binding = "PUMP_DATA"
+# id = "REPLACE_WITH_PRODUCTION_KV_ID"
+
+# Secrets (set via: wrangler secret put WEBHOOK_SECRET)
+# - WEBHOOK_SECRET: Random string for webhook authentication
+# - PUMP_PROGRAM: (optional) Override default pump.fun program ID
+# - EPOCH_DURATION_MS: (optional) Override default 5min epoch
+
+# Environment variables (optional)
+# [vars]
+# PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+# EPOCH_DURATION_MS = "300000"  # 5 minutes in ms

@@ -12,12 +12,14 @@ crate-type = ["cdylib", "lib"]
 name = "token_2022"
 
 [features]
-default = []
+default = ["security-txt"]
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+# Embed security.txt metadata (https://github.com/neodyme-labs/solana-security-txt)
+security-txt = []
 # Optional, off by default to keep binary lean
 receipts = []
 # Legacy epoch-state / merkle instructions (off by default)
