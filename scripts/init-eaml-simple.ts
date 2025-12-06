@@ -20,7 +20,7 @@ async function main() {
     process.exit(1);
   }
 
-  const rpcUrl = process.env.ANCHOR_PROVIDER_URL || 'https://api.mainnet-beta.solana.com';
+  const rpcUrl = process.env.SYNDICA_RPC!;
   const walletPath = (process.env.ANCHOR_WALLET || '~/.config/solana/id.json').replace('~', process.env.HOME || '');
 
   const keypair = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(walletPath, 'utf-8'))));

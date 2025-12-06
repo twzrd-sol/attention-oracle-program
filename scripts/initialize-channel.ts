@@ -30,7 +30,7 @@ async function main() {
 
   // Setup connection
   const connection = new Connection(
-    process.env.ANCHOR_PROVIDER_URL || "https://api.mainnet-beta.solana.com",
+    process.env.SYNDICA_RPC!,
     "confirmed"
   );
 

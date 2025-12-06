@@ -55,7 +55,7 @@ async function main() {
   );
   console.log(`💼 Payer: ${walletKeypair.publicKey.toBase58()}`);
 
-  const rpcUrl = process.env.ANCHOR_PROVIDER_URL || 'https://api.mainnet-beta.solana.com';
+  const rpcUrl = process.env.SYNDICA_RPC!;
   const connection = new Connection(rpcUrl, 'confirmed');
   const wallet = new Wallet(walletKeypair);
   const provider = new AnchorProvider(connection, wallet, {
