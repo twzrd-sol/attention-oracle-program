@@ -161,6 +161,13 @@ pub mod token_2022 {
         instructions::channel::close_channel(ctx, channel)
     }
 
+    /// Migrate a channel state account from old size (728 bytes) to new size (5688 bytes).
+    /// Required after CHANNEL_MAX_CLAIMS upgrade from 1024 to 4096.
+    /// Publisher or admin can call. Preserves existing slot data.
+    pub fn migrate_channel_state(ctx: Context<MigrateChannelState>, channel: String) -> Result<()> {
+        instructions::migrate_channel::migrate_channel_state(ctx, channel)
+    }
+
     // -------------------------------------------------------------------------
     // DeFi Rails (Hooks & Governance)
     // -------------------------------------------------------------------------
