@@ -1,7 +1,9 @@
 [workspace]
 members = [
   "programs/token_2022",
-  "programs/x402-on-demand",]
+  "programs/x402-on-demand",
+  "programs/ccm_hook",
+]
 exclude = [
   "programs/attention_oracle_program"
 ]
