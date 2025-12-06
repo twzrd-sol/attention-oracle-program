@@ -455,13 +455,7 @@ pub mod token_2022 {
         instructions::merkle_ring::close_old_epoch_state(ctx)
     }
 
-    pub fn close_channel_state(ctx: Context<CloseChannelState>, subject_id: Pubkey) -> Result<()> {
-        instructions::cleanup::close_channel_state(ctx, subject_id)
-    }
-
-    pub fn force_close_channel_state_legacy(
-        ctx: Context<ForceCloseChannelStateLegacy>,
-    ) -> Result<()> {
-        instructions::cleanup::force_close_channel_state_legacy(ctx)
-    }
+    // NOTE: close_channel_state and force_close_channel_state_legacy removed
+    // These were added but never implemented in cleanup.rs
+    // Re-add when implementation is complete
 }
