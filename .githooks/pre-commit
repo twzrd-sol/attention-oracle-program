@@ -14,9 +14,11 @@ ALLOW_FILE=".secretsallow"
 failures=()
 
 # Block any Markdown files from being committed to the public repo
+# Exception: SECURITY.md and VERIFY.md are required for program verification
 md_violations=()
 for f in "${files[@]}"; do
   case "$f" in
+    SECURITY.md|VERIFY.md) ;;  # allowed
     *.md|*.MD) md_violations+=("$f");;
   esac
 done
