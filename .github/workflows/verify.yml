@@ -23,7 +23,7 @@ jobs:
           docker run --rm -v "$PWD":/work -w /work solanafoundation/anchor:v0.32.1 anchor build --verifiable
 
       - name: Setup Rust
-        uses: actions/setup-rust@v1
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install solana-verify
         run: cargo install solana-verify --version 0.4.11
