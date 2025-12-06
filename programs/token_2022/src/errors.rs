@@ -116,4 +116,7 @@ pub enum OracleError {
 
     #[msg("Missing transfer fee extension")]
     MissingTransferFeeExtension,
+
+    #[msg("Math overflow")]
+    MathOverflow,
 }
