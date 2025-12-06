@@ -14,10 +14,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Fail if any .md files exist
+      - name: Fail if any unauthorized .md files exist
         run: |
-          if git ls-files "*.md" | grep -q ".md"; then
+          # Allow SECURITY.md and VERIFY.md (required for program verification)
+          ALLOWED="SECURITY.md VERIFY.md"
+          VIOLATIONS=$(git ls-files "*.md" | grep -vE "^(SECURITY|VERIFY)\.md$" || true)
+          if [ -n "$VIOLATIONS" ]; then
             echo "Markdown files are not allowed in this public repo." >&2
-            git ls-files "*.md" | sed 's/^/  - /' >&2
+            echo "$VIOLATIONS" | sed 's/^/  - /' >&2
             exit 1
           fi
