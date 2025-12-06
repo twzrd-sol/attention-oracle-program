@@ -10,13 +10,13 @@
 #
 # Examples:
 #   ./scripts/init-eaml.sh 7XJ8KF3wYPn4YvD2jZqZ1z2qZ3Z4Z5Z6Z7Z8Z9ZaZ
-#   ./scripts/init-eaml.sh 7XJ8KF3wYPn4YvD2jZqZ1z2qZ3Z4Z5Z6Z7Z8Z9ZaZ https://api.mainnet-beta.solana.com ~/.config/solana/id.json
+#   ./scripts/init-eaml.sh 7XJ8KF3wYPn4YvD2jZqZ1z2qZ3Z4Z5Z6Z7Z8Z9ZaZ ${SYNDICA_RPC:-https://api.mainnet-beta.solana.com} ~/.config/solana/id.json
 
 set -e
 
 # Args
 MINT=${1:?❌ Usage: $0 <MINT_ADDRESS> [RPC_URL] [KEYPAIR_PATH]}
-RPC_URL=${2:-https://api.mainnet-beta.solana.com}
+RPC_URL=${2:-${SYNDICA_RPC:-https://api.mainnet-beta.solana.com}}
 KEYPAIR=${3:-~/.config/solana/id.json}
 
 # Expand tilde in keypair path

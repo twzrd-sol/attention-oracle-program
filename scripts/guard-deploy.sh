@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-DEFAULT_RPC="https://api.mainnet-beta.solana.com"
+DEFAULT_RPC="${SYNDICA_RPC:-https://api.mainnet-beta.solana.com}"
 
 KEYPAIR_PATH=${ANCHOR_WALLET:-${1:-}}
 if [[ -z "${KEYPAIR_PATH}" ]]; then

@@ -16,7 +16,7 @@ Options:
   --commit <HASH>              Commit hash to verify (default: git rev-parse HEAD)
   --library-name <NAME>        Cargo lib name (e.g. x402_on_demand)
   --mount-path <PATH>          Path to mount for build context (default: .)
-  --rpc-url <URL>              RPC endpoint (default: https://api.mainnet-beta.solana.com)
+  --rpc-url <URL>              RPC endpoint (default: ${SYNDICA_RPC:-https://api.mainnet-beta.solana.com})
   --wallet <PATH>              Path to keypair JSON (default: ~/.config/solana/id.json)
   --skip-build                 Skip local 'anchor build --verifiable'
   --remote                     Submit a remote verification job after upload
@@ -38,7 +38,7 @@ PROGRAM_ID="GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 REPO_URL="https://github.com/twzrd-sol/attention-oracle-program"
 LIB_NAME="token_2022"
 MOUNT_PATH="."
-RPC_URL="https://api.mainnet-beta.solana.com"
+RPC_URL="${SYNDICA_RPC:-https://api.mainnet-beta.solana.com}"
 WALLET_PATH="~/.config/solana/id.json"
 SKIP_BUILD=0
 DO_REMOTE=0
