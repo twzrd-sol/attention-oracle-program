@@ -8,6 +8,9 @@ package-lock.json
 
 # Disallow Markdown files in the public repo
 *.md
+# Except required security/verification docs
+!SECURITY.md
+!VERIFY.md
 
 # Next.js output
 .next/
