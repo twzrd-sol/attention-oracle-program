@@ -89,6 +89,12 @@ pub enum OracleError {
     #[msg("Channel not initialized")]
     ChannelNotInitialized,
 
+    #[msg("Invalid root for channel epoch")]
+    InvalidRoot,
+
+    #[msg("Batch already pushed")]
+    AlreadyPushed,
+
     // New errors introduced by audit hardening
     #[msg("Epoch already initialized")]
     EpochAlreadyInitialized,

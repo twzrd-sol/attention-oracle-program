@@ -1,34 +1,30 @@
-use anchor_lang::prelude::*;
+use anchor_lang::{
+    accounts::account_loader::AccountLoader,
+    prelude::*,
+    solana_program::{program::invoke_signed, rent::Rent, system_instruction},
+};
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked},
+    token::Token,
+    token_interface::{self, Mint, TokenAccount, TransferChecked},
 };
+use sha3::{Digest, Keccak256};
 
 use crate::{
-    constants::PROTOCOL_SEED,
+    constants::{CHANNEL_STATE_SEED, PROTOCOL_SEED},
     errors::OracleError,
-    state::ProtocolState,
+    state::{ChannelState, ProtocolState},
 };
 
-/// Maximum recipients per batch (CU-safe limit)
 pub const MAX_BATCH_SIZE: usize = 20;
+const FLAG_SEED: &[u8] = b"push_flag";
 
-/// Push-distribute CCM tokens to multiple recipients in a single TX.
-///
-/// Requirements:
-/// - Caller must be the protocol's publisher
-/// - All recipient ATAs must already exist (no init_if_needed to save CU)
-/// - Total amount must not exceed treasury balance
-///
-/// This is a trusted operation - no merkle proof required.
-/// Publisher is responsible for computing correct amounts off-chain.
 #[derive(Accounts)]
+#[instruction(channel: String, batch_idx: u32)]
 pub struct PushDistribute<'info> {
-    /// Publisher (must match protocol_state.publisher)
     #[account(mut)]
     pub publisher: Signer<'info>,
 
-    /// Protocol state - authority over treasury
     #[account(
         mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
@@ -38,43 +34,43 @@ pub struct PushDistribute<'info> {
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    /// CCM mint
     pub mint: InterfaceAccount<'info, Mint>,
 
-    /// Treasury ATA (source of tokens)
     #[account(
         mut,
         associated_token::mint = mint,
         associated_token::authority = protocol_state,
-        associated_token::token_program = token_program
+        associated_token::token_program = token_program,
     )]
     pub treasury_ata: InterfaceAccount<'info, TokenAccount>,
 
-    pub token_program: Interface<'info, TokenInterface>,
+    pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
-    // Note: recipient ATAs passed as remaining_accounts
+
+    #[account(mut)]
+    pub channel_state: AccountLoader<'info, ChannelState>,
 }
 
-/// Push-distribute to multiple recipients.
-///
-/// # Arguments
-/// * `recipients` - List of recipient wallet pubkeys
-/// * `amounts` - Corresponding amounts (must match recipients length)
-/// * `epoch` - Epoch this distribution is for (for event logging)
-/// * `channel` - Channel name (for event logging)
+fn derive_subject_id(channel: &str) -> [u8; 32] {
+    let mut hasher = Keccak256::new();
+    hasher.update(b"channel:");
+    hasher.update(channel.to_lowercase());
+    let digest = hasher.finalize();
+    let mut subject = [0u8; 32];
+    subject.copy_from_slice(&digest[..32]);
+    subject
+}
+
 pub fn push_distribute<'info>(
     ctx: Context<'_, '_, 'info, 'info, PushDistribute<'info>>,
     recipients: Vec<Pubkey>,
     amounts: Vec<u64>,
     epoch: u64,
     channel: String,
+    batch_idx: u32,
 ) -> Result<()> {
-    // Validate batch
-    require!(
-        recipients.len() == amounts.len(),
-        OracleError::InvalidInputLength
-    );
+    require!(recipients.len() == amounts.len(), OracleError::InvalidInputLength);
     require!(
         !recipients.is_empty() && recipients.len() <= MAX_BATCH_SIZE,
         OracleError::InvalidInputLength
@@ -86,25 +82,80 @@ pub fn push_distribute<'info>(
         OracleError::InsufficientTreasuryBalance
     );
 
-    // Recipient ATAs are in remaining_accounts
-    let recipient_atas = ctx.remaining_accounts;
+    let remaining = ctx.remaining_accounts;
     require!(
-        recipient_atas.len() == recipients.len(),
+        remaining.len() == recipients.len() + 1,
         OracleError::InvalidInputLength
     );
+    let flag_account = &remaining[0];
+    let recipient_atas = &remaining[1..];
 
-    // Build signer seeds for PDA authority
+    let subject_id = derive_subject_id(&channel);
+    let channel_state_seeds = [
+        CHANNEL_STATE_SEED,
+        ctx.accounts.protocol_state.mint.as_ref(),
+        subject_id.as_ref(),
+    ];
+    let (expected_channel_state, _) = Pubkey::find_program_address(&channel_state_seeds, ctx.program_id);
+    require_keys_eq!(
+        expected_channel_state,
+        ctx.accounts.channel_state.to_account_info().key(),
+        OracleError::InvalidChannelState
+    );
+
+    let channel_state = ctx.accounts.channel_state.load()?;
+    let slot_idx = ChannelState::slot_index(epoch);
+    let slot = &channel_state.slots[slot_idx];
+    require!(slot.epoch == epoch, OracleError::SlotMismatch);
+    require!(slot.root != [0u8; 32], OracleError::InvalidRoot);
+
+    let mint_key = ctx.accounts.mint.key();
+    let flag_seeds = [
+        FLAG_SEED,
+        mint_key.as_ref(),
+        subject_id.as_ref(),
+        &epoch.to_le_bytes(),
+        &batch_idx.to_le_bytes(),
+    ];
+    let (flag_pda, flag_bump) = Pubkey::find_program_address(&flag_seeds, ctx.program_id);
+    require_keys_eq!(flag_pda, flag_account.key(), OracleError::InvalidInputLength);
+    if flag_account.lamports() > 0 {
+        return Err(OracleError::AlreadyPushed.into());
+    }
+
+    let rent = Rent::get()?;
+    invoke_signed(
+        &system_instruction::create_account(
+            &ctx.accounts.publisher.key(),
+            flag_account.key,
+            rent.minimum_balance(0),
+            0,
+            ctx.program_id,
+        ),
+        &[
+            ctx.accounts.publisher.to_account_info(),
+            flag_account.clone(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+        &[&[
+            FLAG_SEED,
+            ctx.accounts.mint.key().as_ref(),
+            subject_id.as_ref(),
+            &epoch.to_le_bytes(),
+            &batch_idx.to_le_bytes(),
+            &[flag_bump],
+        ]],
+    )?;
+
     let mint_key = ctx.accounts.protocol_state.mint;
     let bump = ctx.accounts.protocol_state.bump;
     let seeds: &[&[u8]] = &[PROTOCOL_SEED, mint_key.as_ref(), &[bump]];
     let signer_seeds = &[seeds];
-
     let decimals = ctx.accounts.mint.decimals;
 
-    // Execute transfers
     for (i, amount) in amounts.iter().enumerate() {
         if *amount == 0 {
-            continue; // Skip zero amounts
+            continue;
         }
 
         let recipient_ata = &recipient_atas[i];
@@ -124,7 +175,6 @@ pub fn push_distribute<'info>(
             decimals,
         )?;
 
-        // Emit per-recipient event for indexing
         emit!(PushDistributeEvent {
             recipient: recipients[i],
             amount: *amount,
@@ -133,7 +183,6 @@ pub fn push_distribute<'info>(
         });
     }
 
-    // Emit batch summary
     emit!(PushDistributeBatch {
         publisher: ctx.accounts.publisher.key(),
         recipients_count: recipients.len() as u32,
