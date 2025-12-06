@@ -141,6 +141,19 @@ pub mod token_2022 {
         )
     }
 
+    /// Push-distribute CCM to multiple recipients in a single transaction.
+    /// Publisher-only operation for batch airdrops/rewards.
+    /// Recipient ATAs must pre-exist (passed as remaining_accounts).
+    pub fn push_distribute<'info>(
+        ctx: Context<'_, '_, 'info, 'info, PushDistribute<'info>>,
+        recipients: Vec<Pubkey>,
+        amounts: Vec<u64>,
+        epoch: u64,
+        channel: String,
+    ) -> Result<()> {
+        instructions::push_distribute::push_distribute(ctx, recipients, amounts, epoch, channel)
+    }
+
     /// Close a channel state account and reclaim rent to the admin.
     /// Critical for cleaning up disabled streams (e.g. Twitch migration).
     pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> {

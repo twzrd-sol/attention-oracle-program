@@ -14,6 +14,7 @@ pub mod merkle;
 pub mod merkle_ring;
 pub mod passport;
 pub mod points;
+pub mod push_distribute;
 
 // Re-exports
 pub use admin::*;
@@ -30,3 +31,4 @@ pub use merkle::*;
 pub use merkle_ring::*;
 pub use passport::*;
 pub use points::*;
+pub use push_distribute::*;
