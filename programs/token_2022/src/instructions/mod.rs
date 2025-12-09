@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod channel;
 pub mod claim;
+pub mod claim_stake;
 pub mod cleanup;
 pub mod cnft_verify;
 pub mod extra_account_metas;
@@ -21,6 +22,7 @@ pub mod push_distribute;
 pub use admin::*;
 pub use channel::*;
 pub use claim::*;
+pub use claim_stake::*;
 pub use cleanup::*;
 pub use cnft_verify::*;
 pub use extra_account_metas::*;

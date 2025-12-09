@@ -314,6 +314,7 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "bytemuck",
+ "lofi-bank",
  "mpl-bubblegum",
  "sha3",
  "solana-security-txt",
@@ -1185,6 +1186,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
 dependencies = [
  "scopeguard",
+]
+
+[[package]]
+name = "lofi-bank"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
 ]
 
 [[package]]

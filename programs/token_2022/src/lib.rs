@@ -489,4 +489,34 @@ pub mod token_2022 {
     ) -> Result<()> {
         instructions::cleanup::force_close_channel_state_legacy(ctx, subject_id, mint)
     }
+
+    // -------------------------------------------------------------------------
+    // Lofi Bank Integration (Claim + Auto-Stake)
+    // -------------------------------------------------------------------------
+
+    /// Claim tokens with optional auto-stake to lofi-bank.
+    /// Atomically claims merkle proof rewards and stakes a percentage.
+    pub fn claim_and_stake(
+        ctx: Context<ClaimAndStake>,
+        subject_index: u8,
+        index: u32,
+        amount: u64,
+        id: String,
+        proof: Vec<[u8; 32]>,
+        auto_stake: bool,
+        stake_percent: u8,
+        lock_epochs: u32,
+    ) -> Result<()> {
+        instructions::claim_stake::claim_and_stake(
+            ctx,
+            subject_index,
+            index,
+            amount,
+            id,
+            proof,
+            auto_stake,
+            stake_percent,
+            lock_epochs,
+        )
+    }
 }
