@@ -2,7 +2,7 @@ use anchor_lang::solana_program::{program::invoke_signed, rent::Rent, system_ins
 use anchor_lang::{accounts::account::Account, prelude::*};
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked},
+    token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
 use crate::constants::{CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, PROTOCOL_SEED};
@@ -214,8 +214,8 @@ pub struct ClaimChannel<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn claim_channel_open(
-    ctx: Context<ClaimChannel>,
+pub fn claim_channel_open<'info>(
+    ctx: Context<'_, '_, '_, 'info, ClaimChannel<'info>>,
     channel: String,
     epoch: u64,
     index: u32,
@@ -292,19 +292,22 @@ pub fn claim_channel_open(
     ];
     let signer = &[seeds];
 
-    token_interface::transfer_checked(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.treasury_ata.to_account_info(),
-                to: ctx.accounts.claimer_ata.to_account_info(),
-                authority: ctx.accounts.protocol_state.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-            },
-            signer,
-        ),
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.treasury_ata.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let to = ctx.accounts.claimer_ata.to_account_info();
+    let authority = ctx.accounts.protocol_state.to_account_info();
+
+    crate::transfer_checked_with_remaining(
+        &token_program,
+        &from,
+        &mint,
+        &to,
+        &authority,
         tokens,
         ctx.accounts.mint.decimals,
+        signer,
+        ctx.remaining_accounts,
     )?;
 
     Ok(())
@@ -487,8 +490,8 @@ pub struct ClaimChannelWithReceipt<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn claim_channel_open_with_receipt(
-    ctx: Context<ClaimChannelWithReceipt>,
+pub fn claim_channel_open_with_receipt<'info>(
+    ctx: Context<'_, '_, '_, 'info, ClaimChannelWithReceipt<'info>>,
     channel: String,
     epoch: u64,
     index: u32,
@@ -567,19 +570,22 @@ pub fn claim_channel_open_with_receipt(
     ];
     let signer = &[seeds];
 
-    token_interface::transfer_checked(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.treasury_ata.to_account_info(),
-                to: ctx.accounts.claimer_ata.to_account_info(),
-                authority: ctx.accounts.protocol_state.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-            },
-            signer,
-        ),
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.treasury_ata.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let to = ctx.accounts.claimer_ata.to_account_info();
+    let authority = ctx.accounts.protocol_state.to_account_info();
+
+    crate::transfer_checked_with_remaining(
+        &token_program,
+        &from,
+        &mint,
+        &to,
+        &authority,
         tokens,
         ctx.accounts.mint.decimals,
+        signer,
+        ctx.remaining_accounts,
     )?;
 
     // Optional: Mint cNFT receipt
