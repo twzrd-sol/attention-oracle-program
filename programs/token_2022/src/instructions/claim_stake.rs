@@ -1,26 +1,49 @@
-//! Claim + Auto-Stake instruction
-//! Extends claim_open with optional CPI to lofi-bank for auto-staking
+//! Claim + Auto-Stake instruction (Channel-based)
+//! Extends claim_channel_open with optional CPI to lofi-bank for auto-staking
 
 use anchor_lang::prelude::*;
+use anchor_lang::accounts::account_loader::AccountLoader;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked},
+    token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
+use sha3::{Digest, Keccak256};
+
 use crate::{
-    constants::{EPOCH_STATE_SEED, PROTOCOL_SEED},
+    constants::{CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, PROTOCOL_SEED},
     errors::OracleError,
     instructions::claim::{compute_leaf, verify_proof},
-    state::{EpochState, ProtocolState},
+    state::{ChannelSlot, ChannelState, ProtocolState},
 };
 
 use lofi_bank::cpi::accounts::Stake as BankStakeAccounts;
 use lofi_bank::cpi::stake as bank_stake_cpi;
 use lofi_bank::program::LofiBank;
 
-/// Claim with optional auto-stake to lofi-bank
+fn derive_subject_id(channel: &str) -> Pubkey {
+    let mut lower = channel.as_bytes().to_vec();
+    lower.iter_mut().for_each(|b| *b = b.to_ascii_lowercase());
+    let hash = keccak_hashv(&[b"channel:", lower.as_slice()]);
+    Pubkey::new_from_array(hash)
+}
+
+fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
+    let mut hasher = Keccak256::new();
+    for p in parts {
+        hasher.update(p);
+    }
+    let out = hasher.finalize();
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&out[..32]);
+    arr
+}
+
+const CHANNEL_STATE_VERSION: u8 = 1;
+
+/// Claim from channel with optional auto-stake to lofi-bank
 #[derive(Accounts)]
-pub struct ClaimAndStake<'info> {
+pub struct ClaimChannelAndStake<'info> {
     #[account(mut)]
     pub claimer: Signer<'info>,
 
@@ -32,8 +55,9 @@ pub struct ClaimAndStake<'info> {
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
+    /// CHECK: PDA is validated via derivation in handler
     #[account(mut)]
-    pub epoch_state: Account<'info, EpochState>,
+    pub channel_state: AccountLoader<'info, ChannelState>,
 
     /// CCM/TWZRD mint (Token-2022)
     pub mint: InterfaceAccount<'info, Mint>,
@@ -80,9 +104,10 @@ pub struct ClaimAndStake<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn claim_and_stake(
-    ctx: Context<ClaimAndStake>,
-    _subject_index: u8,
+pub fn claim_channel_and_stake<'info>(
+    ctx: Context<'_, '_, '_, 'info, ClaimChannelAndStake<'info>>,
+    channel: String,
+    epoch: u64,
     index: u32,
     amount: u64,
     id: String,
@@ -91,84 +116,101 @@ pub fn claim_and_stake(
     stake_percent: u8,   // 0-100, default 50
     lock_epochs: u32,    // lock period in epochs, default 12
 ) -> Result<()> {
-    let epoch_state_key = ctx.accounts.epoch_state.key();
-    let epoch = &mut ctx.accounts.epoch_state;
+    let protocol_state = &ctx.accounts.protocol_state;
 
-    // Basic guards
-    require!(!epoch.closed, OracleError::EpochClosed);
-    require!(index < epoch.claim_count, OracleError::InvalidIndex);
-    require!(
-        epoch.mint == ctx.accounts.mint.key(),
-        OracleError::InvalidMint
+    // Ensure provided mint matches the protocol instance
+    require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
+
+    // Derive and validate channel_state PDA
+    let subject_id = derive_subject_id(&channel);
+    let seeds = [
+        CHANNEL_STATE_SEED,
+        protocol_state.mint.as_ref(),
+        subject_id.as_ref(),
+    ];
+    let (expected_pda, _) = Pubkey::find_program_address(&seeds, ctx.program_id);
+    require_keys_eq!(
+        expected_pda,
+        ctx.accounts.channel_state.to_account_info().key(),
+        OracleError::InvalidChannelState
     );
 
-    // Validate epoch_state PDA
-    let expected_epoch_state = Pubkey::find_program_address(
-        &[
-            EPOCH_STATE_SEED,
-            &epoch.epoch.to_le_bytes(),
-            epoch.subject.as_ref(),
-            ctx.accounts.protocol_state.mint.as_ref(),
-        ],
-        ctx.program_id,
-    )
-    .0;
-    require_keys_eq!(
-        expected_epoch_state,
-        epoch_state_key,
-        OracleError::InvalidEpochState
+    // Load via Anchor's zero_copy loader
+    let mut channel_state = ctx.accounts.channel_state.load_mut()?;
+
+    require!(
+        channel_state.version == CHANNEL_STATE_VERSION,
+        OracleError::InvalidChannelState
+    );
+    require!(
+        channel_state.mint == protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(
+        channel_state.subject == subject_id,
+        OracleError::InvalidChannelState
+    );
+
+    // Validate index bounds
+    ChannelSlot::validate_index(index as usize)?;
+    let slot_idx = ChannelState::slot_index(epoch);
+    require!(
+        channel_state.slots[slot_idx].epoch == epoch,
+        OracleError::SlotMismatch
     );
 
     // Check bitmap not already claimed
     let byte_i = (index / 8) as usize;
-    let bit = 1u8 << (index % 8);
+    let bit_mask = 1u8 << (index % 8);
+    require!(byte_i < CHANNEL_BITMAP_BYTES, OracleError::InvalidIndex);
     require!(
-        byte_i < epoch.claimed_bitmap.len(),
-        OracleError::InvalidIndex
-    );
-    require!(
-        epoch.claimed_bitmap[byte_i] & bit == 0,
+        channel_state.slots[slot_idx].claimed_bitmap[byte_i] & bit_mask == 0,
         OracleError::AlreadyClaimed
     );
 
     // Verify merkle proof
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
-        verify_proof(&proof, leaf, epoch.root),
+        verify_proof(&proof, leaf, channel_state.slots[slot_idx].root),
         OracleError::InvalidProof
     );
 
+    // Mark as claimed
+    channel_state.slots[slot_idx].claimed_bitmap[byte_i] |= bit_mask;
+    channel_state.slots[slot_idx].claim_count =
+        channel_state.slots[slot_idx].claim_count.saturating_add(1);
+
     // Transfer full amount from treasury to claimer
-    let seeds: &[&[u8]] = &[
+    let tokens = amount;
+    let protocol_seeds: &[&[u8]] = &[
         PROTOCOL_SEED,
-        ctx.accounts.protocol_state.mint.as_ref(),
-        &[ctx.accounts.protocol_state.bump],
+        protocol_state.mint.as_ref(),
+        &[protocol_state.bump],
     ];
-    let signer = &[seeds];
+    let signer = &[protocol_seeds];
 
-    token_interface::transfer_checked(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.treasury_ata.to_account_info(),
-                to: ctx.accounts.claimer_ata.to_account_info(),
-                authority: ctx.accounts.protocol_state.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-            },
-            signer,
-        ),
-        amount,
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.treasury_ata.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let to = ctx.accounts.claimer_ata.to_account_info();
+    let authority = ctx.accounts.protocol_state.to_account_info();
+
+    crate::transfer_checked_with_remaining(
+        &token_program,
+        &from,
+        &mint,
+        &to,
+        &authority,
+        tokens,
         ctx.accounts.mint.decimals,
+        signer,
+        ctx.remaining_accounts,
     )?;
-
-    // Mark claimed
-    epoch.claimed_bitmap[byte_i] |= bit;
-    epoch.total_claimed = epoch.total_claimed.saturating_add(amount);
 
     // Auto-stake CPI if enabled
     if auto_stake {
         let pct = stake_percent.min(100) as u64;
-        let stake_amount = amount.saturating_mul(pct) / 100;
+        let stake_amount = tokens.saturating_mul(pct) / 100;
         let lock_period = lock_epochs.max(1);
 
         if stake_amount > 0 {
@@ -198,6 +240,6 @@ pub fn claim_and_stake(
         }
     }
 
-    msg!("Claimed {} tokens, index={}", amount, index);
+    msg!("Claimed {} tokens, channel={}, epoch={}, index={}", tokens, channel, epoch, index);
     Ok(())
 }

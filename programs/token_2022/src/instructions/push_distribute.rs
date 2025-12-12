@@ -6,7 +6,7 @@ use anchor_lang::{
 use anchor_spl::{
     associated_token::AssociatedToken,
     token::Token,
-    token_interface::{self, Mint, TokenAccount, TransferChecked},
+    token_interface::{Mint, TokenAccount},
 };
 use sha3::{Digest, Keccak256};
 
@@ -83,12 +83,14 @@ pub fn push_distribute<'info>(
     );
 
     let remaining = ctx.remaining_accounts;
+    let base_remaining = recipients.len() + 1;
     require!(
-        remaining.len() == recipients.len() + 1,
+        remaining.len() >= base_remaining,
         OracleError::InvalidInputLength
     );
     let flag_account = &remaining[0];
-    let recipient_atas = &remaining[1..];
+    let recipient_atas = &remaining[1..base_remaining];
+    let hook_accounts = &remaining[base_remaining..];
 
     let subject_id = derive_subject_id(&channel);
     let channel_state_seeds = [
@@ -152,6 +154,10 @@ pub fn push_distribute<'info>(
     let seeds: &[&[u8]] = &[PROTOCOL_SEED, mint_key.as_ref(), &[bump]];
     let signer_seeds = &[seeds];
     let decimals = ctx.accounts.mint.decimals;
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.treasury_ata.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let authority = ctx.accounts.protocol_state.to_account_info();
 
     for (i, amount) in amounts.iter().enumerate() {
         if *amount == 0 {
@@ -160,19 +166,16 @@ pub fn push_distribute<'info>(
 
         let recipient_ata = &recipient_atas[i];
 
-        token_interface::transfer_checked(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                TransferChecked {
-                    from: ctx.accounts.treasury_ata.to_account_info(),
-                    to: recipient_ata.to_account_info(),
-                    authority: ctx.accounts.protocol_state.to_account_info(),
-                    mint: ctx.accounts.mint.to_account_info(),
-                },
-                signer_seeds,
-            ),
+        crate::transfer_checked_with_remaining(
+            &token_program,
+            &from,
+            &mint,
+            recipient_ata,
+            &authority,
             *amount,
             decimals,
+            signer_seeds,
+            hook_accounts,
         )?;
 
         emit!(PushDistributeEvent {

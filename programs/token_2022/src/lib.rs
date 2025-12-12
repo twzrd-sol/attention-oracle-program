@@ -42,12 +42,14 @@ pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod state;
+pub mod token_transfer;
 
 pub use constants::*;
 pub use errors::*;
 pub use events::*;
 pub use instructions::*;
 pub use state::*;
+pub use token_transfer::*;
 
 // Program ID
 declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
@@ -105,8 +107,8 @@ pub mod token_2022 {
 
     /// Execute a claim against a valid Merkle root in the ring buffer.
     /// Verifies the proof and transfers tokens from the Treasury.
-    pub fn claim_channel_open(
-        ctx: Context<ClaimChannel>,
+    pub fn claim_channel_open<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimChannel<'info>>,
         channel: String,
         epoch: u64,
         index: u32,
@@ -119,8 +121,8 @@ pub mod token_2022 {
 
     /// Execute a claim and mint a cNFT receipt in a single atomic transaction.
     /// Provides a permanent, non-fungible record of the participation event.
-    pub fn claim_channel_open_with_receipt(
-        ctx: Context<ClaimChannelWithReceipt>,
+    pub fn claim_channel_open_with_receipt<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimChannelWithReceipt<'info>>,
         channel: String,
         epoch: u64,
         index: u32,
@@ -494,11 +496,12 @@ pub mod token_2022 {
     // Lofi Bank Integration (Claim + Auto-Stake)
     // -------------------------------------------------------------------------
 
-    /// Claim tokens with optional auto-stake to lofi-bank.
+    /// Claim tokens from a channel epoch with optional auto-stake to lofi-bank.
     /// Atomically claims merkle proof rewards and stakes a percentage.
-    pub fn claim_and_stake(
-        ctx: Context<ClaimAndStake>,
-        subject_index: u8,
+    pub fn claim_channel_and_stake<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimChannelAndStake<'info>>,
+        channel: String,
+        epoch: u64,
         index: u32,
         amount: u64,
         id: String,
@@ -507,9 +510,10 @@ pub mod token_2022 {
         stake_percent: u8,
         lock_epochs: u32,
     ) -> Result<()> {
-        instructions::claim_stake::claim_and_stake(
+        instructions::claim_stake::claim_channel_and_stake(
             ctx,
-            subject_index,
+            channel,
+            epoch,
             index,
             amount,
             id,

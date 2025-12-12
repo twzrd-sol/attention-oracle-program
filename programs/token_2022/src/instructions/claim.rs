@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked},
+    token_interface::{Mint, TokenAccount, TokenInterface},
 };
 use sha3::{Digest, Keccak256};
 fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
@@ -71,8 +71,8 @@ pub struct Claim<'info> {
     pub system_program: Program<'info, System>,
 }
 
-    pub fn claim(
-    ctx: Context<Claim>,
+    pub fn claim<'info>(
+    ctx: Context<'_, '_, '_, 'info, Claim<'info>>,
     _subject_index: u8,
     index: u32,
     amount: u64,
@@ -137,19 +137,22 @@ pub struct Claim<'info> {
     let seeds: &[&[u8]] = &[PROTOCOL_SEED, &[ctx.accounts.protocol_state.bump]];
     let signer = &[seeds];
 
-    token_interface::transfer_checked(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.treasury_ata.to_account_info(),
-                to: ctx.accounts.claimer_ata.to_account_info(),
-                authority: ctx.accounts.protocol_state.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-            },
-            signer,
-        ),
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.treasury_ata.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let to = ctx.accounts.claimer_ata.to_account_info();
+    let authority = ctx.accounts.protocol_state.to_account_info();
+
+    crate::transfer_checked_with_remaining(
+        &token_program,
+        &from,
+        &mint,
+        &to,
+        &authority,
         amount,
         ctx.accounts.mint.decimals,
+        signer,
+        ctx.remaining_accounts,
     )?;
 
     // Mark claimed and bump totals
@@ -212,8 +215,8 @@ pub struct ClaimOpen<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn claim_open(
-    ctx: Context<ClaimOpen>,
+pub fn claim_open<'info>(
+    ctx: Context<'_, '_, '_, 'info, ClaimOpen<'info>>,
     _subject_index: u8,
     index: u32,
     amount: u64,
@@ -300,19 +303,22 @@ pub fn claim_open(
     ];
     let signer = &[seeds];
 
-    token_interface::transfer_checked(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.treasury_ata.to_account_info(),
-                to: ctx.accounts.claimer_ata.to_account_info(),
-                authority: ctx.accounts.protocol_state.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-            },
-            signer,
-        ),
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.treasury_ata.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let to = ctx.accounts.claimer_ata.to_account_info();
+    let authority = ctx.accounts.protocol_state.to_account_info();
+
+    crate::transfer_checked_with_remaining(
+        &token_program,
+        &from,
+        &mint,
+        &to,
+        &authority,
         amount,
         ctx.accounts.mint.decimals,
+        signer,
+        ctx.remaining_accounts,
     )?;
 
     // Step 4: Mark claimed
