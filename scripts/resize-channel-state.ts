@@ -91,7 +91,7 @@ async function main() {
   );
   console.log(`Channel State: ${channelState.toBase58()}`);
 
-  const info = await connection.getAccountInfo(channelState, 'confirmed');
+  let info = await connection.getAccountInfo(channelState, 'confirmed');
   if (!info) {
     console.error('Channel state account not found!');
     process.exit(1);
@@ -105,22 +105,44 @@ async function main() {
     return;
   }
 
-  const ix = buildResizeInstruction(keypair.publicKey, protocolState, channelState);
+  // Chunked resize loop - Solana limits realloc to 10KB per instruction
+  const MAX_REALLOC_DELTA = 10240;
+  let iteration = 0;
 
-  const tx = new Transaction()
-    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_200_000 }))
-    .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 10_000 }))
-    .add(ix);
+  while (info.data.length < TARGET_SIZE) {
+    iteration++;
+    const remaining = TARGET_SIZE - info.data.length;
+    const iterationsLeft = Math.ceil(remaining / MAX_REALLOC_DELTA);
+    console.log(`\n=== Iteration ${iteration} (${iterationsLeft} remaining) ===`);
+    console.log(`Current: ${info.data.length} bytes → Target: ${TARGET_SIZE} bytes`);
 
-  console.log('Sending resize transaction...');
-  const sig = await sendAndConfirmTransaction(connection, tx, [keypair], {
-    skipPreflight: false,
-    commitment: 'confirmed',
-  });
-  console.log(`Resize sent. Signature: ${sig}`);
+    const ix = buildResizeInstruction(keypair.publicKey, protocolState, channelState);
 
-  const after = await connection.getAccountInfo(channelState, 'confirmed');
-  console.log(`New size: ${after?.data.length} bytes`);
+    const tx = new Transaction()
+      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_200_000 }))
+      .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 10_000 }))
+      .add(ix);
+
+    console.log('Sending resize transaction...');
+    const sig = await sendAndConfirmTransaction(connection, tx, [keypair], {
+      skipPreflight: false,
+      commitment: 'confirmed',
+    });
+    console.log(`Resize sent. Signature: ${sig}`);
+
+    // Refresh account info for next iteration
+    info = await connection.getAccountInfo(channelState, 'confirmed');
+    if (!info) {
+      console.error('Channel state account disappeared!');
+      process.exit(1);
+    }
+    console.log(`New size: ${info.data.length} bytes`);
+
+    // Delay to avoid rate limiting on public RPC
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+
+  console.log(`\n✓ Resize complete! Final size: ${info.data.length} bytes`);
 }
 
 main().catch((e) => {
