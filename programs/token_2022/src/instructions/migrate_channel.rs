@@ -136,8 +136,9 @@ pub fn migrate_channel_state(ctx: Context<MigrateChannelState>, channel: String)
         )?;
     }
 
-    // Realloc the account
-    channel_info.realloc(NEW_ACCOUNT_SIZE, false)?;
+    // Realloc the account and zero-init new bytes to avoid uninitialized epochs
+    // bricking future ring updates when the channel ring size increases.
+    channel_info.realloc(NEW_ACCOUNT_SIZE, true)?;
 
     // Write new data
     let mut new_data = channel_info.try_borrow_mut_data()?;

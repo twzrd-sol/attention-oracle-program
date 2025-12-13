@@ -106,8 +106,7 @@ pub fn push_distribute<'info>(
     );
 
     let channel_state = ctx.accounts.channel_state.load()?;
-    let slot_idx = ChannelState::slot_index(epoch);
-    let slot = &channel_state.slots[slot_idx];
+    let slot = channel_state.slot(epoch);
     require!(slot.epoch == epoch, OracleError::SlotMismatch);
     require!(slot.root != [0u8; 32], OracleError::InvalidRoot);
 

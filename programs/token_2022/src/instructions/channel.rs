@@ -160,15 +160,16 @@ pub fn set_channel_merkle_root(
     // Update slot (ring buffer logic) with monotonic guard
     let slot_idx = ChannelState::slot_index(epoch);
     msg!("writing slot {}", slot_idx);
-    let existing_epoch = channel_state.slots[slot_idx].epoch;
+    let slot = channel_state.slot_mut(epoch);
+    let existing_epoch = slot.epoch;
     require!(
         existing_epoch == 0 || epoch > existing_epoch,
         OracleError::EpochNotIncreasing
     );
-    channel_state.slots[slot_idx].epoch = epoch;
-    channel_state.slots[slot_idx].root = root;
-    channel_state.slots[slot_idx].claim_count = 0;
-    channel_state.slots[slot_idx].claimed_bitmap = [0u8; CHANNEL_BITMAP_BYTES];
+    slot.epoch = epoch;
+    slot.root = root;
+    slot.claim_count = 0;
+    slot.claimed_bitmap = [0u8; CHANNEL_BITMAP_BYTES];
     channel_state.latest_epoch = channel_state.latest_epoch.max(epoch);
 
     Ok(())
@@ -262,30 +263,26 @@ pub fn claim_channel_open<'info>(
     );
 
     ChannelSlot::validate_index(index as usize)?;
-    let slot_idx = ChannelState::slot_index(epoch);
-    require!(
-        channel_state.slots[slot_idx].epoch == epoch,
-        OracleError::SlotMismatch
-    );
+    let slot = channel_state.slot_mut(epoch);
+    require!(slot.epoch == epoch, OracleError::SlotMismatch);
 
     let byte_i = (index / 8) as usize;
     let bit_mask = 1u8 << (index % 8);
     require!(byte_i < CHANNEL_BITMAP_BYTES, OracleError::InvalidIndex);
     require!(
-        channel_state.slots[slot_idx].claimed_bitmap[byte_i] & bit_mask == 0,
+        slot.claimed_bitmap[byte_i] & bit_mask == 0,
         OracleError::AlreadyClaimed
     );
 
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
-        verify_proof(&proof, leaf, channel_state.slots[slot_idx].root),
+        verify_proof(&proof, leaf, slot.root),
         OracleError::InvalidProof
     );
 
     // Mark as claimed
-    channel_state.slots[slot_idx].claimed_bitmap[byte_i] |= bit_mask;
-    channel_state.slots[slot_idx].claim_count =
-        channel_state.slots[slot_idx].claim_count.saturating_add(1);
+    slot.claimed_bitmap[byte_i] |= bit_mask;
+    slot.claim_count = slot.claim_count.saturating_add(1);
 
     // Aggregator already scales weight → 100 CCM (weight × 100 × 10^9)
     // Use amount directly as transfer tokens (no double-scaling)
@@ -544,30 +541,26 @@ pub fn claim_channel_open_with_receipt<'info>(
     );
 
     ChannelSlot::validate_index(index as usize)?;
-    let slot_idx = ChannelState::slot_index(epoch);
-    require!(
-        channel_state.slots[slot_idx].epoch == epoch,
-        OracleError::SlotMismatch
-    );
+    let slot = channel_state.slot_mut(epoch);
+    require!(slot.epoch == epoch, OracleError::SlotMismatch);
 
     let byte_i = (index / 8) as usize;
     let bit_mask = 1u8 << (index % 8);
     require!(byte_i < CHANNEL_BITMAP_BYTES, OracleError::InvalidIndex);
     require!(
-        channel_state.slots[slot_idx].claimed_bitmap[byte_i] & bit_mask == 0,
+        slot.claimed_bitmap[byte_i] & bit_mask == 0,
         OracleError::AlreadyClaimed
     );
 
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
-        verify_proof(&proof, leaf, channel_state.slots[slot_idx].root),
+        verify_proof(&proof, leaf, slot.root),
         OracleError::InvalidProof
     );
 
     // Mark as claimed
-    channel_state.slots[slot_idx].claimed_bitmap[byte_i] |= bit_mask;
-    channel_state.slots[slot_idx].claim_count =
-        channel_state.slots[slot_idx].claim_count.saturating_add(1);
+    slot.claimed_bitmap[byte_i] |= bit_mask;
+    slot.claim_count = slot.claim_count.saturating_add(1);
 
     // Aggregator already scales weight → 100 CCM (weight × 100 × 10^9)
     // Use amount directly as transfer tokens (no double-scaling)

@@ -7,7 +7,12 @@ pub const EPOCH_STATE_SEED: &[u8] = b"epoch_state";
 pub const LIQUIDITY_ENGINE_SEED: &[u8] = b"liquidity_engine";
 pub const CHANNEL_STATE_SEED: &[u8] = b"channel_state";
 
-pub const CHANNEL_RING_SLOTS: usize = 10;
+// Ring-buffer retention for per-channel merkle roots.
+// With ~5-minute epochs (750 slots), 2048 epochs ≈ 7.1 days.
+//
+// NOTE: `ChannelState` is `zero_copy` (bytemuck Pod/Zeroable) and large arrays have
+// limited trait support. 2048 is implemented as 2×1024 slot chunks in `state.rs`.
+pub const CHANNEL_RING_SLOTS: usize = 2048;
 pub const CHANNEL_MAX_CLAIMS: usize = 4096;
 pub const CHANNEL_BITMAP_BYTES: usize = (CHANNEL_MAX_CLAIMS + 7) / 8;
 pub const MAX_EPOCH_CLAIMS: u32 = 1_000_000;

@@ -170,6 +170,12 @@ pub mod token_2022 {
         instructions::migrate_channel::migrate_channel_state(ctx, channel)
     }
 
+    /// Resize a channel state account to match the current `CHANNEL_RING_SLOTS`.
+    /// Required after increasing the ring buffer window (e.g., 10 → 2016 epochs).
+    pub fn resize_channel_state(ctx: Context<ResizeChannelState>) -> Result<()> {
+        instructions::resize_channel::resize_channel_state(ctx)
+    }
+
     // -------------------------------------------------------------------------
     // DeFi Rails (Hooks & Governance)
     // -------------------------------------------------------------------------
