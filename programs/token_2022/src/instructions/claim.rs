@@ -138,7 +138,12 @@ pub struct Claim<'info> {
     );
 
     // Transfer CCM from treasury PDA to claimer (use transfer_checked for Token-2022)
-    let seeds: &[&[u8]] = &[PROTOCOL_SEED, &[ctx.accounts.protocol_state.bump]];
+    // NOTE: ProtocolState is mint-keyed (seeds include mint).
+    let seeds: &[&[u8]] = &[
+        PROTOCOL_SEED,
+        ctx.accounts.protocol_state.mint.as_ref(),
+        &[ctx.accounts.protocol_state.bump],
+    ];
     let signer = &[seeds];
 
     let token_program = ctx.accounts.token_program.to_account_info();

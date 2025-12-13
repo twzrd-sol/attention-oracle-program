@@ -451,39 +451,6 @@ pub mod token_2022 {
         instructions::cleanup::force_close_epoch_state_open(ctx, epoch, subject_id, mint)
     }
 
-    // Expose channel initialization in production so PDAs can be created before setting roots
-    pub fn initialize_channel(ctx: Context<InitializeChannel>, subject_id: Pubkey) -> Result<()> {
-        instructions::merkle_ring::initialize_channel(ctx, subject_id)
-    }
-
-    #[cfg(feature = "demo")]
-    pub fn set_merkle_root_ring(
-        ctx: Context<SetMerkleRootRing>,
-        root: [u8; 32],
-        epoch: u64,
-        claim_count: u16,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::merkle_ring::set_merkle_root_ring(ctx, root, epoch, claim_count, subject_id)
-    }
-
-    #[cfg(feature = "demo")]
-    pub fn claim_with_ring(
-        ctx: Context<ClaimWithRing>,
-        epoch: u64,
-        index: u32,
-        amount: u64,
-        proof: Vec<[u8; 32]>,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::merkle_ring::claim_with_ring(ctx, epoch, index, amount, proof, subject_id)
-    }
-
-    #[cfg(feature = "demo")]
-    pub fn close_old_epoch_state(ctx: Context<CloseOldEpochState>) -> Result<()> {
-        instructions::merkle_ring::close_old_epoch_state(ctx)
-    }
-
     /// Close a channel state account (admin only, via ProtocolState)
     pub fn close_channel_state(ctx: Context<CloseChannelState>, subject_id: Pubkey) -> Result<()> {
         instructions::cleanup::close_channel_state(ctx, subject_id)
