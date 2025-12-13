@@ -159,32 +159,25 @@ pub fn claim_channel_and_stake<'info>(
 
     // Validate index bounds
     ChannelSlot::validate_index(index as usize)?;
-    let slot_idx = ChannelState::slot_index(epoch);
-    require!(
-        channel_state.slots[slot_idx].epoch == epoch,
-        OracleError::SlotMismatch
-    );
+    let slot = channel_state.slot_mut(epoch);
+    require!(slot.epoch == epoch, OracleError::SlotMismatch);
 
     // Check bitmap not already claimed
     let byte_i = (index / 8) as usize;
     let bit_mask = 1u8 << (index % 8);
     require!(byte_i < CHANNEL_BITMAP_BYTES, OracleError::InvalidIndex);
     require!(
-        channel_state.slots[slot_idx].claimed_bitmap[byte_i] & bit_mask == 0,
+        slot.claimed_bitmap[byte_i] & bit_mask == 0,
         OracleError::AlreadyClaimed
     );
 
     // Verify merkle proof
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
-    require!(
-        verify_proof(&proof, leaf, channel_state.slots[slot_idx].root),
-        OracleError::InvalidProof
-    );
+    require!(verify_proof(&proof, leaf, slot.root), OracleError::InvalidProof);
 
     // Mark as claimed
-    channel_state.slots[slot_idx].claimed_bitmap[byte_i] |= bit_mask;
-    channel_state.slots[slot_idx].claim_count =
-        channel_state.slots[slot_idx].claim_count.saturating_add(1);
+    slot.claimed_bitmap[byte_i] |= bit_mask;
+    slot.claim_count = slot.claim_count.saturating_add(1);
 
     // Transfer full amount from treasury to claimer
     let tokens = amount;

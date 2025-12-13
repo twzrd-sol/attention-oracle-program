@@ -280,8 +280,8 @@ impl PassportRegistry {
         1; // bump
 }
 
-/// Per-channel ring buffer state (stores recent epoch merkle roots)
-/// Uses zero_copy to avoid stack overflow (1.7KB struct)
+/// Per-channel ring buffer state (stores recent epoch merkle roots).
+/// Uses `zero_copy` to avoid full deserialization of large accounts.
 #[account(zero_copy)]
 #[repr(C)]
 pub struct ChannelState {
@@ -291,7 +291,9 @@ pub struct ChannelState {
     pub subject: Pubkey,
     pub _padding: [u8; 6], // Explicit padding for u64 alignment
     pub latest_epoch: u64,
-    pub slots: [ChannelSlot; CHANNEL_RING_SLOTS],
+    // Large arrays have limited bytemuck Pod/Zeroable impls; we store 2048 slots as 2×1024.
+    pub slots_0: [ChannelSlot; 1024],
+    pub slots_1: [ChannelSlot; 1024],
 }
 
 impl ChannelState {
@@ -302,11 +304,21 @@ impl ChannelState {
     }
 
     pub fn slot(&self, epoch: u64) -> &ChannelSlot {
-        &self.slots[Self::slot_index(epoch)]
+        let idx = Self::slot_index(epoch);
+        if idx < 1024 {
+            &self.slots_0[idx]
+        } else {
+            &self.slots_1[idx - 1024]
+        }
     }
 
     pub fn slot_mut(&mut self, epoch: u64) -> &mut ChannelSlot {
-        &mut self.slots[Self::slot_index(epoch)]
+        let idx = Self::slot_index(epoch);
+        if idx < 1024 {
+            &mut self.slots_0[idx]
+        } else {
+            &mut self.slots_1[idx - 1024]
+        }
     }
 }
 
