@@ -5,8 +5,7 @@ use anchor_lang::{
 };
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token::Token,
-    token_interface::{Mint, TokenAccount},
+    token_interface::{Mint, TokenAccount, TokenInterface},
 };
 use sha3::{Digest, Keccak256};
 
@@ -18,6 +17,7 @@ use crate::{
 
 pub const MAX_BATCH_SIZE: usize = 20;
 const FLAG_SEED: &[u8] = b"push_flag";
+const FLAG_SPACE: usize = 1;
 
 #[derive(Accounts)]
 #[instruction(channel: String, batch_idx: u32)]
@@ -44,7 +44,7 @@ pub struct PushDistribute<'info> {
     )]
     pub treasury_ata: InterfaceAccount<'info, TokenAccount>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 
@@ -130,8 +130,8 @@ pub fn push_distribute<'info>(
         &system_instruction::create_account(
             &ctx.accounts.publisher.key(),
             flag_account.key,
-            rent.minimum_balance(0),
-            0,
+            rent.minimum_balance(FLAG_SPACE),
+            FLAG_SPACE as u64,
             ctx.program_id,
         ),
         &[
@@ -148,6 +148,12 @@ pub fn push_distribute<'info>(
             &[flag_bump],
         ]],
     )?;
+    {
+        let mut data = flag_account.try_borrow_mut_data()?;
+        if let Some(first) = data.first_mut() {
+            *first = 1;
+        }
+    }
 
     let mint_key = ctx.accounts.protocol_state.mint;
     let bump = ctx.accounts.protocol_state.bump;

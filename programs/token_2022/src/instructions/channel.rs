@@ -5,13 +5,14 @@ use anchor_spl::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use crate::constants::{CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, PROTOCOL_SEED};
+use crate::constants::{CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED};
 use crate::errors::OracleError;
 use crate::instructions::claim::{compute_leaf, verify_proof};
 use crate::state::{ChannelSlot, ChannelState, ProtocolState};
 use anchor_lang::accounts::account_loader::AccountLoader;
 
 const CHANNEL_STATE_VERSION: u8 = 1;
+const MAX_PROOF_LEN: usize = 32;
 
 fn derive_subject_id(channel: &str) -> Pubkey {
     let mut lower = channel.as_bytes().to_vec();
@@ -224,8 +225,13 @@ pub fn claim_channel_open<'info>(
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
+    if protocol_state.require_receipt {
+        return err!(OracleError::ReceiptRequired);
+    }
     // Ensure provided mint matches the protocol instance
     require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
+    require!(id.as_bytes().len() <= MAX_ID_BYTES, OracleError::InvalidInputLength);
+    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
     let subject_id = derive_subject_id(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,
@@ -501,8 +507,13 @@ pub fn claim_channel_open_with_receipt<'info>(
     mint_receipt: bool,
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
+    if protocol_state.require_receipt && !mint_receipt {
+        return err!(OracleError::ReceiptRequired);
+    }
     // Ensure provided mint matches the protocol instance
     require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
+    require!(id.as_bytes().len() <= MAX_ID_BYTES, OracleError::InvalidInputLength);
+    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
     let subject_id = derive_subject_id(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,

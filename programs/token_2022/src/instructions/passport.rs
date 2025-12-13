@@ -10,7 +10,7 @@ pub struct MintPassportOpen<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
     #[account(
-        seeds = [PROTOCOL_SEED],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
         constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
@@ -32,7 +32,7 @@ pub struct UpgradePassportOpen<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
     #[account(
-        seeds = [PROTOCOL_SEED],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
         constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
@@ -53,7 +53,7 @@ pub struct ReissuePassportOpen<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
     #[account(
-        seeds = [PROTOCOL_SEED],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
         constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
@@ -73,7 +73,7 @@ pub struct RevokePassportOpen<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
     #[account(
-        seeds = [PROTOCOL_SEED],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
         constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
@@ -93,7 +93,7 @@ pub struct UpgradePassportProved<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
     #[account(
-        seeds = [PROTOCOL_SEED],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
         constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
