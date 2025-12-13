@@ -4,10 +4,13 @@ use anchor_lang::Discriminator;
 
 use crate::constants::{CHANNEL_STATE_SEED, PROTOCOL_SEED};
 use crate::errors::OracleError;
-use crate::state::{ChannelSlot, ChannelState, ProtocolState};
+use crate::state::{ChannelState, ProtocolState};
 
 /// Header bytes: discriminator (8) + version (1) + bump (1) + mint (32) + subject (32) + padding (6) + latest_epoch (8)
 const HEADER_BYTES: usize = 8 + 1 + 1 + 32 + 32 + 6 + 8;
+
+/// Max bytes we can grow per instruction (Solana limit)
+const MAX_REALLOC_DELTA: usize = 10240;
 
 /// Resize a `ChannelState` PDA to match the current program's `CHANNEL_RING_SLOTS`.
 ///
@@ -55,13 +58,16 @@ pub fn resize_channel_state(ctx: Context<ResizeChannelState>) -> Result<()> {
     let current_size = channel_info.data_len();
 
     // No-op if already at target size
-    if current_size == target_size {
+    if current_size >= target_size {
         msg!("ChannelState already at target size: {} bytes", target_size);
         return Ok(());
     }
 
-    // Only allow growth (never shrink via this ix)
-    require!(current_size < target_size, OracleError::AccountTooLarge);
+    // Calculate this iteration's target (chunked resize due to Solana 10KB limit)
+    let delta = target_size.saturating_sub(current_size);
+    let this_delta = delta.min(MAX_REALLOC_DELTA);
+    let this_target = current_size + this_delta;
+    let is_final = this_target == target_size;
 
     // Read and validate the existing header + slot data
     let old_data = channel_info.try_borrow_data()?;
@@ -92,53 +98,22 @@ pub fn resize_channel_state(ctx: Context<ResizeChannelState>) -> Result<()> {
         OracleError::InvalidChannelState
     );
 
-    // Snapshot header + existing slots (small, bounded) before realloc.
+    // Snapshot header before realloc.
     let mut header = [0u8; HEADER_BYTES];
     header.copy_from_slice(&old_data[..HEADER_BYTES]);
-
-    let slot_size = core::mem::size_of::<ChannelSlot>();
-    let slots_start = HEADER_BYTES;
-    let slots_bytes = old_data.len().saturating_sub(slots_start);
-    require!(
-        slots_bytes % slot_size == 0,
-        OracleError::InvalidChannelState
-    );
-    let old_slot_count = slots_bytes / slot_size;
-    require!(old_slot_count > 0, OracleError::InvalidChannelState);
-
-    let mut slots: Vec<(u64, [u8; ChannelSlot::LEN])> = Vec::with_capacity(old_slot_count);
-    for i in 0..old_slot_count {
-        let start = slots_start + i * slot_size;
-        let end = start + slot_size;
-        if end > old_data.len() {
-            break;
-        }
-        let epoch = u64::from_le_bytes(
-            old_data[start..start + 8]
-                .try_into()
-                .map_err(|_| OracleError::InvalidChannelState)?,
-        );
-        if epoch == 0 {
-            continue;
-        }
-        let mut slot_bytes = [0u8; ChannelSlot::LEN];
-        slot_bytes.copy_from_slice(&old_data[start..end]);
-        slots.push((epoch, slot_bytes));
-    }
 
     drop(old_data);
 
     msg!(
-        "Resizing ChannelState {}: {} bytes → {} bytes (preserving {} slots)",
+        "Resizing ChannelState {}: {} → {} bytes",
         channel_info.key(),
         current_size,
-        target_size,
-        slots.len()
+        this_target
     );
 
-    // Fund rent-exempt minimum for new size if needed
+    // Fund rent-exempt minimum for THIS iteration's target size
     let rent = Rent::get()?;
-    let needed_lamports = rent.minimum_balance(target_size);
+    let needed_lamports = rent.minimum_balance(this_target);
     let current_lamports = channel_info.lamports();
     if needed_lamports > current_lamports {
         let diff = needed_lamports - current_lamports;
@@ -153,29 +128,22 @@ pub fn resize_channel_state(ctx: Context<ResizeChannelState>) -> Result<()> {
         )?;
     }
 
-    // Realloc and zero-init the new bytes to avoid random epochs bricking the ring.
-    channel_info.to_account_info().realloc(target_size, true)?;
+    // Realloc to THIS iteration's target (chunked due to Solana 10KB limit)
+    channel_info.to_account_info().realloc(this_target, true)?;
 
-    // Rehydrate header, then map each preserved slot to its new ring index.
+    // Rehydrate header (slot data stays in place, new bytes zero-initialized)
     let mut new_data = channel_info.try_borrow_mut_data()?;
     new_data[..HEADER_BYTES].copy_from_slice(&header);
 
-    for (epoch, slot_bytes) in slots {
-        let dest_idx = ChannelState::slot_index(epoch);
-        let dest_start = slots_start + dest_idx * slot_size;
-        let dest_end = dest_start + slot_size;
-        if dest_end > new_data.len() {
-            continue;
-        }
-
-        let existing_epoch = u64::from_le_bytes(
-            new_data[dest_start..dest_start + 8]
-                .try_into()
-                .map_err(|_| OracleError::InvalidChannelState)?,
+    if is_final {
+        msg!("Resize complete - final size: {} bytes", this_target);
+    } else {
+        msg!(
+            "Intermediate resize: {} → {} bytes ({} more iterations needed)",
+            current_size,
+            this_target,
+            (target_size - this_target + MAX_REALLOC_DELTA - 1) / MAX_REALLOC_DELTA
         );
-        if existing_epoch == 0 || epoch > existing_epoch {
-            new_data[dest_start..dest_end].copy_from_slice(&slot_bytes);
-        }
     }
 
     Ok(())
