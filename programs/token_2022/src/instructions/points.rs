@@ -5,10 +5,12 @@ use anchor_spl::{
 };
 
 use crate::{
-    constants::PROTOCOL_SEED,
+    constants::{MAX_ID_BYTES, PROTOCOL_SEED},
     errors::OracleError,
     state::{EpochState, ProtocolState},
 };
+
+const MAX_PROOF_LEN: usize = 32;
 
 #[derive(Accounts)]
 pub struct ClaimPointsOpen<'info> {
@@ -59,6 +61,8 @@ pub fn claim_points_open(
 
     // Guards
     require!(!epoch.closed, OracleError::EpochClosed);
+    require!(id.as_bytes().len() <= MAX_ID_BYTES, OracleError::InvalidInputLength);
+    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
 
     // Optional: ensure points are for the same protocol instance by convention
     // (we allow any points mint as long as authority signs via PDA)

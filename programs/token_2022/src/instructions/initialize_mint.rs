@@ -4,6 +4,7 @@ use crate::{
     state::{FeeConfig, ProtocolState},
 };
 use anchor_lang::prelude::*;
+use anchor_spl::token_2022::spl_token_2022;
 use anchor_spl::token_interface::Mint as SplMint;
 
 #[derive(Accounts)]
@@ -15,6 +16,9 @@ pub struct InitializeMint<'info> {
     pub admin: Signer<'info>,
 
     /// Token-2022 mint (created externally with spl-token CLI)
+    #[account(
+        constraint = token_mint.to_account_info().owner == &spl_token_2022::ID @ OracleError::InvalidMintData
+    )]
     pub token_mint: InterfaceAccount<'info, SplMint>,
 
     /// Protocol state PDA (mint-keyed)
@@ -84,6 +88,9 @@ pub struct InitializeMintOpen<'info> {
     pub admin: Signer<'info>,
 
     /// Token-2022 mint (created externally)
+    #[account(
+        constraint = token_mint.to_account_info().owner == &spl_token_2022::ID @ OracleError::InvalidMintData
+    )]
     pub token_mint: InterfaceAccount<'info, SplMint>,
 
     /// Protocol state PDA (keyed by mint)

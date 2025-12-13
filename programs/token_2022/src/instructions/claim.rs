@@ -16,11 +16,13 @@ fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
 }
 
 use crate::{
-    constants::{EPOCH_STATE_SEED, PROTOCOL_SEED},
+    constants::{EPOCH_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED},
     errors::OracleError,
     instructions::cnft_verify::CnftReceiptProof,
     state::{EpochState, ProtocolState},
 };
+
+const MAX_PROOF_LEN: usize = 32;
 
 #[derive(Accounts)]
 pub struct Claim<'info> {
@@ -90,6 +92,8 @@ pub struct Claim<'info> {
         epoch.mint == ctx.accounts.mint.key(),
         OracleError::InvalidMint
     );
+    require!(id.as_bytes().len() <= MAX_ID_BYTES, OracleError::InvalidInputLength);
+    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
 
     // Prevent spoofed epoch_state accounts
     let expected_epoch_state = Pubkey::find_program_address(
@@ -235,6 +239,8 @@ pub fn claim_open<'info>(
         epoch.mint == ctx.accounts.mint.key(),
         OracleError::InvalidMint
     );
+    require!(id.as_bytes().len() <= MAX_ID_BYTES, OracleError::InvalidInputLength);
+    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
 
     let expected_epoch_state = Pubkey::find_program_address(
         &[

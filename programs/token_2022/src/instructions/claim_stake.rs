@@ -11,7 +11,7 @@ use anchor_spl::{
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    constants::{CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, PROTOCOL_SEED},
+    constants::{CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED},
     errors::OracleError,
     instructions::claim::{compute_leaf, verify_proof},
     state::{ChannelSlot, ChannelState, ProtocolState},
@@ -40,6 +40,7 @@ fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
 }
 
 const CHANNEL_STATE_VERSION: u8 = 1;
+const MAX_PROOF_LEN: usize = 32;
 
 /// Claim from channel with optional auto-stake to lofi-bank
 #[derive(Accounts)]
@@ -117,9 +118,14 @@ pub fn claim_channel_and_stake<'info>(
     lock_epochs: u32,    // lock period in epochs, default 12
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
+    if protocol_state.require_receipt {
+        return err!(OracleError::ReceiptRequired);
+    }
 
     // Ensure provided mint matches the protocol instance
     require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
+    require!(id.as_bytes().len() <= MAX_ID_BYTES, OracleError::InvalidInputLength);
+    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
 
     // Derive and validate channel_state PDA
     let subject_id = derive_subject_id(&channel);
