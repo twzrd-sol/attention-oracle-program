@@ -53,9 +53,13 @@ pub struct PushDistribute<'info> {
 }
 
 fn derive_subject_id(channel: &str) -> [u8; 32] {
+    // Keep subject derivation consistent with channel claim paths (ASCII-lowercase).
+    let mut lower = channel.as_bytes().to_vec();
+    lower.iter_mut().for_each(|b| *b = b.to_ascii_lowercase());
+
     let mut hasher = Keccak256::new();
     hasher.update(b"channel:");
-    hasher.update(channel.to_lowercase());
+    hasher.update(lower.as_slice());
     let digest = hasher.finalize();
     let mut subject = [0u8; 32];
     subject.copy_from_slice(&digest[..32]);
@@ -120,33 +124,84 @@ pub fn push_distribute<'info>(
     ];
     let (flag_pda, flag_bump) = Pubkey::find_program_address(&flag_seeds, ctx.program_id);
     require_keys_eq!(flag_pda, flag_account.key(), OracleError::InvalidInputLength);
-    if flag_account.lamports() > 0 {
-        return Err(OracleError::AlreadyPushed.into());
+
+    // Idempotency flag PDA:
+    // - If already program-owned and marked, this batch is already pushed.
+    // - If it's been prefunded as a system account (anyone can transfer lamports to a PDA),
+    //   take ownership via allocate+assign and proceed (prevents cheap DoS via prefunding).
+    let flag_signer_seeds: &[&[u8]] = &[
+        FLAG_SEED,
+        mint_key.as_ref(),
+        subject_id.as_ref(),
+        &epoch.to_le_bytes(),
+        &batch_idx.to_le_bytes(),
+        &[flag_bump],
+    ];
+
+    if flag_account.owner == ctx.program_id {
+        let data = flag_account.try_borrow_data()?;
+        if data.first().copied() == Some(1) {
+            return Err(OracleError::AlreadyPushed.into());
+        }
     }
 
     let rent = Rent::get()?;
-    invoke_signed(
-        &system_instruction::create_account(
-            &ctx.accounts.publisher.key(),
-            flag_account.key,
-            rent.minimum_balance(FLAG_SPACE),
-            FLAG_SPACE as u64,
-            ctx.program_id,
-        ),
-        &[
-            ctx.accounts.publisher.to_account_info(),
-            flag_account.clone(),
-            ctx.accounts.system_program.to_account_info(),
-        ],
-        &[&[
-            FLAG_SEED,
-            ctx.accounts.mint.key().as_ref(),
-            subject_id.as_ref(),
-            &epoch.to_le_bytes(),
-            &batch_idx.to_le_bytes(),
-            &[flag_bump],
-        ]],
-    )?;
+    let needed_lamports = rent.minimum_balance(FLAG_SPACE);
+
+    if flag_account.owner == &anchor_lang::system_program::ID {
+        require!(flag_account.data_len() == 0, OracleError::InvalidInputLength);
+
+        if flag_account.lamports() < needed_lamports {
+            let diff = needed_lamports.saturating_sub(flag_account.lamports());
+            invoke_signed(
+                &system_instruction::transfer(&ctx.accounts.publisher.key(), flag_account.key, diff),
+                &[
+                    ctx.accounts.publisher.to_account_info(),
+                    flag_account.clone(),
+                    ctx.accounts.system_program.to_account_info(),
+                ],
+                &[],
+            )?;
+        }
+
+        // Allocate then assign to this program (PDA signs via invoke_signed).
+        invoke_signed(
+            &system_instruction::allocate(flag_account.key, FLAG_SPACE as u64),
+            &[
+                flag_account.clone(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[flag_signer_seeds],
+        )?;
+        invoke_signed(
+            &system_instruction::assign(flag_account.key, ctx.program_id),
+            &[
+                flag_account.clone(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[flag_signer_seeds],
+        )?;
+    } else if flag_account.lamports() == 0 {
+        // Fresh PDA (doesn't exist yet): create it owned by this program.
+        invoke_signed(
+            &system_instruction::create_account(
+                &ctx.accounts.publisher.key(),
+                flag_account.key,
+                needed_lamports,
+                FLAG_SPACE as u64,
+                ctx.program_id,
+            ),
+            &[
+                ctx.accounts.publisher.to_account_info(),
+                flag_account.clone(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[flag_signer_seeds],
+        )?;
+    } else if flag_account.owner != ctx.program_id {
+        return Err(OracleError::InvalidInputLength.into());
+    }
+
     {
         let mut data = flag_account.try_borrow_mut_data()?;
         if let Some(first) = data.first_mut() {
