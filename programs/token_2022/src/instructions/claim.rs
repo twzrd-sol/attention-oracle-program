@@ -16,7 +16,7 @@ fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
 }
 
 use crate::{
-    constants::{EPOCH_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED},
+    constants::{CLAIM_SKIM_BPS, EPOCH_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED},
     errors::OracleError,
     state::{EpochState, ProtocolState},
 };
@@ -72,7 +72,7 @@ pub struct Claim<'info> {
     pub system_program: Program<'info, System>,
 }
 
-    pub fn claim<'info>(
+pub fn claim<'info>(
     ctx: Context<'_, '_, '_, 'info, Claim<'info>>,
     _subject_index: u8,
     index: u32,
@@ -91,8 +91,14 @@ pub struct Claim<'info> {
         epoch.mint == ctx.accounts.mint.key(),
         OracleError::InvalidMint
     );
-    require!(id.as_bytes().len() <= MAX_ID_BYTES, OracleError::InvalidInputLength);
-    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+    require!(
+        id.as_bytes().len() <= MAX_ID_BYTES,
+        OracleError::InvalidInputLength
+    );
+    require!(
+        proof.len() <= MAX_PROOF_LEN,
+        OracleError::InvalidProofLength
+    );
 
     // Prevent spoofed epoch_state accounts
     let expected_epoch_state = Pubkey::find_program_address(
@@ -151,13 +157,19 @@ pub struct Claim<'info> {
     let to = ctx.accounts.claimer_ata.to_account_info();
     let authority = ctx.accounts.protocol_state.to_account_info();
 
+    let fee = (amount as u128)
+        .saturating_mul(CLAIM_SKIM_BPS as u128)
+        .checked_div(10_000)
+        .unwrap_or(0) as u64;
+    let net_amount = amount.saturating_sub(fee);
+
     crate::transfer_checked_with_remaining(
         &token_program,
         &from,
         &mint,
         &to,
         &authority,
-        amount,
+        net_amount,
         ctx.accounts.mint.decimals,
         signer,
         ctx.remaining_accounts,
@@ -165,7 +177,7 @@ pub struct Claim<'info> {
 
     // Mark claimed and bump totals
     epoch.claimed_bitmap[byte_i] |= bit;
-    epoch.total_claimed = epoch.total_claimed.saturating_add(amount);
+    epoch.total_claimed = epoch.total_claimed.saturating_add(net_amount);
 
     Ok(())
 }
@@ -242,8 +254,14 @@ pub fn claim_open<'info>(
         epoch.mint == ctx.accounts.mint.key(),
         OracleError::InvalidMint
     );
-    require!(id.as_bytes().len() <= MAX_ID_BYTES, OracleError::InvalidInputLength);
-    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+    require!(
+        id.as_bytes().len() <= MAX_ID_BYTES,
+        OracleError::InvalidInputLength
+    );
+    require!(
+        proof.len() <= MAX_PROOF_LEN,
+        OracleError::InvalidProofLength
+    );
 
     let expected_epoch_state = Pubkey::find_program_address(
         &[
@@ -293,13 +311,19 @@ pub fn claim_open<'info>(
     let to = ctx.accounts.claimer_ata.to_account_info();
     let authority = ctx.accounts.protocol_state.to_account_info();
 
+    let fee = (amount as u128)
+        .saturating_mul(CLAIM_SKIM_BPS as u128)
+        .checked_div(10_000)
+        .unwrap_or(0) as u64;
+    let net_amount = amount.saturating_sub(fee);
+
     crate::transfer_checked_with_remaining(
         &token_program,
         &from,
         &mint,
         &to,
         &authority,
-        amount,
+        net_amount,
         ctx.accounts.mint.decimals,
         signer,
         ctx.remaining_accounts,
@@ -307,7 +331,7 @@ pub fn claim_open<'info>(
 
     // Step 4: Mark claimed
     epoch.claimed_bitmap[byte_i] |= bit;
-    epoch.total_claimed = epoch.total_claimed.saturating_add(amount);
+    epoch.total_claimed = epoch.total_claimed.saturating_add(net_amount);
     Ok(())
 }
 

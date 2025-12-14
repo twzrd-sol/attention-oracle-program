@@ -104,4 +104,34 @@ pub enum OracleError {
 
     #[msg("Account already at or above target size")]
     AccountTooLarge,
+
+    // =========================================================================
+    // STAKING ERRORS (V1)
+    // =========================================================================
+    #[msg("Stake pool not initialized")]
+    StakePoolNotInitialized,
+
+    #[msg("Insufficient stake balance")]
+    InsufficientStake,
+
+    #[msg("Tokens are still locked")]
+    TokensLocked,
+
+    #[msg("Stake amount below minimum")]
+    StakeBelowMinimum,
+
+    #[msg("Lock period too long")]
+    LockPeriodTooLong,
+
+    #[msg("No pending rewards")]
+    NoPendingRewards,
+
+    // =========================================================================
+    // CREATOR ERRORS (V1)
+    // =========================================================================
+    #[msg("Creator fee share too high")]
+    CreatorFeeTooHigh,
+
+    #[msg("Channel meta not initialized")]
+    ChannelMetaNotInitialized,
 }

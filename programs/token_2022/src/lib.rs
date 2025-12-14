@@ -285,6 +285,73 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
+    // Staking System (V1)
+    // -------------------------------------------------------------------------
+
+    /// Initialize the stake pool for a mint (admin only)
+    pub fn initialize_stake_pool(
+        ctx: Context<InitializeStakePool>,
+        reward_rate: u64,
+    ) -> Result<()> {
+        instructions::staking::initialize_stake_pool(ctx, reward_rate)
+    }
+
+    /// Stake CCM tokens with optional lock period
+    pub fn stake(ctx: Context<Stake>, amount: u64, lock_slots: u64) -> Result<()> {
+        instructions::staking::stake(ctx, amount, lock_slots)
+    }
+
+    /// Unstake CCM tokens (after lock expires)
+    pub fn unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
+        instructions::staking::unstake(ctx, amount)
+    }
+
+    /// Delegate stake to a channel (backs creator for network effects)
+    pub fn delegate_stake(ctx: Context<DelegateStake>, subject_id: Option<[u8; 32]>) -> Result<()> {
+        instructions::staking::delegate_stake(ctx, subject_id)
+    }
+
+    /// Claim accumulated staking rewards
+    pub fn claim_stake_rewards(ctx: Context<ClaimStakeRewards>) -> Result<()> {
+        instructions::staking::claim_stake_rewards(ctx)
+    }
+
+    // -------------------------------------------------------------------------
+    // Creator Extensions (V1)
+    // -------------------------------------------------------------------------
+
+    /// Initialize channel metadata for creator revenue sharing
+    pub fn initialize_channel_meta(
+        ctx: Context<InitializeChannelMeta>,
+        channel: String,
+        creator_wallet: Pubkey,
+        fee_share_bps: u16,
+    ) -> Result<()> {
+        instructions::creator::initialize_channel_meta(ctx, channel, creator_wallet, fee_share_bps)
+    }
+
+    /// Update the creator wallet for fee distribution
+    pub fn set_creator_wallet(ctx: Context<SetCreatorWallet>, new_wallet: Pubkey) -> Result<()> {
+        instructions::creator::set_creator_wallet(ctx, new_wallet)
+    }
+
+    /// Update the creator fee share percentage
+    pub fn set_creator_fee_share(
+        ctx: Context<SetCreatorFeeShare>,
+        new_fee_share_bps: u16,
+    ) -> Result<()> {
+        instructions::creator::set_creator_fee_share(ctx, new_fee_share_bps)
+    }
+
+    /// Update total delegated stake for a channel (publisher operation)
+    pub fn update_total_delegated(
+        ctx: Context<UpdateTotalDelegated>,
+        total_delegated: u64,
+    ) -> Result<()> {
+        instructions::creator::update_total_delegated(ctx, total_delegated)
+    }
+
+    // -------------------------------------------------------------------------
     // Legacy / Deprecated Paths
     // -------------------------------------------------------------------------
     // Note: These are feature-gated and should be disabled in production builds
