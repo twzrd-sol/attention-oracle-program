@@ -17,11 +17,6 @@ const OLD_SLOT_SIZE: usize = 8 + 32 + 2 + 6 + OLD_CHANNEL_BITMAP_BYTES;
 const NEW_SLOT_SIZE: usize = 8 + 32 + 2 + 6 + CHANNEL_BITMAP_BYTES;
 
 /// Old header: version(1) + bump(1) + mint(32) + subject(32) + padding(6) + latest_epoch(8) = 80
-const HEADER_SIZE: usize = 1 + 1 + 32 + 32 + 6 + 8;
-
-/// Old total: disc(8) + header(80) + slots(176*10) = 8 + 80 + 1760 = 1848 (but actual is 728?)
-/// Actual old account: 728 bytes - need to handle smaller account
-const OLD_ACCOUNT_SIZE: usize = 728;
 
 /// New total: disc(8) + header(80) + slots(560*10) = 5688
 const NEW_ACCOUNT_SIZE: usize = 8 + std::mem::size_of::<ChannelState>();
@@ -82,10 +77,13 @@ pub fn migrate_channel_state(ctx: Context<MigrateChannelState>, channel: String)
     let discriminator = &old_data[0..8];
     let version = old_data[8];
     let bump = old_data[9];
-    let mint = Pubkey::try_from(&old_data[10..42]).unwrap();
-    let subject = Pubkey::try_from(&old_data[42..74]).unwrap();
+    let mint = Pubkey::try_from(&old_data[10..42]).map_err(|_| OracleError::InvalidChannelState)?;
+    let subject = Pubkey::try_from(&old_data[42..74]).map_err(|_| OracleError::InvalidChannelState)?;
     let _padding = &old_data[74..80];
-    let latest_epoch = u64::from_le_bytes(old_data[80..88].try_into().unwrap());
+    let latest_epoch_bytes: [u8; 8] = old_data[80..88]
+        .try_into()
+        .map_err(|_| OracleError::InvalidChannelState)?;
+    let latest_epoch = u64::from_le_bytes(latest_epoch_bytes);
 
     // Validate PDA
     let seeds = [CHANNEL_STATE_SEED, mint.as_ref(), subject.as_ref()];
@@ -138,7 +136,7 @@ pub fn migrate_channel_state(ctx: Context<MigrateChannelState>, channel: String)
 
     // Realloc the account and zero-init new bytes to avoid uninitialized epochs
     // bricking future ring updates when the channel ring size increases.
-    channel_info.realloc(NEW_ACCOUNT_SIZE, true)?;
+    channel_info.resize(NEW_ACCOUNT_SIZE)?;
 
     // Write new data
     let mut new_data = channel_info.try_borrow_mut_data()?;

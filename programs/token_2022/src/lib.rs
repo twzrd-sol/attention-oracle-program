@@ -82,14 +82,6 @@ pub mod token_2022 {
         instructions::initialize_mint::handler(ctx, fee_basis_points, max_fee)
     }
 
-    /// Initialize the ExtraAccountMetaList required for the Transfer Hook.
-    /// This allows the token to read Protocol State during transfers.
-    pub fn initialize_extra_account_meta_list(
-        ctx: Context<InitializeExtraAccountMetaList>,
-    ) -> Result<()> {
-        instructions::extra_account_metas::initialize_extra_account_meta_list(ctx)
-    }
-
     // -------------------------------------------------------------------------
     // Oracle & Distribution (Ring Buffer)
     // -------------------------------------------------------------------------
@@ -153,14 +145,8 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
-    // DeFi Rails (Hooks & Governance)
+    // Governance (DeFi Rails)
     // -------------------------------------------------------------------------
-
-    /// The Transfer Hook entrypoint called by the Token-2022 program.
-    /// Enforces dynamic fee logic and emits telemetry for indexers.
-    pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
-        instructions::hooks::transfer_hook(ctx, amount)
-    }
 
     /// Update the base transfer fee configuration.
     pub fn update_fee_config(
@@ -231,6 +217,12 @@ pub mod token_2022 {
 
     pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
         instructions::admin::update_admin(ctx, new_admin)
+    }
+
+    /// Bootstrap mint for CCM-v2 (before protocol_state initialized).
+    /// Admin-only, uses hardcoded ADMIN_AUTHORITY.
+    pub fn admin_mint_v2(ctx: Context<AdminMintV2>, amount: u64) -> Result<()> {
+        instructions::admin::admin_mint_v2(ctx, amount)
     }
 
     // -------------------------------------------------------------------------
@@ -357,6 +349,7 @@ pub mod token_2022 {
 
     /// Migrate CCM tokens from v1 (no TransferFeeConfig) to v2 (with TransferFeeConfig).
     /// Burns v1 tokens and mints v2 tokens at 1:1 ratio.
+    #[cfg(feature = "migration")]
     pub fn migrate(ctx: Context<Migrate>, amount: u64) -> Result<()> {
         instructions::migrate::migrate(ctx, amount)
     }

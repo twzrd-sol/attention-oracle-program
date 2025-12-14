@@ -106,7 +106,10 @@ pub mod ccm_hook {
         if data.len() < 16 {
             return Err(HookError::InvalidInstruction.into());
         }
-        let amount = u64::from_le_bytes(data[8..16].try_into().unwrap());
+        let amount_bytes: [u8; 8] = data[8..16]
+            .try_into()
+            .map_err(|_| HookError::InvalidInstruction)?;
+        let amount = u64::from_le_bytes(amount_bytes);
 
         // Log for debugging
         msg!("CCM Hook fallback: amount={}", amount);

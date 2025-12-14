@@ -7,7 +7,10 @@ use crate::{
     state::{ProtocolState, StakePool, UserStake},
 };
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token_interface::{Mint, TokenAccount, TokenInterface},
+};
 
 // =============================================================================
 // EVENTS
@@ -170,6 +173,8 @@ pub struct Stake<'info> {
     /// Stake vault (destination)
     #[account(
         mut,
+        token::mint = mint,
+        token::authority = stake_pool,
         seeds = [STAKE_VAULT_SEED, mint.key().as_ref()],
         bump,
     )]
@@ -303,6 +308,8 @@ pub struct Unstake<'info> {
     /// Stake vault (source)
     #[account(
         mut,
+        token::mint = mint,
+        token::authority = stake_pool,
         seeds = [STAKE_VAULT_SEED, mint.key().as_ref()],
         bump,
     )]
@@ -510,14 +517,18 @@ pub struct ClaimStakeRewards<'info> {
     )]
     pub user_token_account: InterfaceAccount<'info, TokenAccount>,
 
-    /// Treasury token account (source of rewards)
+    /// Treasury ATA (source of rewards)
     #[account(
         mut,
-        address = protocol_state.treasury,
+        associated_token::mint = mint,
+        associated_token::authority = protocol_state,
+        associated_token::token_program = token_program
     )]
-    pub treasury: InterfaceAccount<'info, TokenAccount>,
+    pub treasury_ata: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
 }
 
 pub fn claim_stake_rewards(ctx: Context<ClaimStakeRewards>) -> Result<()> {
@@ -550,7 +561,7 @@ pub fn claim_stake_rewards(ctx: Context<ClaimStakeRewards>) -> Result<()> {
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             anchor_spl::token_interface::TransferChecked {
-                from: ctx.accounts.treasury.to_account_info(),
+                from: ctx.accounts.treasury_ata.to_account_info(),
                 mint: ctx.accounts.mint.to_account_info(),
                 to: ctx.accounts.user_token_account.to_account_info(),
                 authority: ctx.accounts.protocol_state.to_account_info(),

@@ -1,10 +1,12 @@
 #!/usr/bin/env ts-node
 /**
- * Initialize ExtraAccountMetaList for a Token-2022 CCM mint
+ * Initialize ExtraAccountMetaList (EAML) for a Token-2022 Transfer Hook
  *
- * This script sets up the EAML PDA for a transfer hook-enabled mint,
- * allowing Token-2022 to automatically inject protocol_state, fee_config,
- * and system_program into every transfer_checked call.
+ * This script sets up the EAML PDA for a transfer hook-enabled mint.
+ *
+ * Important: The EAML PDA is owned by the *hook program* (ccm_hook), not the
+ * distribution program (token_2022). Token-2022 reads this account to know
+ * which extra accounts to pass to the hook on every transfer.
  *
  * Usage:
  *   ts-node scripts/init-eaml.ts <MINT_ADDRESS>
@@ -55,16 +57,16 @@ async function main() {
   );
   console.log(`💼 Payer: ${walletKeypair.publicKey.toBase58()}`);
 
-  const rpcUrl = process.env.SYNDICA_RPC!;
+  const rpcUrl = process.env.SYNDICA_RPC || 'https://api.mainnet-beta.solana.com';
   const connection = new Connection(rpcUrl, 'confirmed');
   const wallet = new Wallet(walletKeypair);
   const provider = new AnchorProvider(connection, wallet, {
     commitment: 'confirmed',
   });
 
-  // Load program IDL
-  const programId = new PublicKey('GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop');
-  const idlPath = path.join(process.cwd(), 'target/idl/token_2022.json');
+  // Load ccm_hook program IDL (Transfer Hook program)
+  const hookProgramId = new PublicKey('8VE2Wt5JNusGUCwkrpVmdwgdgyD6vYPEHop2g2CAArzS');
+  const idlPath = path.join(process.cwd(), 'target/idl/ccm_hook.json');
 
   if (!fs.existsSync(idlPath)) {
     console.error(
@@ -74,12 +76,12 @@ async function main() {
   }
 
   const idl = JSON.parse(fs.readFileSync(idlPath, 'utf-8'));
-  const program = new Program(idl, programId, provider);
+  const program = new Program(idl, hookProgramId, provider);
 
   // Derive EAML PDA
   const [eamlPda] = PublicKey.findProgramAddressSync(
     [Buffer.from('extra-account-metas'), mint.toBuffer()],
-    programId
+    hookProgramId
   );
 
   console.log(`🔐 EAML PDA: ${eamlPda.toBase58()}\n`);
@@ -93,7 +95,7 @@ async function main() {
     return;
   }
 
-  // Call initialize_extra_account_meta_list
+  // Call ccm_hook::initialize_extra_account_meta_list
   console.log('📡 Initializing EAML on-chain...');
 
   try {
