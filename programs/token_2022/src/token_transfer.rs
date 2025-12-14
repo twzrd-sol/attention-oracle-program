@@ -2,6 +2,8 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{instruction::AccountMeta, program::invoke_signed};
 use anchor_spl::token_2022::spl_token_2022;
 
+use crate::errors::OracleError;
+
 pub fn transfer_checked_with_remaining<'info>(
     token_program: &AccountInfo<'info>,
     from: &AccountInfo<'info>,
@@ -13,6 +15,12 @@ pub fn transfer_checked_with_remaining<'info>(
     signer_seeds: &[&[&[u8]]],
     remaining_accounts: &[AccountInfo<'info>],
 ) -> Result<()> {
+    require_keys_eq!(
+        token_program.key(),
+        spl_token_2022::ID,
+        OracleError::InvalidTokenProgram
+    );
+
     let mut ix = spl_token_2022::instruction::transfer_checked(
         token_program.key,
         from.key,
@@ -39,4 +47,3 @@ pub fn transfer_checked_with_remaining<'info>(
 
     invoke_signed(&ix, &account_infos, signer_seeds).map_err(Into::into)
 }
-

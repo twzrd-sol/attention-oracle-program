@@ -225,7 +225,7 @@ pub fn close_channel_state(ctx: Context<CloseChannelState>, subject_id: Pubkey) 
 
     // Zero out account data to mark as closed
     channel_info.assign(&System::id());
-    channel_info.realloc(0, false)?;
+    channel_info.resize(0)?;
 
     msg!("Closed channel_state for subject {}", subject_id);
     Ok(())
@@ -275,7 +275,7 @@ pub fn force_close_channel_state_legacy(
 
     // Zero out account data
     channel_info.assign(&System::id());
-    channel_info.realloc(0, false)?;
+    channel_info.resize(0)?;
 
     msg!("Force closed legacy channel_state for subject {}", subject_id);
     Ok(())

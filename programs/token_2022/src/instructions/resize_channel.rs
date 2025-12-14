@@ -129,7 +129,7 @@ pub fn resize_channel_state(ctx: Context<ResizeChannelState>) -> Result<()> {
     }
 
     // Realloc to THIS iteration's target (chunked due to Solana 10KB limit)
-    channel_info.to_account_info().realloc(this_target, true)?;
+    channel_info.to_account_info().resize(this_target)?;
 
     // Rehydrate header (slot data stays in place, new bytes zero-initialized)
     let mut new_data = channel_info.try_borrow_mut_data()?;
