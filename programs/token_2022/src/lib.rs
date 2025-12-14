@@ -119,30 +119,6 @@ pub mod token_2022 {
         instructions::channel::claim_channel_open(ctx, channel, epoch, index, amount, id, proof)
     }
 
-    /// Execute a claim and mint a cNFT receipt in a single atomic transaction.
-    /// Provides a permanent, non-fungible record of the participation event.
-    pub fn claim_channel_open_with_receipt<'info>(
-        ctx: Context<'_, '_, '_, 'info, ClaimChannelWithReceipt<'info>>,
-        channel: String,
-        epoch: u64,
-        index: u32,
-        amount: u64,
-        id: String,
-        proof: Vec<[u8; 32]>,
-        mint_receipt: bool,
-    ) -> Result<()> {
-        instructions::channel::claim_channel_open_with_receipt(
-            ctx,
-            channel,
-            epoch,
-            index,
-            amount,
-            id,
-            proof,
-            mint_receipt,
-        )
-    }
-
     /// Push-distribute CCM to multiple recipients in a single transaction.
     /// Publisher-only operation for batch airdrops/rewards.
     /// Recipient ATAs must pre-exist (passed as remaining_accounts).
@@ -308,36 +284,6 @@ pub mod token_2022 {
         instructions::passport::revoke_passport_open(ctx, user_hash)
     }
 
-    pub fn upgrade_passport_proved(
-        ctx: Context<UpgradePassportProved>,
-        user_hash: [u8; 32],
-        new_tier: u8,
-        new_score: u64,
-        epoch_count: u32,
-        weighted_presence: u64,
-        badges: u32,
-        leaf_hash: [u8; 32],
-        proof_nodes: Vec<[u8; 32]>,
-        leaf_bytes: Vec<u8>,
-    ) -> Result<()> {
-        instructions::passport::upgrade_passport_proved(
-            ctx,
-            user_hash,
-            new_tier,
-            new_score,
-            epoch_count,
-            weighted_presence,
-            badges,
-            leaf_hash,
-            proof_nodes,
-            leaf_bytes,
-        )
-    }
-
-    pub fn require_points_ge(ctx: Context<RequirePoints>, min: u64) -> Result<()> {
-        instructions::points::require_points_ge(ctx, min)
-    }
-
     // -------------------------------------------------------------------------
     // Legacy / Deprecated Paths
     // -------------------------------------------------------------------------
@@ -386,7 +332,6 @@ pub mod token_2022 {
         proof: Vec<[u8; 32]>,
         channel: Option<String>,
         twzrd_epoch: Option<u64>,
-        receipt_proof: Option<CnftReceiptProof>,
     ) -> Result<()> {
         instructions::claim::claim_open(
             ctx,
@@ -397,7 +342,6 @@ pub mod token_2022 {
             proof,
             channel,
             twzrd_epoch,
-            receipt_proof,
         )
     }
 
@@ -410,17 +354,6 @@ pub mod token_2022 {
         subject_id: Pubkey,
     ) -> Result<()> {
         instructions::merkle::set_merkle_root_open(ctx, root, epoch, claim_count, subject_id)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn claim_points_open(
-        ctx: Context<ClaimPointsOpen>,
-        index: u32,
-        amount: u64,
-        id: String,
-        proof: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        instructions::points::claim_points_open(ctx, index, amount, id, proof)
     }
 
     #[cfg(feature = "legacy")]

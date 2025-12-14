@@ -87,32 +87,6 @@ pub struct RevokePassportOpen<'info> {
     pub registry: Account<'info, PassportRegistry>,
 }
 
-#[derive(Accounts)]
-#[instruction(user_hash: [u8; 32])]
-pub struct UpgradePassportProved<'info> {
-    #[account(mut)]
-    pub admin: Signer<'info>,
-    #[account(
-        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
-        bump = protocol_state.bump,
-        constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
-    )]
-    pub protocol_state: Account<'info, ProtocolState>,
-    #[account(
-        mut,
-        seeds = [PASSPORT_SEED, user_hash.as_ref()],
-        bump = registry.bump,
-        constraint = registry.user_hash == user_hash @ PassportError::InvalidUserHash
-    )]
-    pub registry: Account<'info, PassportRegistry>,
-    /// CHECK: Bubblegum tree account (read-only)
-    pub tree: AccountInfo<'info>,
-    /// CHECK: Collection mint/account for verification
-    pub collection: AccountInfo<'info>,
-    /// CHECK: Owner wallet (read-only reference)
-    pub owner: AccountInfo<'info>,
-    pub system_program: Program<'info, System>,
-}
 
 pub fn mint_passport_open(
     ctx: Context<MintPassportOpen>,
@@ -250,66 +224,6 @@ pub fn revoke_passport_open(ctx: Context<RevokePassportOpen>, user_hash: [u8; 32
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn upgrade_passport_proved(
-    ctx: Context<UpgradePassportProved>,
-    user_hash: [u8; 32],
-    new_tier: u8,
-    new_score: u64,
-    epoch_count: u32,
-    weighted_presence: u64,
-    badges: u32,
-    leaf_hash: [u8; 32],
-    proof_nodes: Vec<[u8; 32]>,
-    leaf_bytes: Vec<u8>,
-) -> Result<()> {
-    // TODO: verify Merkle proof against Bubblegum tree root. For now, emit a log so we
-    // remember to tighten this path before productionizing.
-    msg!(
-        "passport_proved_upgrade stub — nodes {} leaf_bytes {}",
-        proof_nodes.len(),
-        leaf_bytes.len()
-    );
-
-    let registry = &mut ctx.accounts.registry;
-    let current_time = Clock::get()?.unix_timestamp;
-
-    require!(
-        registry.user_hash == user_hash,
-        PassportError::InvalidUserHash
-    );
-    require!(
-        new_tier >= registry.tier,
-        PassportError::DowngradeNotAllowed
-    );
-    require!(
-        new_score >= registry.score,
-        PassportError::DowngradeNotAllowed
-    );
-    require!(new_tier <= MAX_TIER, PassportError::InvalidTier);
-
-    registry.tier = new_tier;
-    registry.score = new_score;
-    registry.epoch_count = epoch_count;
-    registry.weighted_presence = weighted_presence;
-    registry.badges = badges;
-    registry.leaf_hash = Some(leaf_hash);
-    registry.updated_at = current_time;
-
-    emit!(PassportUpgraded {
-        user_hash,
-        owner: registry.owner,
-        new_tier,
-        new_score,
-        epoch_count,
-        weighted_presence,
-        badges,
-        leaf_hash: Some(leaf_hash),
-        updated_at: current_time,
-    });
-
-    Ok(())
-}
 
 #[error_code]
 pub enum PassportError {
