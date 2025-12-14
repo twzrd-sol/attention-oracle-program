@@ -69,7 +69,7 @@ async function main() {
   // First, we need to get the protocol_state to find the mint
   // For now, use the known ATTENTION mint from environment or hardcode
   const ATTENTION_MINT = new PublicKey(
-    process.env.ATTENTION_MINT || "CcMtwrJa3F8cJnLewjJFQmhML5Z59PN3zJkv73WQHK8S"
+    process.env.ATTENTION_MINT || "ESpcP35Waf5xuniehGopLULkhwNgCgDUGbd4EHrR8cWe"
   );
 
   // Derive protocol_state PDA
