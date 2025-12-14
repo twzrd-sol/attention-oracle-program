@@ -16,6 +16,7 @@ pub mod passport;
 pub mod push_distribute;
 pub mod resize_channel;
 pub mod staking;
+pub mod migrate;
 
 // Re-exports
 pub use admin::*;
@@ -34,3 +35,4 @@ pub use passport::*;
 pub use push_distribute::*;
 pub use resize_channel::*;
 pub use staking::*;
+pub use migrate::*;

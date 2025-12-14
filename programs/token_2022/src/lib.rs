@@ -352,6 +352,16 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
+    // Migration (CCM-v1 → CCM-v2)
+    // -------------------------------------------------------------------------
+
+    /// Migrate CCM tokens from v1 (no TransferFeeConfig) to v2 (with TransferFeeConfig).
+    /// Burns v1 tokens and mints v2 tokens at 1:1 ratio.
+    pub fn migrate(ctx: Context<Migrate>, amount: u64) -> Result<()> {
+        instructions::migrate::migrate(ctx, amount)
+    }
+
+    // -------------------------------------------------------------------------
     // Legacy / Deprecated Paths
     // -------------------------------------------------------------------------
     // Note: These are feature-gated and should be disabled in production builds
