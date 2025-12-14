@@ -1,8 +1,8 @@
 //! Claim + Auto-Stake instruction (Channel-based)
 //! Extends claim_channel_open with optional CPI to lofi-bank for auto-staking
 
-use anchor_lang::prelude::*;
 use anchor_lang::accounts::account_loader::AccountLoader;
+use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
     token_interface::{Mint, TokenAccount, TokenInterface},
@@ -11,7 +11,9 @@ use anchor_spl::{
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    constants::{CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED},
+    constants::{
+        CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, CLAIM_SKIM_BPS, MAX_ID_BYTES, PROTOCOL_SEED,
+    },
     errors::OracleError,
     instructions::claim::{compute_leaf, verify_proof},
     state::{ChannelSlot, ChannelState, ProtocolState},
@@ -114,15 +116,25 @@ pub fn claim_channel_and_stake<'info>(
     id: String,
     proof: Vec<[u8; 32]>,
     auto_stake: bool,
-    stake_percent: u8,   // 0-100, default 50
-    lock_epochs: u32,    // lock period in epochs, default 12
+    stake_percent: u8, // 0-100, default 50
+    lock_epochs: u32,  // lock period in epochs, default 12
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
 
     // Ensure provided mint matches the protocol instance
-    require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
-    require!(id.as_bytes().len() <= MAX_ID_BYTES, OracleError::InvalidInputLength);
-    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+    require_keys_eq!(
+        ctx.accounts.mint.key(),
+        protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(
+        id.as_bytes().len() <= MAX_ID_BYTES,
+        OracleError::InvalidInputLength
+    );
+    require!(
+        proof.len() <= MAX_PROOF_LEN,
+        OracleError::InvalidProofLength
+    );
 
     // Derive and validate channel_state PDA
     let subject_id = derive_subject_id(&channel);
@@ -170,14 +182,22 @@ pub fn claim_channel_and_stake<'info>(
 
     // Verify merkle proof
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
-    require!(verify_proof(&proof, leaf, slot.root), OracleError::InvalidProof);
+    require!(
+        verify_proof(&proof, leaf, slot.root),
+        OracleError::InvalidProof
+    );
 
     // Mark as claimed
     slot.claimed_bitmap[byte_i] |= bit_mask;
     slot.claim_count = slot.claim_count.saturating_add(1);
 
-    // Transfer full amount from treasury to claimer
-    let tokens = amount;
+    // Claim-time skim: keep a fixed % in the protocol treasury (source ATA) by
+    // transferring less to the user.
+    let fee = (amount as u128)
+        .saturating_mul(CLAIM_SKIM_BPS as u128)
+        .checked_div(10_000)
+        .unwrap_or(0) as u64;
+    let tokens = amount.saturating_sub(fee);
     let protocol_seeds: &[&[u8]] = &[
         PROTOCOL_SEED,
         protocol_state.mint.as_ref(),
@@ -236,6 +256,12 @@ pub fn claim_channel_and_stake<'info>(
         }
     }
 
-    msg!("Claimed {} tokens, channel={}, epoch={}, index={}", tokens, channel, epoch, index);
+    msg!(
+        "Claimed {} tokens, channel={}, epoch={}, index={}",
+        tokens,
+        channel,
+        epoch,
+        index
+    );
     Ok(())
 }

@@ -5,7 +5,9 @@ use anchor_spl::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use crate::constants::{CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED};
+use crate::constants::{
+    CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, CLAIM_SKIM_BPS, MAX_ID_BYTES, PROTOCOL_SEED,
+};
 use crate::errors::OracleError;
 use crate::instructions::claim::{compute_leaf, verify_proof};
 use crate::state::{ChannelSlot, ChannelState, ProtocolState};
@@ -227,9 +229,19 @@ pub fn claim_channel_open<'info>(
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
     // Ensure provided mint matches the protocol instance
-    require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
-    require!(id.as_bytes().len() <= MAX_ID_BYTES, OracleError::InvalidInputLength);
-    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+    require_keys_eq!(
+        ctx.accounts.mint.key(),
+        protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(
+        id.as_bytes().len() <= MAX_ID_BYTES,
+        OracleError::InvalidInputLength
+    );
+    require!(
+        proof.len() <= MAX_PROOF_LEN,
+        OracleError::InvalidProofLength
+    );
     let subject_id = derive_subject_id(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,
@@ -281,9 +293,13 @@ pub fn claim_channel_open<'info>(
     slot.claimed_bitmap[byte_i] |= bit_mask;
     slot.claim_count = slot.claim_count.saturating_add(1);
 
-    // Aggregator already scales weight → 100 CCM (weight × 100 × 10^9)
-    // Use amount directly as transfer tokens (no double-scaling)
-    let tokens = amount;
+    // Claim-time skim: keep a fixed % in the protocol treasury (source ATA) by
+    // transferring less to the user.
+    let fee = (amount as u128)
+        .saturating_mul(CLAIM_SKIM_BPS as u128)
+        .checked_div(10_000)
+        .unwrap_or(0) as u64;
+    let tokens = amount.saturating_sub(fee);
 
     let seeds: &[&[u8]] = &[
         PROTOCOL_SEED,
@@ -410,7 +426,6 @@ pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> 
         ]],
     )?;
 
-
     msg!(
         "Channel '{}' closed by admin: {}. Reclaimed {} lamports (~{} SOL)",
         channel,
@@ -421,4 +436,3 @@ pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> 
 
     Ok(())
 }
-

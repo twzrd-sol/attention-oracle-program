@@ -22,6 +22,13 @@ pub const CCM_DECIMALS: u8 = 9;
 pub const INITIAL_SUPPLY: u64 = 1_000_000_000 * 1_000_000_000; // 1B CCM with 9 decimals
 pub const DRIP_THRESHOLD: u64 = 1_000_000 * 1_000_000_000; // 1M CCM volume
 
+// Claim-time fee (interim revenue rail)
+//
+// NOTE: Token-2022 does not support adding new *mint* extensions post-creation,
+// so `TransferFeeConfig` cannot be enabled retroactively for the current CCM mint.
+// Until a mint migration, apply a fixed basis-points skim at claim time.
+pub const CLAIM_SKIM_BPS: u16 = 300; // 3.00%
+
 // Transfer Fee Config (0.1% = 10 basis points)
 pub const DEFAULT_TRANSFER_FEE_BASIS_POINTS: u16 = 10;
 pub const MAX_FEE_BASIS_POINTS: u16 = 1000; // 10% max
@@ -77,3 +84,20 @@ pub const CREATOR_FEE_BASIS_POINTS: u16 = 5; // 0.05% to creator (multiplied by 
 // Harvest split (applies to withheld total during harvest)
 // Non-breaking default: true 50/50 split between treasury and creator pool
 pub const HARVEST_SPLIT_BPS_TREASURY: u16 = 5000; // 50.00%
+
+// =============================================================================
+// STAKING SYSTEM (V1)
+// =============================================================================
+pub const STAKE_POOL_SEED: &[u8] = b"stake_pool";
+pub const USER_STAKE_SEED: &[u8] = b"user_stake";
+pub const STAKE_VAULT_SEED: &[u8] = b"stake_vault";
+pub const MIN_STAKE_AMOUNT: u64 = 1_000_000_000; // 1 CCM (9 decimals)
+pub const MAX_LOCK_SLOTS: u64 = 432_000 * 30; // ~30 days at 400ms slots
+pub const REWARD_PRECISION: u128 = 1_000_000_000_000; // 1e12 for MasterChef math
+
+// =============================================================================
+// CREATOR EXTENSIONS (V1)
+// =============================================================================
+pub const CHANNEL_META_SEED: &[u8] = b"channel_meta";
+pub const MAX_CREATOR_FEE_BPS: u16 = 5000; // 50% max
+pub const DEFAULT_CREATOR_FEE_SHARE_BPS: u16 = 1000; // 10% default

@@ -302,3 +302,125 @@ impl ChannelSlot {
         Ok(())
     }
 }
+
+// =============================================================================
+// STAKING SYSTEM (V1)
+// =============================================================================
+
+/// Global stake pool state (mint-keyed)
+/// Seeds: ["stake_pool", mint]
+#[account]
+pub struct StakePool {
+    /// Version for future migrations
+    pub version: u8,
+    /// PDA bump seed
+    pub bump: u8,
+    /// CCM mint this pool is for
+    pub mint: Pubkey,
+    /// Total CCM staked in pool
+    pub total_staked: u64,
+    /// MasterChef-style accumulated reward per share (scaled by REWARD_PRECISION)
+    pub acc_reward_per_share: u128,
+    /// Last time rewards were updated
+    pub last_reward_time: i64,
+    /// Reward rate (CCM per second)
+    pub reward_rate: u64,
+    /// Authority that can modify pool params
+    pub authority: Pubkey,
+    /// Reserved for future use
+    pub _reserved: [u8; 64],
+}
+
+impl StakePool {
+    pub const LEN: usize = 8 +  // discriminator
+        1 +     // version
+        1 +     // bump
+        32 +    // mint
+        8 +     // total_staked
+        16 +    // acc_reward_per_share
+        8 +     // last_reward_time
+        8 +     // reward_rate
+        32 +    // authority
+        64;     // _reserved
+    // Total: 178 bytes
+}
+
+/// Per-user stake state (user + mint keyed)
+/// Seeds: ["user_stake", user, mint]
+#[account]
+pub struct UserStake {
+    /// Version for future migrations
+    pub version: u8,
+    /// PDA bump seed
+    pub bump: u8,
+    /// User pubkey
+    pub user: Pubkey,
+    /// CCM mint this stake is for
+    pub mint: Pubkey,
+    /// Amount of CCM staked
+    pub staked_amount: u64,
+    /// Optional channel subject_id for delegation (keccak hash)
+    pub delegated_subject: Option<[u8; 32]>,
+    /// Slot when lock expires (0 = unlocked)
+    pub lock_end_slot: u64,
+    /// MasterChef reward debt (scaled by REWARD_PRECISION)
+    pub reward_debt: u128,
+    /// Pending rewards to claim
+    pub pending_rewards: u64,
+    /// Last action timestamp
+    pub last_action_time: i64,
+    /// Reserved for future use
+    pub _reserved: [u8; 32],
+}
+
+impl UserStake {
+    pub const LEN: usize = 8 +  // discriminator
+        1 +     // version
+        1 +     // bump
+        32 +    // user
+        32 +    // mint
+        8 +     // staked_amount
+        1 + 32 + // delegated_subject Option<[u8;32]>
+        8 +     // lock_end_slot
+        16 +    // reward_debt
+        8 +     // pending_rewards
+        8 +     // last_action_time
+        32;     // _reserved
+    // Total: 187 bytes
+}
+
+// =============================================================================
+// CREATOR EXTENSIONS (V1)
+// =============================================================================
+
+/// Channel metadata for creator revenue sharing
+/// Seeds: ["channel_meta", channel_state]
+#[account]
+pub struct ChannelMeta {
+    /// Version for future migrations
+    pub version: u8,
+    /// PDA bump seed
+    pub bump: u8,
+    /// Associated channel state PDA
+    pub channel_state: Pubkey,
+    /// Creator wallet that receives fee share
+    pub creator_wallet: Pubkey,
+    /// Fee share in basis points (e.g., 1000 = 10%)
+    pub fee_share_bps: u16,
+    /// Sum of delegated stakes to this channel
+    pub total_delegated: u64,
+    /// Reserved for future use
+    pub _reserved: [u8; 64],
+}
+
+impl ChannelMeta {
+    pub const LEN: usize = 8 +  // discriminator
+        1 +     // version
+        1 +     // bump
+        32 +    // channel_state
+        32 +    // creator_wallet
+        2 +     // fee_share_bps
+        8 +     // total_delegated
+        64;     // _reserved
+    // Total: 148 bytes
+}
