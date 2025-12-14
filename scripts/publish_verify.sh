@@ -14,7 +14,7 @@ Options:
   --program-id <PUBKEY>        Program ID to verify (default: from env below)
   --repo-url <URL>             Git repo URL (default: repo origin URL or project URL)
   --commit <HASH>              Commit hash to verify (default: git rev-parse HEAD)
-  --library-name <NAME>        Cargo lib name (e.g. x402_on_demand)
+  --library-name <NAME>        Cargo lib name (e.g. token_2022)
   --mount-path <PATH>          Path to mount for build context (default: .)
   --rpc-url <URL>              RPC endpoint (default: ${SYNDICA_RPC:-https://api.mainnet-beta.solana.com})
   --wallet <PATH>              Path to keypair JSON (default: ~/.config/solana/id.json)
@@ -25,8 +25,8 @@ Options:
 Examples:
   $0 \
     --program-id G2v5XVA4SZnZ5NVLSC7pHJp9JRWSN13jHoXQ9ebpujvB \
-    --library-name x402_on_demand \
-    --mount-path programs/x402-on-demand \
+    --library-name token_2022 \
+    --mount-path . \
     --remote
 USAGE
 }
