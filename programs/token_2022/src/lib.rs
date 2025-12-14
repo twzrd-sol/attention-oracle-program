@@ -41,6 +41,7 @@ pub mod constants;
 pub mod errors;
 pub mod events;
 pub mod instructions;
+pub mod merkle_proof;
 pub mod state;
 pub mod token_transfer;
 
@@ -48,6 +49,7 @@ pub use constants::*;
 pub use errors::*;
 pub use events::*;
 pub use instructions::*;
+pub use merkle_proof::*;
 pub use state::*;
 pub use token_transfer::*;
 
@@ -219,12 +221,6 @@ pub mod token_2022 {
         instructions::admin::update_admin(ctx, new_admin)
     }
 
-    /// Bootstrap mint for CCM-v2 (before protocol_state initialized).
-    /// Admin-only, uses hardcoded ADMIN_AUTHORITY.
-    pub fn admin_mint_v2(ctx: Context<AdminMintV2>, amount: u64) -> Result<()> {
-        instructions::admin::admin_mint_v2(ctx, amount)
-    }
-
     // -------------------------------------------------------------------------
     // Identity Layer (Passport)
     // -------------------------------------------------------------------------
@@ -381,8 +377,8 @@ pub mod token_2022 {
     }
 
     #[cfg(feature = "legacy")]
-    pub fn claim(
-        ctx: Context<Claim>,
+    pub fn claim<'info>(
+        ctx: Context<'_, '_, '_, 'info, Claim<'info>>,
         subject_index: u8,
         index: u32,
         amount: u64,
@@ -393,8 +389,8 @@ pub mod token_2022 {
     }
 
     #[cfg(feature = "legacy")]
-    pub fn claim_open(
-        ctx: Context<ClaimOpen>,
+    pub fn claim_open<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimOpen<'info>>,
         subject_index: u8,
         index: u32,
         amount: u64,
@@ -432,7 +428,7 @@ pub mod token_2022 {
         epoch: u64,
         subject_id: Pubkey,
     ) -> Result<()> {
-        instructions::cleanup::close_epoch_state(ctx, epoch, subject_id)
+        instructions::cleanup_epoch::close_epoch_state(ctx, epoch, subject_id)
     }
 
     #[cfg(feature = "legacy")]
@@ -441,7 +437,7 @@ pub mod token_2022 {
         epoch: u64,
         subject_id: Pubkey,
     ) -> Result<()> {
-        instructions::cleanup::force_close_epoch_state_legacy(ctx, epoch, subject_id)
+        instructions::cleanup_epoch::force_close_epoch_state_legacy(ctx, epoch, subject_id)
     }
 
     #[cfg(feature = "legacy")]
@@ -451,7 +447,7 @@ pub mod token_2022 {
         subject_id: Pubkey,
         mint: Pubkey,
     ) -> Result<()> {
-        instructions::cleanup::force_close_epoch_state_open(ctx, epoch, subject_id, mint)
+        instructions::cleanup_epoch::force_close_epoch_state_open(ctx, epoch, subject_id, mint)
     }
 
     /// Close a channel state account (admin only, via ProtocolState)
@@ -460,6 +456,7 @@ pub mod token_2022 {
     }
 
     /// Force close legacy channel state (hardcoded admin, for pre-ops cleanup)
+    #[cfg(feature = "legacy")]
     pub fn force_close_channel_state_legacy(
         ctx: Context<ForceCloseChannelStateLegacy>,
         subject_id: Pubkey,
@@ -468,35 +465,4 @@ pub mod token_2022 {
         instructions::cleanup::force_close_channel_state_legacy(ctx, subject_id, mint)
     }
 
-    // -------------------------------------------------------------------------
-    // Lofi Bank Integration (Claim + Auto-Stake)
-    // -------------------------------------------------------------------------
-
-    /// Claim tokens from a channel epoch with optional auto-stake to lofi-bank.
-    /// Atomically claims merkle proof rewards and stakes a percentage.
-    pub fn claim_channel_and_stake<'info>(
-        ctx: Context<'_, '_, '_, 'info, ClaimChannelAndStake<'info>>,
-        channel: String,
-        epoch: u64,
-        index: u32,
-        amount: u64,
-        id: String,
-        proof: Vec<[u8; 32]>,
-        auto_stake: bool,
-        stake_percent: u8,
-        lock_epochs: u32,
-    ) -> Result<()> {
-        instructions::claim_stake::claim_channel_and_stake(
-            ctx,
-            channel,
-            epoch,
-            index,
-            amount,
-            id,
-            proof,
-            auto_stake,
-            stake_percent,
-            lock_epochs,
-        )
-    }
 }

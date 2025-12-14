@@ -111,53 +111,8 @@ impl FeeSplit {
     }
 }
 
-/// Volume tracking for hook triggers
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct VolumeStats {
-    /// Total volume all-time
-    pub total_volume: u128,
-
-    /// Volume in current hour
-    pub hourly_volume: u64,
-
-    /// Volume in current day
-    pub daily_volume: u64,
-
-    /// Last hourly reset timestamp
-    pub last_hour_reset: i64,
-
-    /// Last daily reset timestamp
-    pub last_day_reset: i64,
-
-    /// Total transfer count
-    pub transfer_count: u64,
-}
-
-impl VolumeStats {
-    pub const LEN: usize = 16 + 8 + 8 + 8 + 8 + 8;
-
-    pub fn update(&mut self, amount: u64, current_time: i64) {
-        // Reset hourly if needed
-        if current_time - self.last_hour_reset > 3600 {
-            self.hourly_volume = 0;
-            self.last_hour_reset = current_time;
-        }
-
-        // Reset daily if needed
-        if current_time - self.last_day_reset > 86400 {
-            self.daily_volume = 0;
-            self.last_day_reset = current_time;
-        }
-
-        // Update volumes
-        self.total_volume = self.total_volume.saturating_add(amount as u128);
-        self.hourly_volume = self.hourly_volume.saturating_add(amount);
-        self.daily_volume = self.daily_volume.saturating_add(amount);
-        self.transfer_count = self.transfer_count.saturating_add(1);
-    }
-}
-
-/// Epoch state for merkle claims (unchanged from v2)
+/// Epoch state for legacy merkle claims (deprecated).
+#[cfg(feature = "legacy")]
 #[account]
 pub struct EpochState {
     pub epoch: u64,
@@ -173,6 +128,7 @@ pub struct EpochState {
     pub claimed_bitmap: Vec<u8>,
 }
 
+#[cfg(feature = "legacy")]
 impl EpochState {
     pub fn space_for(claims: usize) -> usize {
         8 + // discriminator

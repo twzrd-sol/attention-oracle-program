@@ -2,7 +2,6 @@
 members = [
   "programs/token_2022",
   "programs/ccm_hook",
-  "programs/lofi-bank",
 ]
 exclude = [
   "programs/attention_oracle_program"

@@ -35,7 +35,6 @@ anchor-spl = { version = "0.32.1", features = ["token_2022"] }
 bytemuck = "1.19"
 sha3 = "0.10"
 solana-security-txt = "1.1"
-lofi-bank = { path = "../lofi-bank", features = ["cpi"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(docsrs)'] }

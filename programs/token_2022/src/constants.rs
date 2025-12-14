@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 
 // Seeds
 pub const PROTOCOL_SEED: &[u8] = b"protocol";
-pub const TREASURY_SEED: &[u8] = b"treasury";
+#[cfg(feature = "legacy")]
 pub const EPOCH_STATE_SEED: &[u8] = b"epoch_state";
 pub const CHANNEL_STATE_SEED: &[u8] = b"channel_state";
 
@@ -14,12 +14,9 @@ pub const CHANNEL_STATE_SEED: &[u8] = b"channel_state";
 pub const CHANNEL_RING_SLOTS: usize = 2048;
 pub const CHANNEL_MAX_CLAIMS: usize = 4096;
 pub const CHANNEL_BITMAP_BYTES: usize = (CHANNEL_MAX_CLAIMS + 7) / 8;
-pub const MAX_EPOCH_CLAIMS: u32 = 1_000_000;
 pub const MAX_ID_BYTES: usize = 64;
 
-// Token-2022 Config
-pub const CCM_DECIMALS: u8 = 9;
-pub const INITIAL_SUPPLY: u64 = 1_000_000_000 * 1_000_000_000; // 1B CCM with 9 decimals
+// Token / economics config
 pub const DRIP_THRESHOLD: u64 = 1_000_000 * 1_000_000_000; // 1M CCM volume
 
 // Claim-time fee (interim revenue rail)
@@ -29,20 +26,10 @@ pub const DRIP_THRESHOLD: u64 = 1_000_000 * 1_000_000_000; // 1M CCM volume
 // Until a mint migration, apply a fixed basis-points skim at claim time.
 pub const CLAIM_SKIM_BPS: u16 = 300; // 3.00%
 
-// Transfer Fee Config (0.1% = 10 basis points)
-pub const DEFAULT_TRANSFER_FEE_BASIS_POINTS: u16 = 10;
 pub const MAX_FEE_BASIS_POINTS: u16 = 1000; // 10% max
 
-// Fee Distribution (must sum to 100)
-pub const DEFAULT_LP_ALLOCATION: u8 = 40; // 40% to LP
-pub const DEFAULT_TREASURY_ALLOCATION: u8 = 30; // 30% to treasury
-pub const DEFAULT_BURN_ALLOCATION: u8 = 30; // 30% burn
-
-// Hook Triggers
-pub const VOLUME_CHECK_INTERVAL: i64 = 3600; // Check every hour
-pub const MIN_VOLUME_FOR_DRIP: u64 = 100_000 * 1_000_000_000; // 100k CCM minimum (9 decimals)
-
 // Epoch force-close grace period (e.g., 7 days)
+#[cfg(feature = "legacy")]
 pub const EPOCH_FORCE_CLOSE_GRACE_SECS: i64 = 7 * 24 * 60 * 60;
 
 // Admin authority (will be DAO eventually)

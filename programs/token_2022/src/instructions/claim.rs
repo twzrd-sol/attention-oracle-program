@@ -3,21 +3,11 @@ use anchor_spl::{
     associated_token::AssociatedToken,
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
-use sha3::{Digest, Keccak256};
-fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
-    let mut hasher = Keccak256::new();
-    for p in parts {
-        hasher.update(p);
-    }
-    let out = hasher.finalize();
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&out[..32]);
-    arr
-}
 
 use crate::{
     constants::{CLAIM_SKIM_BPS, EPOCH_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED},
     errors::OracleError,
+    merkle_proof::{compute_leaf, verify_proof},
     state::{EpochState, ProtocolState},
 };
 
@@ -333,25 +323,4 @@ pub fn claim_open<'info>(
     epoch.claimed_bitmap[byte_i] |= bit;
     epoch.total_claimed = epoch.total_claimed.saturating_add(net_amount);
     Ok(())
-}
-
-pub fn compute_leaf(claimer: &Pubkey, index: u32, amount: u64, id: &str) -> [u8; 32] {
-    // Note: Off-chain must mirror this exact hashing scheme
-    let idx = index.to_le_bytes();
-    let amt = amount.to_le_bytes();
-    let id_bytes = id.as_bytes();
-    keccak_hashv(&[claimer.as_ref(), &idx, &amt, id_bytes])
-}
-
-pub fn verify_proof(proof: &[[u8; 32]], mut hash: [u8; 32], root: [u8; 32]) -> bool {
-    for sibling in proof.iter() {
-        let (a, b) = if hash <= *sibling {
-            (hash, *sibling)
-        } else {
-            (*sibling, hash)
-        };
-        // pairwise keccak256 over sorted siblings
-        hash = keccak_hashv(&[&a, &b]);
-    }
-    hash == root
 }

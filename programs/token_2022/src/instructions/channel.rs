@@ -9,7 +9,7 @@ use crate::constants::{
     CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, CLAIM_SKIM_BPS, MAX_ID_BYTES, PROTOCOL_SEED,
 };
 use crate::errors::OracleError;
-use crate::instructions::claim::{compute_leaf, verify_proof};
+use crate::merkle_proof::{compute_leaf, verify_proof};
 use crate::state::{ChannelSlot, ChannelState, ProtocolState};
 use anchor_lang::accounts::account_loader::AccountLoader;
 
