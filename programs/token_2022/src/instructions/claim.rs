@@ -18,7 +18,6 @@ fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
 use crate::{
     constants::{EPOCH_STATE_SEED, MAX_ID_BYTES, PROTOCOL_SEED},
     errors::OracleError,
-    instructions::cnft_verify::CnftReceiptProof,
     state::{EpochState, ProtocolState},
 };
 
@@ -231,10 +230,9 @@ pub fn claim_open<'info>(
     amount: u64,
     id: String,
     proof: Vec<[u8; 32]>,
-    // Optional: cNFT receipt proof (for L1 verification)
-    channel: Option<String>,
-    twzrd_epoch: Option<u64>,
-    receipt_proof: Option<CnftReceiptProof>,
+    // Legacy parameters (unused, kept for ABI compatibility)
+    _channel: Option<String>,
+    _twzrd_epoch: Option<u64>,
 ) -> Result<()> {
     let epoch_state_key = ctx.accounts.epoch_state.key();
     let epoch = &mut ctx.accounts.epoch_state;
@@ -263,32 +261,7 @@ pub fn claim_open<'info>(
         OracleError::InvalidEpochState
     );
 
-    // Step 1: If receipt required, verify TWZRD L1 participation
-    if ctx.accounts.protocol_state.require_receipt {
-        require!(
-            channel.is_some() && twzrd_epoch.is_some() && receipt_proof.is_some(),
-            OracleError::ReceiptRequired
-        );
-
-        let receipt = receipt_proof.as_ref().unwrap();
-        let chan_ref = channel.as_ref().unwrap();
-        let epoch_val = twzrd_epoch.unwrap();
-
-        crate::instructions::cnft_verify::verify_cnft_receipt(
-            receipt,
-            ctx.accounts.claimer.key,
-            chan_ref,
-            epoch_val,
-        )?;
-
-        msg!(
-            "L1 receipt verified: channel={}, epoch={}",
-            chan_ref,
-            epoch_val
-        );
-    }
-
-    // Step 2: Verify merkle proof for CCM claim
+    // Verify merkle proof for CCM claim
     let byte_i = (index / 8) as usize;
     let bit = 1u8 << (index % 8);
     require!(

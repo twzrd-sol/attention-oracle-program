@@ -4,7 +4,6 @@ use anchor_lang::prelude::*;
 pub const PROTOCOL_SEED: &[u8] = b"protocol";
 pub const TREASURY_SEED: &[u8] = b"treasury";
 pub const EPOCH_STATE_SEED: &[u8] = b"epoch_state";
-pub const LIQUIDITY_ENGINE_SEED: &[u8] = b"liquidity_engine";
 pub const CHANNEL_STATE_SEED: &[u8] = b"channel_state";
 
 // Ring-buffer retention for per-channel merkle roots.
@@ -31,19 +30,6 @@ pub const MAX_FEE_BASIS_POINTS: u16 = 1000; // 10% max
 pub const DEFAULT_LP_ALLOCATION: u8 = 40; // 40% to LP
 pub const DEFAULT_TREASURY_ALLOCATION: u8 = 30; // 30% to treasury
 pub const DEFAULT_BURN_ALLOCATION: u8 = 30; // 30% burn
-
-// Liquidity Drip Thresholds (in CCM with decimals)
-pub const DRIP_TIER_1_THRESHOLD: u64 = 1_000_000 * 1_000_000_000; // 1M CCM (9 decimals)
-pub const DRIP_TIER_2_THRESHOLD: u64 = 5_000_000 * 1_000_000_000; // 5M CCM (9 decimals)
-pub const DRIP_TIER_3_THRESHOLD: u64 = 10_000_000 * 1_000_000_000; // 10M CCM (9 decimals)
-
-// Liquidity Drip Amounts
-pub const DRIP_TIER_1_CCM: u64 = 5_000_000 * 1_000_000_000; // 5M CCM (9 decimals)
-pub const DRIP_TIER_1_SOL: u64 = 2_500_000_000; // 2.5 SOL
-pub const DRIP_TIER_2_CCM: u64 = 10_000_000 * 1_000_000_000; // 10M CCM (9 decimals)
-pub const DRIP_TIER_2_SOL: u64 = 5_000_000_000; // 5 SOL
-pub const DRIP_TIER_3_CCM: u64 = 15_000_000 * 1_000_000_000; // 15M CCM (9 decimals)
-pub const DRIP_TIER_3_SOL: u64 = 7_500_000_000; // 7.5 SOL
 
 // Hook Triggers
 pub const VOLUME_CHECK_INTERVAL: i64 = 3600; // Check every hour

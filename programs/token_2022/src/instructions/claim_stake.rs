@@ -118,9 +118,6 @@ pub fn claim_channel_and_stake<'info>(
     lock_epochs: u32,    // lock period in epochs, default 12
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
-    if protocol_state.require_receipt {
-        return err!(OracleError::ReceiptRequired);
-    }
 
     // Ensure provided mint matches the protocol instance
     require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);

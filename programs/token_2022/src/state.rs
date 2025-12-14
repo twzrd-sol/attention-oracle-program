@@ -157,64 +157,6 @@ impl VolumeStats {
     }
 }
 
-/// Liquidity engine state
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct LiquidityState {
-    /// Current drip tier (0-3)
-    pub current_tier: u8,
-
-    /// Total CCM claimed across all epochs
-    pub total_claimed: u64,
-
-    /// Total CCM dripped to LP
-    pub total_dripped: u64,
-
-    /// Raydium pool address
-    pub pool_address: Pubkey,
-
-    /// Last drip timestamp
-    pub last_drip: i64,
-
-    /// Tier 1 completed
-    pub tier_1_complete: bool,
-
-    /// Tier 2 completed
-    pub tier_2_complete: bool,
-
-    /// Tier 3 completed
-    pub tier_3_complete: bool,
-}
-
-impl LiquidityState {
-    pub const LEN: usize = 1 + 8 + 8 + 32 + 8 + 1 + 1 + 1;
-
-    pub fn should_drip(&self, total_claimed: u64) -> Option<u8> {
-        use crate::constants::*;
-
-        if !self.tier_1_complete && total_claimed >= DRIP_TIER_1_THRESHOLD {
-            return Some(1);
-        }
-        if !self.tier_2_complete && total_claimed >= DRIP_TIER_2_THRESHOLD {
-            return Some(2);
-        }
-        if !self.tier_3_complete && total_claimed >= DRIP_TIER_3_THRESHOLD {
-            return Some(3);
-        }
-        None
-    }
-}
-
-/// Liquidity engine PDA account (wraps LiquidityState + bump)
-#[account]
-pub struct LiquidityEngine {
-    pub state: LiquidityState,
-    pub bump: u8,
-}
-
-impl LiquidityEngine {
-    pub const LEN: usize = 8 /* disc */ + LiquidityState::LEN + 1;
-}
-
 /// Epoch state for merkle claims (unchanged from v2)
 #[account]
 pub struct EpochState {
