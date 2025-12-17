@@ -118,3 +118,13 @@ schema_dump*.sql
 
 .claude/
 GILL_MIGRATION_DIRECTIVE.md
+
+# Financial models (private)
+*.xlsx
+Solana-DeFi-JTO-Model*.xlsx
+Solana-DeFi-Ecosystem-MET*.xlsx
+
+# Valuation model builders (founder IP)
+scripts/build-*-model.py
+scripts/*-valuation*.py
+scripts/*-analysis*.py

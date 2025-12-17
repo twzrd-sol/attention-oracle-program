@@ -7,7 +7,10 @@ use crate::{
     state::{ProtocolState, StakePool, UserStake},
 };
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token_interface::{Mint, TokenAccount, TokenInterface},
+};
 
 // =============================================================================
 // EVENTS
@@ -170,6 +173,8 @@ pub struct Stake<'info> {
     /// Stake vault (destination)
     #[account(
         mut,
+        token::mint = mint,
+        token::authority = stake_pool,
         seeds = [STAKE_VAULT_SEED, mint.key().as_ref()],
         bump,
     )]
@@ -179,7 +184,11 @@ pub struct Stake<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn stake(ctx: Context<Stake>, amount: u64, lock_slots: u64) -> Result<()> {
+pub fn stake<'info>(
+    ctx: Context<'_, '_, '_, 'info, Stake<'info>>,
+    amount: u64,
+    lock_slots: u64,
+) -> Result<()> {
     require!(amount >= MIN_STAKE_AMOUNT, OracleError::StakeBelowMinimum);
     require!(lock_slots <= MAX_LOCK_SLOTS, OracleError::LockPeriodTooLong);
 
@@ -210,19 +219,23 @@ pub fn stake(ctx: Context<Stake>, amount: u64, lock_slots: u64) -> Result<()> {
     // Harvest pending rewards before adding new stake
     harvest_pending(user_stake, pool)?;
 
-    // Transfer tokens to vault
-    anchor_spl::token_interface::transfer_checked(
-        CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            anchor_spl::token_interface::TransferChecked {
-                from: ctx.accounts.user_token_account.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-                to: ctx.accounts.stake_vault.to_account_info(),
-                authority: ctx.accounts.user.to_account_info(),
-            },
-        ),
+    // Transfer tokens to vault (forward remaining accounts for Token-2022 hooks/extensions).
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.user_token_account.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let to = ctx.accounts.stake_vault.to_account_info();
+    let authority = ctx.accounts.user.to_account_info();
+    let no_signer_seeds: &[&[&[u8]]] = &[];
+    crate::transfer_checked_with_remaining(
+        &token_program,
+        &from,
+        &mint,
+        &to,
+        &authority,
         amount,
         ctx.accounts.mint.decimals,
+        no_signer_seeds,
+        ctx.remaining_accounts,
     )?;
 
     // Update state
@@ -303,6 +316,8 @@ pub struct Unstake<'info> {
     /// Stake vault (source)
     #[account(
         mut,
+        token::mint = mint,
+        token::authority = stake_pool,
         seeds = [STAKE_VAULT_SEED, mint.key().as_ref()],
         bump,
     )]
@@ -311,7 +326,7 @@ pub struct Unstake<'info> {
     pub token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
+pub fn unstake<'info>(ctx: Context<'_, '_, '_, 'info, Unstake<'info>>, amount: u64) -> Result<()> {
     let clock = Clock::get()?;
     let ts = clock.unix_timestamp;
     let current_slot = clock.slot;
@@ -355,19 +370,22 @@ pub fn unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
     let pool_seeds: &[&[u8]] = &[STAKE_POOL_SEED, mint_key.as_ref(), &[pool_bump]];
     let signer = &[pool_seeds];
 
-    anchor_spl::token_interface::transfer_checked(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            anchor_spl::token_interface::TransferChecked {
-                from: ctx.accounts.stake_vault.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-                to: ctx.accounts.user_token_account.to_account_info(),
-                authority: ctx.accounts.stake_pool.to_account_info(),
-            },
-            signer,
-        ),
+    // Transfer tokens back to user (forward remaining accounts for Token-2022 hooks/extensions).
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.stake_vault.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let to = ctx.accounts.user_token_account.to_account_info();
+    let authority = ctx.accounts.stake_pool.to_account_info();
+    crate::transfer_checked_with_remaining(
+        &token_program,
+        &from,
+        &mint,
+        &to,
+        &authority,
         amount,
         decimals,
+        signer,
+        ctx.remaining_accounts,
     )?;
 
     // Update state after CPI
@@ -510,17 +528,23 @@ pub struct ClaimStakeRewards<'info> {
     )]
     pub user_token_account: InterfaceAccount<'info, TokenAccount>,
 
-    /// Treasury token account (source of rewards)
+    /// Treasury ATA (source of rewards)
     #[account(
         mut,
-        address = protocol_state.treasury,
+        associated_token::mint = mint,
+        associated_token::authority = protocol_state,
+        associated_token::token_program = token_program
     )]
-    pub treasury: InterfaceAccount<'info, TokenAccount>,
+    pub treasury_ata: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
 }
 
-pub fn claim_stake_rewards(ctx: Context<ClaimStakeRewards>) -> Result<()> {
+pub fn claim_stake_rewards<'info>(
+    ctx: Context<'_, '_, '_, 'info, ClaimStakeRewards<'info>>,
+) -> Result<()> {
     let pool = &mut ctx.accounts.stake_pool;
     let user_stake = &mut ctx.accounts.user_stake;
     let ts = Clock::get()?.unix_timestamp;
@@ -546,19 +570,22 @@ pub fn claim_stake_rewards(ctx: Context<ClaimStakeRewards>) -> Result<()> {
     ];
     let signer = &[protocol_seeds];
 
-    anchor_spl::token_interface::transfer_checked(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            anchor_spl::token_interface::TransferChecked {
-                from: ctx.accounts.treasury.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-                to: ctx.accounts.user_token_account.to_account_info(),
-                authority: ctx.accounts.protocol_state.to_account_info(),
-            },
-            signer,
-        ),
+    // Transfer rewards from treasury (forward remaining accounts for Token-2022 hooks/extensions).
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.treasury_ata.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let to = ctx.accounts.user_token_account.to_account_info();
+    let authority = ctx.accounts.protocol_state.to_account_info();
+    crate::transfer_checked_with_remaining(
+        &token_program,
+        &from,
+        &mint,
+        &to,
+        &authority,
         total_rewards,
         ctx.accounts.mint.decimals,
+        signer,
+        ctx.remaining_accounts,
     )?;
 
     // Reset pending rewards and update debt
@@ -588,9 +615,8 @@ fn update_pool_rewards(pool: &mut StakePool, current_time: i64) -> Result<()> {
         return Ok(());
     }
 
-    let time_delta = current_time
-        .saturating_sub(pool.last_reward_time)
-        .max(0) as u128;
+    let time_delta_i64 = current_time.saturating_sub(pool.last_reward_time);
+    let time_delta: u128 = u128::try_from(time_delta_i64).unwrap_or(0);
 
     if time_delta == 0 {
         return Ok(());

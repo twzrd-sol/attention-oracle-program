@@ -1,4 +1,8 @@
-use crate::{constants::PROTOCOL_SEED, errors::OracleError, state::ProtocolState};
+use crate::{
+    constants::PROTOCOL_SEED,
+    errors::OracleError,
+    state::ProtocolState,
+};
 use anchor_lang::prelude::*;
 
 /// Update the allowlisted publisher (singleton protocol_state)
@@ -147,6 +151,7 @@ pub struct UpdateAdminOpen<'info> {
 }
 
 pub fn update_admin_open(ctx: Context<UpdateAdminOpen>, new_admin: Pubkey) -> Result<()> {
+    require!(new_admin != Pubkey::default(), OracleError::InvalidPubkey);
     let state = &mut ctx.accounts.protocol_state;
     state.admin = new_admin;
     Ok(())
@@ -168,6 +173,7 @@ pub struct UpdateAdmin<'info> {
 }
 
 pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
+    require!(new_admin != Pubkey::default(), OracleError::InvalidPubkey);
     let state = &mut ctx.accounts.protocol_state;
     state.admin = new_admin;
     Ok(())

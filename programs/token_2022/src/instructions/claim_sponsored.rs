@@ -1,6 +1,3 @@
-//! Claim + Auto-Stake instruction (Channel-based)
-//! Extends claim_channel_open with optional CPI to lofi-bank for auto-staking
-
 use anchor_lang::accounts::account_loader::AccountLoader;
 use anchor_lang::prelude::*;
 use anchor_spl::{
@@ -8,47 +5,43 @@ use anchor_spl::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use sha3::{Digest, Keccak256};
-
 use crate::{
-    constants::{
-        CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, CLAIM_SKIM_BPS, MAX_ID_BYTES, PROTOCOL_SEED,
-    },
+    constants::{CHANNEL_BITMAP_BYTES, CHANNEL_STATE_SEED, CLAIM_SKIM_BPS, MAX_ID_BYTES, PROTOCOL_SEED},
     errors::OracleError,
-    instructions::claim::{compute_leaf, verify_proof},
+    merkle_proof::{compute_leaf, verify_proof},
     state::{ChannelSlot, ChannelState, ProtocolState},
 };
 
-use lofi_bank::cpi::accounts::Stake as BankStakeAccounts;
-use lofi_bank::cpi::stake as bank_stake_cpi;
-use lofi_bank::program::LofiBank;
-
-fn derive_subject_id(channel: &str) -> Pubkey {
-    let mut lower = channel.as_bytes().to_vec();
-    lower.iter_mut().for_each(|b| *b = b.to_ascii_lowercase());
-    let hash = keccak_hashv(&[b"channel:", lower.as_slice()]);
-    Pubkey::new_from_array(hash)
-}
-
-fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
-    let mut hasher = Keccak256::new();
-    for p in parts {
-        hasher.update(p);
-    }
-    let out = hasher.finalize();
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&out[..32]);
-    arr
-}
+// Re-use derive_subject_id from channel module
+use super::channel::derive_subject_id;
 
 const CHANNEL_STATE_VERSION: u8 = 1;
 const MAX_PROOF_LEN: usize = 32;
 
-/// Claim from channel with optional auto-stake to lofi-bank
+// =============================================================================
+// SPONSORED CLAIM (for auto-claim / relay)
+// =============================================================================
+
+/// Claim channel rewards with a separate payer (for gasless/auto-claim flows).
+///
+/// Security model: The `claimer` does NOT sign. Instead, authorization is
+/// provided by the merkle proof - the claimer's pubkey is encoded in the leaf,
+/// so tokens can only be sent to the wallet specified in the published tree.
+///
+/// Use cases:
+/// - Auto-claim: Backend claims on behalf of opted-in users
+/// - Relay: User builds tx, relay sponsors gas
+/// - Batch claims: Keeper processes multiple claims efficiently
 #[derive(Accounts)]
-pub struct ClaimChannelAndStake<'info> {
+pub struct ClaimChannelSponsored<'info> {
+    /// Transaction fee payer (relay bot, keeper, or protocol)
     #[account(mut)]
-    pub claimer: Signer<'info>,
+    pub payer: Signer<'info>,
+
+    /// Reward recipient - NOT a signer.
+    /// CHECK: Authorization via merkle proof. The claimer's pubkey is hashed
+    /// into the merkle leaf; proof verification fails if wrong recipient.
+    pub claimer: UncheckedAccount<'info>,
 
     #[account(
         mut,
@@ -62,10 +55,8 @@ pub struct ClaimChannelAndStake<'info> {
     #[account(mut)]
     pub channel_state: AccountLoader<'info, ChannelState>,
 
-    /// CCM/TWZRD mint (Token-2022)
     pub mint: InterfaceAccount<'info, Mint>,
 
-    /// Treasury ATA (owned by protocol_state PDA)
     #[account(
         mut,
         associated_token::mint = mint,
@@ -74,54 +65,33 @@ pub struct ClaimChannelAndStake<'info> {
     )]
     pub treasury_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// Claimer ATA (create if needed)
+    /// Claimer's ATA - payer covers init costs if needed
     #[account(
         init_if_needed,
-        payer = claimer,
+        payer = payer,  // Relay/bot pays for ATA creation
         associated_token::mint = mint,
-        associated_token::authority = claimer,
+        associated_token::authority = claimer,  // But ATA belongs to claimer
         associated_token::token_program = token_program
     )]
     pub claimer_ata: InterfaceAccount<'info, TokenAccount>,
-
-    // --- LOFI BANK ACCOUNTS (for auto-stake) ---
-    /// Lofi Bank program
-    pub lofi_bank_program: Program<'info, LofiBank>,
-
-    /// User vault PDA in lofi-bank
-    /// CHECK: Validated by lofi-bank CPI (seeds = [b"user_vault", claimer.key()])
-    #[account(mut)]
-    pub bank_user_vault: UncheckedAccount<'info>,
-
-    /// Treasury state PDA in lofi-bank
-    /// CHECK: Validated by lofi-bank CPI (seeds = [b"treasury_state"])
-    #[account(mut)]
-    pub bank_treasury_state: UncheckedAccount<'info>,
-
-    /// Bank treasury token account (ATA owned by treasury_state PDA)
-    #[account(mut)]
-    pub bank_treasury_token: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
-pub fn claim_channel_and_stake<'info>(
-    ctx: Context<'_, '_, '_, 'info, ClaimChannelAndStake<'info>>,
+pub fn claim_channel_sponsored<'info>(
+    ctx: Context<'_, '_, '_, 'info, ClaimChannelSponsored<'info>>,
     channel: String,
     epoch: u64,
     index: u32,
     amount: u64,
     id: String,
     proof: Vec<[u8; 32]>,
-    auto_stake: bool,
-    stake_percent: u8, // 0-100, default 50
-    lock_epochs: u32,  // lock period in epochs, default 12
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
 
-    // Ensure provided mint matches the protocol instance
+    // === Input validation ===
     require_keys_eq!(
         ctx.accounts.mint.key(),
         protocol_state.mint,
@@ -136,7 +106,7 @@ pub fn claim_channel_and_stake<'info>(
         OracleError::InvalidProofLength
     );
 
-    // Derive and validate channel_state PDA
+    // === PDA validation ===
     let subject_id = derive_subject_id(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,
@@ -150,7 +120,7 @@ pub fn claim_channel_and_stake<'info>(
         OracleError::InvalidChannelState
     );
 
-    // Load via Anchor's zero_copy loader
+    // === Load and validate channel state ===
     let mut channel_state = ctx.accounts.channel_state.load_mut()?;
 
     require!(
@@ -166,12 +136,12 @@ pub fn claim_channel_and_stake<'info>(
         OracleError::InvalidChannelState
     );
 
-    // Validate index bounds
+    // === Epoch slot validation ===
     ChannelSlot::validate_index(index as usize)?;
     let slot = channel_state.slot_mut(epoch);
     require!(slot.epoch == epoch, OracleError::SlotMismatch);
 
-    // Check bitmap not already claimed
+    // === Replay protection (bitmap check) ===
     let byte_i = (index / 8) as usize;
     let bit_mask = 1u8 << (index % 8);
     require!(byte_i < CHANNEL_BITMAP_BYTES, OracleError::InvalidIndex);
@@ -180,30 +150,30 @@ pub fn claim_channel_and_stake<'info>(
         OracleError::AlreadyClaimed
     );
 
-    // Verify merkle proof
+    // === CRITICAL: Merkle proof verification ===
+    // This is the authorization - claimer.key() is encoded in the leaf.
+    // If someone tries to claim to a different wallet, proof fails.
     let leaf = compute_leaf(&ctx.accounts.claimer.key(), index, amount, &id);
     require!(
         verify_proof(&proof, leaf, slot.root),
         OracleError::InvalidProof
     );
 
-    // Mark as claimed
+    // === Mark claimed (before transfer for reentrancy safety) ===
     slot.claimed_bitmap[byte_i] |= bit_mask;
     slot.claim_count = slot.claim_count.saturating_add(1);
 
-    // Claim-time skim: keep a fixed % in the protocol treasury (source ATA) by
-    // transferring less to the user.
+    // === Calculate fee and net amount ===
     let fee = (amount as u128)
         .saturating_mul(CLAIM_SKIM_BPS as u128)
         .checked_div(10_000)
         .unwrap_or(0) as u64;
     let tokens = amount.saturating_sub(fee);
-    let protocol_seeds: &[&[u8]] = &[
-        PROTOCOL_SEED,
-        protocol_state.mint.as_ref(),
-        &[protocol_state.bump],
-    ];
-    let signer = &[protocol_seeds];
+
+    // === Transfer tokens from treasury to claimer ===
+    let mint_key = protocol_state.mint;
+    let seeds: &[&[u8]] = &[PROTOCOL_SEED, mint_key.as_ref(), &[protocol_state.bump]];
+    let signer = &[seeds];
 
     let token_program = ctx.accounts.token_program.to_account_info();
     let from = ctx.accounts.treasury_ata.to_account_info();
@@ -223,45 +193,36 @@ pub fn claim_channel_and_stake<'info>(
         ctx.remaining_accounts,
     )?;
 
-    // Auto-stake CPI if enabled
-    if auto_stake {
-        let pct = stake_percent.min(100) as u64;
-        let stake_amount = tokens.saturating_mul(pct) / 100;
-        let lock_period = lock_epochs.max(1);
-
-        if stake_amount > 0 {
-            let cpi_program = ctx.accounts.lofi_bank_program.to_account_info();
-
-            let cpi_accounts = BankStakeAccounts {
-                user_vault: ctx.accounts.bank_user_vault.to_account_info(),
-                treasury_state: ctx.accounts.bank_treasury_state.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-                user_token: ctx.accounts.claimer_ata.to_account_info(),
-                treasury_token: ctx.accounts.bank_treasury_token.to_account_info(),
-                payer: ctx.accounts.claimer.to_account_info(),
-                token_program: ctx.accounts.token_program.to_account_info(),
-                system_program: ctx.accounts.system_program.to_account_info(),
-            };
-
-            // Claimer is signing the top-level tx, so they authorize the stake
-            let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-            bank_stake_cpi(cpi_ctx, stake_amount, lock_period)?;
-
-            msg!(
-                "Auto-staked {} tokens for {} epochs ({}%)",
-                stake_amount,
-                lock_period,
-                pct
-            );
-        }
-    }
+    // === Emit event for indexing ===
+    emit!(SponsoredClaimEvent {
+        claimer: ctx.accounts.claimer.key(),
+        payer: ctx.accounts.payer.key(),
+        channel: channel.clone(),
+        epoch,
+        index,
+        amount: tokens,
+        fee,
+    });
 
     msg!(
-        "Claimed {} tokens, channel={}, epoch={}, index={}",
+        "Sponsored claim: {} CCM to {}, payer={}, channel={}, epoch={}",
         tokens,
+        ctx.accounts.claimer.key(),
+        ctx.accounts.payer.key(),
         channel,
-        epoch,
-        index
+        epoch
     );
+
     Ok(())
+}
+
+#[event]
+pub struct SponsoredClaimEvent {
+    pub claimer: Pubkey,
+    pub payer: Pubkey,
+    pub channel: String,
+    pub epoch: u64,
+    pub index: u32,
+    pub amount: u64,
+    pub fee: u64,
 }

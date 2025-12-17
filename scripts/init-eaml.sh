@@ -1,9 +1,8 @@
 #!/bin/bash
-# Initialize ExtraAccountMetaList for Token-2022 transfer hook
+# Initialize ExtraAccountMetaList for Token-2022 transfer hook (ccm_hook)
 #
-# This script calls initialize_extra_account_meta_list on a CCM mint,
-# enabling the transfer hook to receive protocol_state, fee_config, and system_program
-# automatically from Token-2022.
+# This script calls `ccm_hook::initialize_extra_account_meta_list` for a CCM mint,
+# enabling Token-2022 to pass extra accounts to the hook program.
 #
 # Usage:
 #   ./scripts/init-eaml.sh <MINT_ADDRESS> [RPC_URL] [KEYPAIR_PATH]
@@ -30,9 +29,9 @@ echo "   RPC:      $RPC_URL"
 echo "   Keypair:  $KEYPAIR"
 echo ""
 
-# Derive EAML PDA using Solana CLI
-# EAML seed: ["extra-account-metas", mint]
-PROGRAM_ID="GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+# Derive EAML PDA using Solana CLI.
+# EAML seed: ["extra-account-metas", mint] under the *hook program id*.
+PROGRAM_ID="8VE2Wt5JNusGUCwkrpVmdwgdgyD6vYPEHop2g2CAArzS"
 EAML_PDA=$(solana-program-address --program $PROGRAM_ID --seed "extra-account-metas" --seed-type bytes --seed "$MINT" --seed-type pubkey 2>/dev/null || echo "")
 
 if [ -z "$EAML_PDA" ]; then
