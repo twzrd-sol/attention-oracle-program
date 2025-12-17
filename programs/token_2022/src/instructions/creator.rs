@@ -266,9 +266,6 @@ fn is_publisher(state: &ProtocolState, signer: &Pubkey) -> bool {
 
 /// Derive subject_id from channel name (keccak256 hash)
 fn subject_id_from_channel(channel: &str) -> [u8; 32] {
-    use sha3::{Digest, Keccak256};
-    let input = format!("channel:{}", channel.to_lowercase());
-    let mut hasher = Keccak256::new();
-    hasher.update(input.as_bytes());
-    hasher.finalize().into()
+    // Keep derivation exactly consistent with the channel claim paths.
+    super::channel::derive_subject_id(channel).to_bytes()
 }

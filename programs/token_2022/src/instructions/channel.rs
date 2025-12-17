@@ -1,4 +1,4 @@
-use anchor_lang::solana_program::{program::invoke_signed, rent::Rent, system_instruction};
+use anchor_lang::solana_program::{program::invoke_signed, system_instruction};
 use anchor_lang::{accounts::account::Account, prelude::*};
 use anchor_spl::{
     associated_token::AssociatedToken,
@@ -16,7 +16,8 @@ use anchor_lang::accounts::account_loader::AccountLoader;
 const CHANNEL_STATE_VERSION: u8 = 1;
 const MAX_PROOF_LEN: usize = 32;
 
-fn derive_subject_id(channel: &str) -> Pubkey {
+/// Derive a stable subject_id from channel name (lowercase, prefixed)
+pub fn derive_subject_id(channel: &str) -> Pubkey {
     let mut lower = channel.as_bytes().to_vec();
     // Convert ASCII bytes to lowercase in-place (avoids allocation for Unicode)
     lower.iter_mut().for_each(|b| *b = b.to_ascii_lowercase());
@@ -38,13 +39,78 @@ fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
     arr
 }
 
+// ============================================================================
+// INITIALIZE CHANNEL
+// ============================================================================
+
+/// Initialize a new ChannelState account.
+/// Seeds: ["channel_state", mint, subject_id]
+#[derive(Accounts)]
+#[instruction(subject_id: Pubkey)]
+pub struct InitializeChannel<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// The channel state to create - uses `init` for top-level allocation
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = ChannelState::LEN,
+        seeds = [CHANNEL_STATE_SEED, protocol_state.mint.as_ref(), subject_id.as_ref()],
+        bump,
+    )]
+    pub channel_state: AccountLoader<'info, ChannelState>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn initialize_channel(
+    ctx: Context<InitializeChannel>,
+    subject_id: Pubkey,
+) -> Result<()> {
+    require!(subject_id != Pubkey::default(), OracleError::InvalidPubkey);
+
+    let protocol_state = &ctx.accounts.protocol_state;
+    let mut channel_state = ctx.accounts.channel_state.load_mut()?;
+
+    if channel_state.version == 0 {
+        channel_state.version = CHANNEL_STATE_VERSION;
+        channel_state.bump = ctx.bumps.channel_state;
+        channel_state.mint = protocol_state.mint;
+        channel_state.subject = subject_id;
+        channel_state.latest_epoch = 0;
+        // Slots are zeroed by account creation.
+    }
+
+    require!(
+        channel_state.mint == protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(
+        channel_state.subject == subject_id,
+        OracleError::InvalidChannelState
+    );
+
+    Ok(())
+}
+
+// ============================================================================
+// SET CHANNEL MERKLE ROOT
+// ============================================================================
+
 #[derive(Accounts)]
 pub struct SetChannelMerkleRoot<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
     #[account(
-        mut,
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
         constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
@@ -66,6 +132,7 @@ pub fn set_channel_merkle_root(
     root: [u8; 32],
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
+
     // Authorization: admin or allowlisted publisher
     let signer = ctx.accounts.payer.key();
     let is_admin = signer == protocol_state.admin;
@@ -73,79 +140,22 @@ pub fn set_channel_merkle_root(
         protocol_state.publisher != Pubkey::default() && signer == protocol_state.publisher;
     require!(is_admin || is_publisher, OracleError::Unauthorized);
 
-    // Create account if needed
-    let channel_state_info = ctx.accounts.channel_state.to_account_info();
-    let is_new_account = channel_state_info.owner != ctx.program_id;
-
-    // For NEW accounts: derive subject_id from channel name
-    // For EXISTING accounts: use stored subject_id to avoid migration issues
-    let subject_id = if is_new_account {
-        derive_subject_id(&channel)
-    } else {
-        // Load existing account to get stored subject
-        let existing_state = ctx.accounts.channel_state.load()?;
-        existing_state.subject
-    };
-
+    let subject_id = derive_subject_id(&channel);
     let seeds = [
         CHANNEL_STATE_SEED,
         protocol_state.mint.as_ref(),
         subject_id.as_ref(),
     ];
-    let (expected_pda, bump) = Pubkey::find_program_address(&seeds, ctx.program_id);
+    let (expected_pda, _bump) = Pubkey::find_program_address(&seeds, ctx.program_id);
     require_keys_eq!(
         expected_pda,
         ctx.accounts.channel_state.to_account_info().key(),
         OracleError::InvalidChannelState
     );
 
-    if is_new_account {
-        msg!("Creating channel state account");
-        let rent = Rent::get()?;
-        let space = 8 + std::mem::size_of::<ChannelState>();
-        let lamports = rent.minimum_balance(space);
-        invoke_signed(
-            &system_instruction::create_account(
-                &ctx.accounts.payer.key(),
-                &expected_pda,
-                lamports,
-                space as u64,
-                ctx.program_id,
-            ),
-            &[
-                ctx.accounts.payer.to_account_info(),
-                channel_state_info.clone(),
-                ctx.accounts.system_program.to_account_info(),
-            ],
-            &[&[
-                CHANNEL_STATE_SEED,
-                protocol_state.mint.as_ref(),
-                subject_id.as_ref(),
-                &[bump],
-            ]],
-        )?;
-
-        // Initialize zero_copy account with discriminator
-        let mut data = channel_state_info.try_borrow_mut_data()?;
-        use anchor_lang::Discriminator;
-        data[0..8].copy_from_slice(&ChannelState::DISCRIMINATOR);
-        msg!("Account created and initialized");
-    }
-
-    // Load via Anchor's zero_copy loader
+    // Channel must be explicitly initialized via InitializeChannel first
     let mut channel_state = ctx.accounts.channel_state.load_mut()?;
 
-    // Initialize fields if new
-    if channel_state.version == 0 {
-        channel_state.version = CHANNEL_STATE_VERSION;
-        channel_state.bump = bump;
-        channel_state.mint = protocol_state.mint;
-        channel_state.subject = subject_id;
-        channel_state.latest_epoch = 0;
-        // slots already zeroed by account creation
-    }
-
-    // Validate
     require!(
         channel_state.version == CHANNEL_STATE_VERSION,
         OracleError::InvalidChannelState
@@ -159,19 +169,27 @@ pub fn set_channel_merkle_root(
         OracleError::InvalidChannelState
     );
 
-    // Update slot (ring buffer logic) with monotonic guard
+    // Calculate slot index (ring buffer)
     let slot_idx = ChannelState::slot_index(epoch);
     msg!("writing slot {}", slot_idx);
+
+    // Get the slot and check monotonic invariant
     let slot = channel_state.slot_mut(epoch);
     let existing_epoch = slot.epoch;
+
+    // Monotonic guard: new epoch must be greater than existing
     require!(
         existing_epoch == 0 || epoch > existing_epoch,
         OracleError::EpochNotIncreasing
     );
+
+    // Write the new merkle root
     slot.epoch = epoch;
     slot.root = root;
     slot.claim_count = 0;
-    slot.claimed_bitmap = [0u8; CHANNEL_BITMAP_BYTES];
+    slot.claimed_bitmap.fill(0);
+
+    // Update latest_epoch if needed
     channel_state.latest_epoch = channel_state.latest_epoch.max(epoch);
 
     Ok(())
@@ -235,7 +253,7 @@ pub fn claim_channel_open<'info>(
         OracleError::InvalidMint
     );
     require!(
-        id.as_bytes().len() <= MAX_ID_BYTES,
+        id.len() <= MAX_ID_BYTES,
         OracleError::InvalidInputLength
     );
     require!(
@@ -426,12 +444,120 @@ pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> 
         ]],
     )?;
 
+    let sol_whole = lamports / 1_000_000_000;
+    let sol_frac = lamports % 1_000_000_000;
     msg!(
-        "Channel '{}' closed by admin: {}. Reclaimed {} lamports (~{} SOL)",
+        "Channel '{}' closed by admin: {}. Reclaimed {} lamports (~{}.{:09} SOL)",
         channel,
         ctx.accounts.admin.key(),
         lamports,
-        lamports as f64 / 1_000_000_000.0
+        sol_whole,
+        sol_frac
+    );
+
+    Ok(())
+}
+
+// ============================================================================
+// CLOSE LEGACY CHANNEL (Admin Maintenance - for old-size accounts)
+// ============================================================================
+
+/// Close a legacy channel state account (with size mismatch) and reclaim rent.
+/// Uses UncheckedAccount to avoid Anchor's size validation.
+#[derive(Accounts)]
+#[instruction(channel: String)]
+pub struct CloseLegacyChannel<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    /// Protocol state to verify admin authority
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// The legacy channel state to close
+    /// CHECK: PDA validated manually; owner verified; size may differ from current ChannelState
+    #[account(mut)]
+    pub channel_state: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn close_legacy_channel(ctx: Context<CloseLegacyChannel>, channel: String) -> Result<()> {
+    let subject_id = derive_subject_id(&channel);
+    let protocol_state = &ctx.accounts.protocol_state;
+    let channel_info = &ctx.accounts.channel_state;
+
+    // Verify PDA derivation
+    let seeds = [
+        CHANNEL_STATE_SEED,
+        protocol_state.mint.as_ref(),
+        subject_id.as_ref(),
+    ];
+    let (expected_pda, _bump) = Pubkey::find_program_address(&seeds, ctx.program_id);
+    require_keys_eq!(
+        expected_pda,
+        channel_info.key(),
+        OracleError::InvalidChannelState
+    );
+
+    // Verify ownership
+    require!(
+        channel_info.owner == ctx.program_id,
+        OracleError::InvalidChannelState
+    );
+
+    // Verify account has enough data to be a ChannelState header (88 bytes min)
+    let data_len = channel_info.data_len();
+    require!(data_len >= 88, OracleError::InvalidChannelState);
+
+    // Verify discriminator and mint from header (manual read to avoid size check)
+    let data = channel_info.try_borrow_data()?;
+    use anchor_lang::Discriminator;
+    require!(
+        &data[0..8] == ChannelState::DISCRIMINATOR,
+        OracleError::InvalidChannelState
+    );
+    let mint_bytes: [u8; 32] = data[10..42]
+        .try_into()
+        .map_err(|_| OracleError::InvalidChannelState)?;
+    let account_mint = Pubkey::new_from_array(mint_bytes);
+    require!(
+        account_mint == protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    drop(data);
+
+    // Close account: transfer lamports to admin
+    let admin_info = ctx.accounts.admin.to_account_info();
+    let lamports = {
+        let mut lamports_ref = channel_info.try_borrow_mut_lamports()?;
+        let lamports = **lamports_ref;
+        **lamports_ref = 0;
+        lamports
+    };
+    **admin_info.try_borrow_mut_lamports()? = admin_info
+        .lamports()
+        .checked_add(lamports)
+        .ok_or(OracleError::InvalidAmount)?;
+
+    // Zero out data and reassign to system program
+    let channel_account_info = channel_info.to_account_info();
+    channel_account_info.assign(&anchor_lang::system_program::ID);
+    channel_account_info.realloc(0, false)?;
+
+    let sol_whole = lamports / 1_000_000_000;
+    let sol_frac = lamports % 1_000_000_000;
+    msg!(
+        "Legacy channel '{}' closed (size: {}). Reclaimed {} lamports (~{}.{:09} SOL)",
+        channel,
+        data_len,
+        lamports,
+        sol_whole,
+        sol_frac
     );
 
     Ok(())

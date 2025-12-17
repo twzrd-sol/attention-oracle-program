@@ -180,6 +180,8 @@ impl PassportRegistry {
 
 /// Per-channel ring buffer state (stores recent epoch merkle roots).
 /// Uses `zero_copy` to avoid full deserialization of large accounts.
+///
+/// Size: 8 (disc) + 80 (header) + 16×560 (slots) = 9,048 bytes < 10KB CPI limit
 #[account(zero_copy)]
 #[repr(C)]
 pub struct ChannelState {
@@ -189,9 +191,9 @@ pub struct ChannelState {
     pub subject: Pubkey,
     pub _padding: [u8; 6], // Explicit padding for u64 alignment
     pub latest_epoch: u64,
-    // Large arrays have limited bytemuck Pod/Zeroable impls; we store 2048 slots as 2×1024.
-    pub slots_0: [ChannelSlot; 1024],
-    pub slots_1: [ChannelSlot; 1024],
+    // 16 slots fits under Solana's 10KB CPI realloc limit.
+    // With 60-min epochs: ~16 hours retention.
+    pub slots: [ChannelSlot; CHANNEL_RING_SLOTS],
 }
 
 impl ChannelState {
@@ -203,20 +205,12 @@ impl ChannelState {
 
     pub fn slot(&self, epoch: u64) -> &ChannelSlot {
         let idx = Self::slot_index(epoch);
-        if idx < 1024 {
-            &self.slots_0[idx]
-        } else {
-            &self.slots_1[idx - 1024]
-        }
+        &self.slots[idx]
     }
 
     pub fn slot_mut(&mut self, epoch: u64) -> &mut ChannelSlot {
         let idx = Self::slot_index(epoch);
-        if idx < 1024 {
-            &mut self.slots_0[idx]
-        } else {
-            &mut self.slots_1[idx - 1024]
-        }
+        &mut self.slots[idx]
     }
 }
 

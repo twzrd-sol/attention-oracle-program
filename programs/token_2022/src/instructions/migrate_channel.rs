@@ -8,7 +8,7 @@ use crate::state::{ChannelState, ProtocolState};
 /// Old constants for migration (pre-upgrade values)
 const OLD_CHANNEL_MAX_CLAIMS: usize = 1024;
 const OLD_CHANNEL_BITMAP_BYTES: usize = (OLD_CHANNEL_MAX_CLAIMS + 7) / 8; // 128 bytes
-const CHANNEL_RING_SLOTS: usize = 10;
+const OLD_CHANNEL_RING_SLOTS: usize = 10;
 
 /// Old slot size: epoch(8) + root(32) + claim_count(2) + padding(6) + bitmap(128) = 176
 const OLD_SLOT_SIZE: usize = 8 + 32 + 2 + 6 + OLD_CHANNEL_BITMAP_BYTES;
@@ -17,8 +17,7 @@ const OLD_SLOT_SIZE: usize = 8 + 32 + 2 + 6 + OLD_CHANNEL_BITMAP_BYTES;
 const NEW_SLOT_SIZE: usize = 8 + 32 + 2 + 6 + CHANNEL_BITMAP_BYTES;
 
 /// Old header: version(1) + bump(1) + mint(32) + subject(32) + padding(6) + latest_epoch(8) = 80
-
-/// New total: disc(8) + header(80) + slots(560*10) = 5688
+/// New total: discriminator(8) + header(80) + slots(560 * CHANNEL_RING_SLOTS)
 const NEW_ACCOUNT_SIZE: usize = 8 + std::mem::size_of::<ChannelState>();
 
 #[derive(Accounts)]
@@ -99,16 +98,20 @@ pub fn migrate_channel_state(ctx: Context<MigrateChannelState>, channel: String)
 
     // Extract old slot data (what we can read)
     // Old layout: each slot is 176 bytes starting at offset 88
-    let mut old_slots_data = [[0u8; OLD_SLOT_SIZE]; CHANNEL_RING_SLOTS];
+    let mut old_slots_data = [[0u8; OLD_SLOT_SIZE]; OLD_CHANNEL_RING_SLOTS];
     let slots_start = 88;
     let available_slot_bytes = old_size.saturating_sub(slots_start);
     let readable_slots = available_slot_bytes / OLD_SLOT_SIZE;
 
-    for i in 0..readable_slots.min(CHANNEL_RING_SLOTS) {
+    for (i, slot_buf) in old_slots_data
+        .iter_mut()
+        .enumerate()
+        .take(readable_slots.min(OLD_CHANNEL_RING_SLOTS))
+    {
         let start = slots_start + i * OLD_SLOT_SIZE;
         let end = start + OLD_SLOT_SIZE;
         if end <= old_data.len() {
-            old_slots_data[i].copy_from_slice(&old_data[start..end]);
+            slot_buf.copy_from_slice(&old_data[start..end]);
         }
     }
 
@@ -150,26 +153,34 @@ pub fn migrate_channel_state(ctx: Context<MigrateChannelState>, channel: String)
     new_data[74..80].fill(0); // padding
     new_data[80..88].copy_from_slice(&latest_epoch.to_le_bytes());
 
-    // Write new slots with expanded bitmap
-    for i in 0..CHANNEL_RING_SLOTS {
+    // Write new slots with expanded bitmap.
+    // IMPORTANT: Explicitly zero any slots that didn't exist in the old layout to avoid
+    // uninitialized epoch values bricking future ring updates.
+    for (i, old_slot) in old_slots_data.iter().enumerate() {
         let new_start = 88 + i * NEW_SLOT_SIZE;
-
+        let new_end = new_start + NEW_SLOT_SIZE;
         // Copy epoch (8 bytes)
-        new_data[new_start..new_start + 8].copy_from_slice(&old_slots_data[i][0..8]);
+        new_data[new_start..new_start + 8].copy_from_slice(&old_slot[0..8]);
 
         // Copy root (32 bytes)
-        new_data[new_start + 8..new_start + 40].copy_from_slice(&old_slots_data[i][8..40]);
+        new_data[new_start + 8..new_start + 40].copy_from_slice(&old_slot[8..40]);
 
         // Copy claim_count (2 bytes)
-        new_data[new_start + 40..new_start + 42].copy_from_slice(&old_slots_data[i][40..42]);
+        new_data[new_start + 40..new_start + 42].copy_from_slice(&old_slot[40..42]);
 
         // Copy padding (6 bytes)
-        new_data[new_start + 42..new_start + 48].copy_from_slice(&old_slots_data[i][42..48]);
+        new_data[new_start + 42..new_start + 48].copy_from_slice(&old_slot[42..48]);
 
         // Copy old bitmap (128 bytes) then zero-pad rest (384 bytes)
         new_data[new_start + 48..new_start + 48 + OLD_CHANNEL_BITMAP_BYTES]
-            .copy_from_slice(&old_slots_data[i][48..48 + OLD_CHANNEL_BITMAP_BYTES]);
-        new_data[new_start + 48 + OLD_CHANNEL_BITMAP_BYTES..new_start + NEW_SLOT_SIZE].fill(0);
+            .copy_from_slice(&old_slot[48..48 + OLD_CHANNEL_BITMAP_BYTES]);
+        new_data[new_start + 48 + OLD_CHANNEL_BITMAP_BYTES..new_end].fill(0);
+    }
+
+    for i in OLD_CHANNEL_RING_SLOTS..crate::constants::CHANNEL_RING_SLOTS {
+        let new_start = 88 + i * NEW_SLOT_SIZE;
+        let new_end = new_start + NEW_SLOT_SIZE;
+        new_data[new_start..new_end].fill(0);
     }
 
     msg!(
