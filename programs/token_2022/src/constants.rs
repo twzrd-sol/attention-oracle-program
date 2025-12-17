@@ -7,11 +7,14 @@ pub const EPOCH_STATE_SEED: &[u8] = b"epoch_state";
 pub const CHANNEL_STATE_SEED: &[u8] = b"channel_state";
 
 // Ring-buffer retention for per-channel merkle roots.
-// With ~5-minute epochs (750 slots), 2048 epochs ≈ 7.1 days.
 //
-// NOTE: `ChannelState` is `zero_copy` (bytemuck Pod/Zeroable) and large arrays have
-// limited trait support. 2048 is implemented as 2×1024 slot chunks in `state.rs`.
-pub const CHANNEL_RING_SLOTS: usize = 2048;
+// NOTE: Solana's CPI limit (10KB realloc) caps ChannelState at ~9KB.
+// With 16 slots × 560 bytes/slot ≈ 9KB, and 60-min epochs:
+// - Retention: 16 hours
+// - Users have 16 hours to claim before epoch overwrites.
+//
+// Future: For longer retention, store roots in separate per-epoch accounts.
+pub const CHANNEL_RING_SLOTS: usize = 16;
 pub const CHANNEL_MAX_CLAIMS: usize = 4096;
 pub const CHANNEL_BITMAP_BYTES: usize = (CHANNEL_MAX_CLAIMS + 7) / 8;
 pub const MAX_ID_BYTES: usize = 64;
@@ -19,12 +22,11 @@ pub const MAX_ID_BYTES: usize = 64;
 // Token / economics config
 pub const DRIP_THRESHOLD: u64 = 1_000_000 * 1_000_000_000; // 1M CCM volume
 
-// Claim-time fee (interim revenue rail)
+// Claim-time fee (legacy revenue rail)
 //
-// NOTE: Token-2022 does not support adding new *mint* extensions post-creation,
-// so `TransferFeeConfig` cannot be enabled retroactively for the current CCM mint.
-// Until a mint migration, apply a fixed basis-points skim at claim time.
-pub const CLAIM_SKIM_BPS: u16 = 300; // 3.00%
+// IMPORTANT: If the mint already has Token-2022 `TransferFeeConfig` enabled,
+// keep this at 0 to avoid double-charging users on claims.
+pub const CLAIM_SKIM_BPS: u16 = 0; // 0.00%
 
 pub const MAX_FEE_BASIS_POINTS: u16 = 1000; // 10% max
 
@@ -33,9 +35,10 @@ pub const MAX_FEE_BASIS_POINTS: u16 = 1000; // 10% max
 pub const EPOCH_FORCE_CLOSE_GRACE_SECS: i64 = 7 * 24 * 60 * 60;
 
 // Admin authority (will be DAO eventually)
+// Wallet: 2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD
 pub const ADMIN_AUTHORITY: Pubkey = Pubkey::new_from_array([
-    0x91, 0x16, 0x1c, 0x33, 0x6c, 0x7e, 0x78, 0x23, 0x60, 0x4f, 0x0a, 0x02, 0x2b, 0x2f, 0x10, 0x60,
-    0x40, 0xd8, 0x16, 0xa4, 0x79, 0x0e, 0xc9, 0xf2, 0xba, 0x30, 0x45, 0x3b, 0xdb, 0x1b, 0x59, 0x99,
+    0x1a, 0xf8, 0xe7, 0xe6, 0xe1, 0x90, 0x4e, 0xd7, 0xf3, 0x9f, 0xcd, 0x62, 0x6a, 0x15, 0xb1, 0x11,
+    0x06, 0x7b, 0x7a, 0x88, 0xf2, 0x1c, 0x8c, 0x7c, 0x3b, 0x1f, 0x8a, 0xa7, 0x5e, 0x50, 0x81, 0x16,
 ]);
 
 // Passport registry seeds / helpers

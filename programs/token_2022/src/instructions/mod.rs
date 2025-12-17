@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod channel;
+pub mod claim_sponsored;
 pub mod cleanup;
 pub mod creator;
 pub mod governance;
@@ -23,6 +24,7 @@ pub mod migrate;
 // Re-exports
 pub use admin::*;
 pub use channel::*;
+pub use claim_sponsored::*;
 pub use cleanup::*;
 pub use creator::*;
 pub use governance::*;

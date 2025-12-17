@@ -88,6 +88,14 @@ pub mod token_2022 {
     // Oracle & Distribution (Ring Buffer)
     // -------------------------------------------------------------------------
 
+    /// Initialize a new channel state account for a subject.
+    pub fn initialize_channel(
+        ctx: Context<InitializeChannel>,
+        subject_id: Pubkey,
+    ) -> Result<()> {
+        instructions::channel::initialize_channel(ctx, subject_id)
+    }
+
     /// Publish a new Merkle root for a specific channel epoch.
     /// Updates the ring buffer, overwriting the oldest slot if full.
     pub fn set_channel_merkle_root(
@@ -113,6 +121,21 @@ pub mod token_2022 {
         instructions::channel::claim_channel_open(ctx, channel, epoch, index, amount, id, proof)
     }
 
+    /// Execute a sponsored claim (for auto-claim / relay flows).
+    /// The claimer does NOT sign - authorization is via merkle proof verification.
+    /// The payer covers transaction fees and ATA creation costs.
+    pub fn claim_channel_sponsored<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimChannelSponsored<'info>>,
+        channel: String,
+        epoch: u64,
+        index: u32,
+        amount: u64,
+        id: String,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::claim_sponsored::claim_channel_sponsored(ctx, channel, epoch, index, amount, id, proof)
+    }
+
     /// Push-distribute CCM to multiple recipients in a single transaction.
     /// Publisher-only operation for batch airdrops/rewards.
     /// Recipient ATAs must pre-exist (passed as remaining_accounts).
@@ -131,6 +154,12 @@ pub mod token_2022 {
     /// Critical for cleaning up disabled streams (e.g. Twitch migration).
     pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> {
         instructions::channel::close_channel(ctx, channel)
+    }
+
+    /// Close a legacy channel state account (with size mismatch) and reclaim rent.
+    /// For accounts created before CHANNEL_RING_SLOTS was increased.
+    pub fn close_legacy_channel(ctx: Context<CloseLegacyChannel>, channel: String) -> Result<()> {
+        instructions::channel::close_legacy_channel(ctx, channel)
     }
 
     /// Migrate a channel state account from old size (728 bytes) to new size (5688 bytes).
@@ -176,9 +205,12 @@ pub mod token_2022 {
         instructions::governance::update_tier_multipliers(ctx, new_multipliers)
     }
 
-    /// Harvest withheld fees from the mint and distribute to protocol destinations.
+    /// Harvest withheld fees from source ATAs to treasury.
+    /// Pass source ATAs (user/LP accounts with withheld fees) via remaining_accounts.
     /// This closes the economic loop by refilling the Treasury.
-    pub fn harvest_fees(ctx: Context<HarvestFees>) -> Result<()> {
+    pub fn harvest_fees<'info>(
+        ctx: Context<'_, '_, 'info, 'info, HarvestFees<'info>>,
+    ) -> Result<()> {
         instructions::governance::harvest_and_distribute_fees(ctx)
     }
 
@@ -285,12 +317,19 @@ pub mod token_2022 {
     }
 
     /// Stake CCM tokens with optional lock period
-    pub fn stake(ctx: Context<Stake>, amount: u64, lock_slots: u64) -> Result<()> {
+    pub fn stake<'info>(
+        ctx: Context<'_, '_, '_, 'info, Stake<'info>>,
+        amount: u64,
+        lock_slots: u64,
+    ) -> Result<()> {
         instructions::staking::stake(ctx, amount, lock_slots)
     }
 
     /// Unstake CCM tokens (after lock expires)
-    pub fn unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
+    pub fn unstake<'info>(
+        ctx: Context<'_, '_, '_, 'info, Unstake<'info>>,
+        amount: u64,
+    ) -> Result<()> {
         instructions::staking::unstake(ctx, amount)
     }
 
@@ -300,7 +339,9 @@ pub mod token_2022 {
     }
 
     /// Claim accumulated staking rewards
-    pub fn claim_stake_rewards(ctx: Context<ClaimStakeRewards>) -> Result<()> {
+    pub fn claim_stake_rewards<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimStakeRewards<'info>>,
+    ) -> Result<()> {
         instructions::staking::claim_stake_rewards(ctx)
     }
 
