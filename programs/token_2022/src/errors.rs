@@ -134,4 +134,7 @@ pub enum OracleError {
 
     #[msg("Channel meta not initialized")]
     ChannelMetaNotInitialized,
+
+    #[msg("Invalid token program (expected Token-2022)")]
+    InvalidTokenProgram,
 }
