@@ -50,8 +50,9 @@ async function main() {
     "confirmed"
   );
 
+  // Default to live v3 CCM token
   const ATTENTION_MINT = new PublicKey(
-    process.env.ATTENTION_MINT || "ESpcP35Waf5xuniehGopLULkhwNgCgDUGbd4EHrR8cWe"
+    process.env.CCM_V3_MINT || process.env.ATTENTION_MINT || "Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM"
   );
   const subjectId = deriveSubjectId(channel);
 
