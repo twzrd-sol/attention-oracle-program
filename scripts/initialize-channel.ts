@@ -78,14 +78,11 @@ async function main() {
   }
   const program = new Program(idl, PROGRAM_ID, provider);
 
-  // Mint selection:
-  // - Prefer CCM_V3_MINT (canonical for v3 ops)
-  // - Fallback to ATTENTION_MINT for legacy environments
-  // - Finally, default to the legacy mint constant
+  // Mint selection: default to live v3 CCM token
   const mintStr =
     process.env.CCM_V3_MINT ||
     process.env.ATTENTION_MINT ||
-    "ESpcP35Waf5xuniehGopLULkhwNgCgDUGbd4EHrR8cWe";
+    "Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM";
   const mintSource = process.env.CCM_V3_MINT
     ? "CCM_V3_MINT"
     : process.env.ATTENTION_MINT
