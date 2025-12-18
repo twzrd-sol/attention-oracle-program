@@ -3,14 +3,38 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import pkg from "js-sha3";
+const { keccak256 } = pkg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PROGRAM_ID = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop";
+
+function deriveSubjectIdHexKeccak256(channel: string): string {
+  const lower = channel.toLowerCase();
+  const input = Buffer.concat([Buffer.from("channel:"), Buffer.from(lower)]);
+  return keccak256(input);
+}
+
+function tryDeriveSubjectIdHexSha3_256(channel: string): string | null {
+  try {
+    const lower = channel.toLowerCase();
+    const input = Buffer.concat([Buffer.from("channel:"), Buffer.from(lower)]);
+    return createHash("sha3-256").update(input).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+function deriveSubjectId(channel: string): PublicKey {
+  const hashBytes = Buffer.from(deriveSubjectIdHexKeccak256(channel), "hex");
+  return new PublicKey(hashBytes);
+}
 
 async function main() {
   const args = process.argv.slice(2);
@@ -54,46 +78,89 @@ async function main() {
   }
   const program = new Program(idl, PROGRAM_ID, provider);
 
-  // Get mint from environment
-  const ATTENTION_MINT = new PublicKey(
-    process.env.ATTENTION_MINT || "ESpcP35Waf5xuniehGopLULkhwNgCgDUGbd4EHrR8cWe"
-  );
+  // Mint selection:
+  // - Prefer CCM_V3_MINT (canonical for v3 ops)
+  // - Fallback to ATTENTION_MINT for legacy environments
+  // - Finally, default to the legacy mint constant
+  const mintStr =
+    process.env.CCM_V3_MINT ||
+    process.env.ATTENTION_MINT ||
+    "ESpcP35Waf5xuniehGopLULkhwNgCgDUGbd4EHrR8cWe";
+  const mintSource = process.env.CCM_V3_MINT
+    ? "CCM_V3_MINT"
+    : process.env.ATTENTION_MINT
+      ? "ATTENTION_MINT"
+      : "default";
+  const ATTENTION_MINT = new PublicKey(mintStr);
+  const subjectId = deriveSubjectId(channel);
+  const subjectIdHexKeccak = deriveSubjectIdHexKeccak256(channel);
+  const subjectIdHexSha3 = tryDeriveSubjectIdHexSha3_256(channel);
+  const subjectIdSha3 = subjectIdHexSha3
+    ? new PublicKey(Buffer.from(subjectIdHexSha3, "hex"))
+    : null;
 
   console.log(`Initializing channel: ${channel}`);
-  console.log(`Mint: ${ATTENTION_MINT.toString()}`);
+  console.log(`Mint (${mintSource}): ${ATTENTION_MINT.toString()}`);
+  console.log(`Subject ID: ${subjectId.toString()}`);
+  console.log(`Subject ID (Keccak-256 hex): ${subjectIdHexKeccak}`);
+  if (subjectIdHexSha3) {
+    console.log(`Subject ID (SHA3-256 hex):   ${subjectIdHexSha3} (diagnostic)`);
+  }
   console.log(`Authority: ${wallet.publicKey.toString()}`);
 
   // Derive required accounts
+  const programId = new PublicKey(PROGRAM_ID);
   const [protocolState] = PublicKey.findProgramAddressSync(
     [Buffer.from("protocol"), ATTENTION_MINT.toBuffer()],
-    new PublicKey(PROGRAM_ID)
+    programId
   );
 
   const [channelState] = PublicKey.findProgramAddressSync(
-    [Buffer.from("channel"), ATTENTION_MINT.toBuffer(), Buffer.from(channel)],
-    new PublicKey(PROGRAM_ID)
+    [Buffer.from("channel_state"), ATTENTION_MINT.toBuffer(), subjectId.toBuffer()],
+    programId
   );
 
   console.log(`Protocol State: ${protocolState.toString()}`);
   console.log(`Channel State: ${channelState.toString()}`);
 
-  // Check if channel already exists
-  try {
-    const channelAccount = await connection.getAccountInfo(channelState);
-    if (channelAccount && channelAccount.owner.equals(new PublicKey(PROGRAM_ID))) {
-      console.log(`✓ Channel already initialized`);
+  // Preflight: validate derived PDA and existing state (if present).
+  const channelAccount = await connection.getAccountInfo(channelState, "confirmed");
+  if (channelAccount) {
+    if (!channelAccount.owner.equals(programId)) {
+      const sha3Hint = (() => {
+        if (!subjectIdSha3) return "";
+        const [sha3ChannelState] = PublicKey.findProgramAddressSync(
+          [Buffer.from("channel_state"), ATTENTION_MINT.toBuffer(), subjectIdSha3.toBuffer()],
+          programId
+        );
+        return ` If you accidentally used SHA3-256 for subject_id, the PDA would be ${sha3ChannelState.toBase58()}.`;
+      })();
+      throw new Error(
+        `Preflight failed: ChannelState ${channelState.toBase58()} exists but is owned by ${channelAccount.owner.toBase58()} (expected ${programId.toBase58()}).\n` +
+          `Hint: check PROGRAM_ID/mint/cluster.${sha3Hint}`
+      );
+    }
+
+    const version = channelAccount.data.length >= 9 ? channelAccount.data[8] : undefined;
+    if (version === 1) {
+      console.log(`✓ Channel already initialized (version=1)`);
       console.log(`  Owner: ${channelAccount.owner.toString()}`);
       console.log(`  Size: ${channelAccount.data.length} bytes`);
       return;
     }
-  } catch (e) {
-    // Account doesn't exist, proceed with initialization
+
+    if (version !== 0 && version !== undefined) {
+      throw new Error(
+        `Preflight failed: ChannelState ${channelState.toBase58()} has unexpected version=${version}.\n` +
+          `Refusing to proceed. Verify you're targeting the correct channel/mint and using Keccak-256 for subject_id.`
+      );
+    }
   }
 
   try {
     // Anchor converts snake_case to camelCase for method names
     const tx = await (program.methods as any)
-      .initializeChannel(channel)
+      .initializeChannel(subjectId)
       .accounts({
         payer: wallet.publicKey,
         protocolState,

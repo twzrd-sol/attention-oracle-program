@@ -9,6 +9,8 @@ import {
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import fs from "fs";
+import pkg from "js-sha3";
+const { keccak256 } = pkg;
 const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 const SYSTEM_PROGRAM = new PublicKey("11111111111111111111111111111111");
 
@@ -17,12 +19,12 @@ const INITIALIZE_CHANNEL_DISCRIMINATOR = Buffer.from([
   232, 91, 177, 212, 122, 94, 227, 250
 ]);
 
-// Manual borsh string serialization (length as u32 LE + UTF-8 bytes)
-function serializeString(str: string): Buffer {
-  const utf8 = Buffer.from(str, 'utf-8');
-  const len = Buffer.alloc(4);
-  len.writeUInt32LE(utf8.length, 0);
-  return Buffer.concat([len, utf8]);
+function deriveSubjectId(channel: string): PublicKey {
+  const lower = channel.toLowerCase();
+  const input = Buffer.concat([Buffer.from("channel:"), Buffer.from(lower)]);
+  const hashHex = keccak256(input);
+  const hashBytes = Buffer.from(hashHex, "hex");
+  return new PublicKey(hashBytes);
 }
 
 async function main() {
@@ -51,9 +53,11 @@ async function main() {
   const ATTENTION_MINT = new PublicKey(
     process.env.ATTENTION_MINT || "ESpcP35Waf5xuniehGopLULkhwNgCgDUGbd4EHrR8cWe"
   );
+  const subjectId = deriveSubjectId(channel);
 
   console.log(`Initializing channel: ${channel}`);
   console.log(`Mint: ${ATTENTION_MINT.toString()}`);
+  console.log(`Subject ID: ${subjectId.toString()}`);
   console.log(`Payer: ${wallet.publicKey.toString()}`);
 
   // Derive PDAs
@@ -63,7 +67,7 @@ async function main() {
   );
 
   const [channelState] = PublicKey.findProgramAddressSync(
-    [Buffer.from("channel"), ATTENTION_MINT.toBuffer(), Buffer.from(channel)],
+    [Buffer.from("channel_state"), ATTENTION_MINT.toBuffer(), subjectId.toBuffer()],
     PROGRAM_ID
   );
 
@@ -83,8 +87,8 @@ async function main() {
     // Account doesn't exist, proceed
   }
 
-  // Serialize instruction args (just the channel string)
-  const argsData = serializeString(channel);
+  // Serialize instruction args: subject_id (pubkey)
+  const argsData = subjectId.toBuffer();
 
   // Build instruction data: discriminator + args
   const data = Buffer.concat([INITIALIZE_CHANNEL_DISCRIMINATOR, argsData]);
