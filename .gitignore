@@ -51,6 +51,10 @@ target-clean/
 .anchor/
 test-ledger/
 
+# Local dev/test artifacts
+assets/
+local/
+
 # Logs
 logs/
 *.log
@@ -114,6 +118,7 @@ apps/_archive/
 # Public repo scope note: do not ignore scripts used for ops
 !scripts/guard-deploy.sh
 !scripts/enable-git-hooks.sh
+!scripts/dev-doctor.sh
 schema_dump*.sql
 
 .claude/
