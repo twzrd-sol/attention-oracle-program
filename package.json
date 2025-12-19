@@ -17,7 +17,7 @@
     "@codama/renderers-js": "^1.0.0",
     "@codama/renderers-js-umi": "^1.0.0",
     "@codama/visitors-core": "^1.0.0",
-    "@coral-xyz/anchor": "^0.30.1",
+    "@coral-xyz/anchor": "^0.32.1",
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
     "@metaplex-foundation/umi": "^1.4.1",
     "@metaplex-foundation/umi-bundle-defaults": "^1.4.1",

@@ -547,7 +547,7 @@ pub fn close_legacy_channel(ctx: Context<CloseLegacyChannel>, channel: String) -
     // Zero out data and reassign to system program
     let channel_account_info = channel_info.to_account_info();
     channel_account_info.assign(&anchor_lang::system_program::ID);
-    channel_account_info.realloc(0, false)?;
+    channel_account_info.resize(0)?;
 
     let sol_whole = lamports / 1_000_000_000;
     let sol_frac = lamports % 1_000_000_000;
