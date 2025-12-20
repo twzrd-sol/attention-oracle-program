@@ -20,10 +20,13 @@ PERMS=$(stat -c %a "$KEYPAIR_PATH" 2>/dev/null || stat -f %Lp "$KEYPAIR_PATH")
 [[ "$PERMS" == "600" || "$PERMS" == "400" ]] || { echo "Keypair perms must be 600/400 (got $PERMS)" >&2; exit 5; }
 
 RPC=${SOLANA_URL:-${SOLANA_RPC:-$DEFAULT_RPC}}
-[[ "$RPC" == *"mainnet-beta"* ]] || { echo "Not mainnet RPC: $RPC" >&2; exit 6; }
+if [[ "$RPC" == *"mainnet-beta"* || "$RPC" == *"solana-mainnet"* ]]; then
+  :
+else
+  echo "Not mainnet RPC: $RPC" >&2; exit 6;
+fi
 
 echo "[guard] mainnet op with $KEYPAIR_PATH on $RPC"; read -p "Type DEPLOY to continue: " c; [[ "$c" == DEPLOY ]] || exit 7
 
 shift 0
 "$@"
-
