@@ -12,6 +12,7 @@ use crate::errors::OracleError;
 use crate::merkle_proof::{compute_leaf, verify_proof};
 use crate::state::{ChannelSlot, ChannelState, ProtocolState};
 use anchor_lang::accounts::account_loader::AccountLoader;
+use anchor_lang::Discriminator;
 
 const CHANNEL_STATE_VERSION: u8 = 1;
 const MAX_PROOF_LEN: usize = 32;
@@ -78,7 +79,24 @@ pub fn initialize_channel(
     require!(subject_id != Pubkey::default(), OracleError::InvalidPubkey);
 
     let protocol_state = &ctx.accounts.protocol_state;
-    let mut channel_state = ctx.accounts.channel_state.load_mut()?;
+
+    // `init_if_needed` + `AccountLoader` requires `load_init()` for fresh accounts, otherwise
+    // `load_mut()` will fail with AccountDiscriminatorMismatch (discriminator is still zero).
+    let channel_state_info = ctx.accounts.channel_state.to_account_info();
+    let disc = {
+        let data = channel_state_info.try_borrow_data()?;
+        require!(data.len() >= 8, OracleError::InvalidChannelState);
+        let mut out = [0u8; 8];
+        out.copy_from_slice(&data[..8]);
+        out
+    };
+
+    let mut channel_state = if disc == [0u8; 8] {
+        ctx.accounts.channel_state.load_init()?
+    } else {
+        require!(disc == ChannelState::DISCRIMINATOR, OracleError::InvalidChannelState);
+        ctx.accounts.channel_state.load_mut()?
+    };
 
     if channel_state.version == 0 {
         channel_state.version = CHANNEL_STATE_VERSION;
