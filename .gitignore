@@ -113,6 +113,9 @@ tmp_channels.txt
 DEPLOYMENT_STATUS.md
 **/DEPLOYMENT_STATUS.md
 
+# Internal protocol specs (IP/strategy)
+docs/protocol/
+
 # Private apps – never commit
 apps/twzrd-aggregator/
 apps/portal-*/
