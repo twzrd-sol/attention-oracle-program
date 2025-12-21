@@ -36,7 +36,10 @@ scan() {
   case "$f" in
     *.pem|*.p12|*.pfx|*.asc|*.gpg|*.der) failures+=("$f: private key-like file"); return 0;;
     *-keypair.json|*id.json|*wallet.json|*.keystore|*.jwk) failures+=("$f: keypair filename"); return 0;;
-    *.env|*.env.*) [[ "$f" =~ \\.(env\\.local\\.example)$ ]] || failures+=("$f: .env committed"); return 0;;
+    *.env|*.env.*)
+      [[ "$f" == ".env.example" ]] && return 0
+      [[ "$f" =~ \\.env\\.example$ ]] && return 0
+      [[ "$f" =~ \\.(env\\.local\\.example)$ ]] || failures+=("$f: .env committed"); return 0;;
   esac
   local content
   content=$(git show ":$f" 2>/dev/null || true)
