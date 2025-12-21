@@ -1,4 +1,6 @@
-use crate::constants::{CHANNEL_BITMAP_BYTES, CHANNEL_MAX_CLAIMS, CHANNEL_RING_SLOTS};
+use crate::constants::{
+    CHANNEL_BITMAP_BYTES, CHANNEL_MAX_CLAIMS, CHANNEL_RING_SLOTS, CUMULATIVE_ROOT_HISTORY,
+};
 use crate::errors::OracleError;
 use anchor_lang::prelude::*;
 
@@ -251,6 +253,70 @@ impl ChannelSlot {
         require!(index < CHANNEL_MAX_CLAIMS, OracleError::InvalidIndex);
         Ok(())
     }
+}
+
+// =============================================================================
+// CUMULATIVE ROOTS (V2)
+// =============================================================================
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, Default)]
+pub struct RootEntry {
+    pub seq: u64,
+    pub root: [u8; 32],
+    pub dataset_hash: [u8; 32],
+    pub published_slot: u64,
+}
+
+impl RootEntry {
+    pub const LEN: usize = 8 + 32 + 32 + 8;
+}
+
+/// Per-channel cumulative root config (V2)
+/// Seeds: ["channel_cfg_v2", mint, subject_id]
+#[account]
+pub struct ChannelConfigV2 {
+    pub version: u8,
+    pub bump: u8,
+    pub mint: Pubkey,
+    pub subject: Pubkey,
+    pub authority: Pubkey,
+    pub latest_root_seq: u64,
+    pub cutover_epoch: u64,
+    pub roots: [RootEntry; CUMULATIVE_ROOT_HISTORY],
+}
+
+impl ChannelConfigV2 {
+    pub const LEN: usize = 8 + // discriminator
+        1 + // version
+        1 + // bump
+        32 + // mint
+        32 + // subject
+        32 + // authority
+        8 + // latest_root_seq
+        8 + // cutover_epoch
+        (RootEntry::LEN * CUMULATIVE_ROOT_HISTORY);
+}
+
+/// Per-wallet cumulative claim state (V2)
+/// Seeds: ["claim_state_v2", channel_config, wallet]
+#[account]
+pub struct ClaimStateV2 {
+    pub version: u8,
+    pub bump: u8,
+    pub channel: Pubkey,
+    pub wallet: Pubkey,
+    pub claimed_total: u64,
+    pub last_claim_seq: u64,
+}
+
+impl ClaimStateV2 {
+    pub const LEN: usize = 8 + // discriminator
+        1 + // version
+        1 + // bump
+        32 + // channel
+        32 + // wallet
+        8 + // claimed_total
+        8; // last_claim_seq
 }
 
 // =============================================================================

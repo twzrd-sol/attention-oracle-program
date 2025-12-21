@@ -137,4 +137,16 @@ pub enum OracleError {
 
     #[msg("Invalid token program (expected Token-2022)")]
     InvalidTokenProgram,
+
+    // =========================================================================
+    // CUMULATIVE ROOTS (V2)
+    // =========================================================================
+    #[msg("Invalid root sequence (must be strictly increasing)")]
+    InvalidRootSeq,
+
+    #[msg("Root too old or missing from history window")]
+    RootTooOldOrMissing,
+
+    #[msg("Claim state mismatch")]
+    InvalidClaimState,
 }
