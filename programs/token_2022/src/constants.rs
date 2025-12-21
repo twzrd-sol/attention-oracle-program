@@ -5,6 +5,8 @@ pub const PROTOCOL_SEED: &[u8] = b"protocol";
 #[cfg(feature = "legacy")]
 pub const EPOCH_STATE_SEED: &[u8] = b"epoch_state";
 pub const CHANNEL_STATE_SEED: &[u8] = b"channel_state";
+pub const CHANNEL_CONFIG_V2_SEED: &[u8] = b"channel_cfg_v2";
+pub const CLAIM_STATE_V2_SEED: &[u8] = b"claim_state_v2";
 
 // Ring-buffer retention for per-channel merkle roots.
 //
@@ -18,6 +20,12 @@ pub const CHANNEL_RING_SLOTS: usize = 16;
 pub const CHANNEL_MAX_CLAIMS: usize = 4096;
 pub const CHANNEL_BITMAP_BYTES: usize = (CHANNEL_MAX_CLAIMS + 7) / 8;
 pub const MAX_ID_BYTES: usize = 64;
+
+// Cumulative (v2) root history depth
+pub const CUMULATIVE_ROOT_HISTORY: usize = 4;
+
+// Domain separation for cumulative v2 leaves
+pub const CUMULATIVE_V2_DOMAIN: &[u8] = b"TWZRD:CUMULATIVE_V2";
 
 // Token / economics config
 pub const DRIP_THRESHOLD: u64 = 1_000_000 * 1_000_000_000; // 1M CCM volume

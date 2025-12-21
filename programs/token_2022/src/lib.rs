@@ -136,6 +136,52 @@ pub mod token_2022 {
         instructions::claim_sponsored::claim_channel_sponsored(ctx, channel, epoch, index, amount, id, proof)
     }
 
+    // -------------------------------------------------------------------------
+    // Cumulative Roots (V2)
+    // -------------------------------------------------------------------------
+
+    /// Initialize cumulative (v2) channel config.
+    pub fn initialize_channel_cumulative(
+        ctx: Context<InitializeChannelCumulative>,
+        channel: String,
+        cutover_epoch: u64,
+    ) -> Result<()> {
+        instructions::cumulative::initialize_channel_cumulative(ctx, channel, cutover_epoch)
+    }
+
+    /// Publish a cumulative root (v2).
+    pub fn publish_cumulative_root(
+        ctx: Context<PublishCumulativeRoot>,
+        channel: String,
+        root_seq: u64,
+        root: [u8; 32],
+        dataset_hash: [u8; 32],
+    ) -> Result<()> {
+        instructions::cumulative::publish_cumulative_root(ctx, channel, root_seq, root, dataset_hash)
+    }
+
+    /// Claim from cumulative root (v2).
+    pub fn claim_cumulative<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimCumulative<'info>>,
+        channel: String,
+        root_seq: u64,
+        cumulative_total: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::cumulative::claim_cumulative(ctx, channel, root_seq, cumulative_total, proof)
+    }
+
+    /// Sponsored claim from cumulative root (v2).
+    pub fn claim_cumulative_sponsored<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimCumulativeSponsored<'info>>,
+        channel: String,
+        root_seq: u64,
+        cumulative_total: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::cumulative::claim_cumulative_sponsored(ctx, channel, root_seq, cumulative_total, proof)
+    }
+
     /// Push-distribute CCM to multiple recipients in a single transaction.
     /// Publisher-only operation for batch airdrops/rewards.
     /// Recipient ATAs must pre-exist (passed as remaining_accounts).
