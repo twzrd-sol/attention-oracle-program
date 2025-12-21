@@ -82,7 +82,7 @@ pub fn claim<'info>(
         OracleError::InvalidMint
     );
     require!(
-        id.as_bytes().len() <= MAX_ID_BYTES,
+        id.len() <= MAX_ID_BYTES,
         OracleError::InvalidInputLength
     );
     require!(
@@ -245,7 +245,7 @@ pub fn claim_open<'info>(
         OracleError::InvalidMint
     );
     require!(
-        id.as_bytes().len() <= MAX_ID_BYTES,
+        id.len() <= MAX_ID_BYTES,
         OracleError::InvalidInputLength
     );
     require!(
