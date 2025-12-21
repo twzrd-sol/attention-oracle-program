@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop = "programs"
 
 [build]
-solana_version = "3.0.10"
+solana_version = "2.3.0"
 anchor_version = "0.32.1"
 
 [[dependencies]]

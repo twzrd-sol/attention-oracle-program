@@ -523,6 +523,7 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
+ "solana-program",
  "spl-tlv-account-resolution 0.8.1",
  "spl-transfer-hook-interface 0.8.2",
  "spl-type-length-value 0.6.0",

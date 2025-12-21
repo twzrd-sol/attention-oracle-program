@@ -98,7 +98,7 @@ pub fn claim_channel_sponsored<'info>(
         OracleError::InvalidMint
     );
     require!(
-        id.as_bytes().len() <= MAX_ID_BYTES,
+        id.len() <= MAX_ID_BYTES,
         OracleError::InvalidInputLength
     );
     require!(
