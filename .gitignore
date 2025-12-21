@@ -12,6 +12,10 @@ package-lock.json
 !SECURITY.md
 !VERIFY.md
 !PRIVACY.md
+!README.md
+!DEPLOYMENTS.md
+!INTEGRATION.md
+!docs/specs/transfer-fee-capture.md
 
 # Next.js output
 .next/
