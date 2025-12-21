@@ -8,10 +8,10 @@
  *
  * Usage:
  *   # Default: uses amm-admin wallet with 100 tokens
- *   ANCHOR_WALLET=~/.config/solana/amm-admin.json ts-node test-epoch-now.ts
+ *   CLUSTER=mainnet-beta RPC_URL=... KEYPAIR=~/.config/solana/amm-admin.json ts-node test-epoch-now.ts
  *
  *   # Custom wallet and amount
- *   ts-node test-epoch-now.ts <WALLET_PUBKEY> <AMOUNT>
+ *   CLUSTER=mainnet-beta RPC_URL=... KEYPAIR=... ts-node test-epoch-now.ts <WALLET_PUBKEY> <AMOUNT>
  *
  * Example:
  *   ts-node test-epoch-now.ts 9HXDBiuLVFEVpd7gWepYKWHB6HRPJi2A3vcm3x1WfHrF 250
@@ -28,6 +28,7 @@ import {
 import fs from "fs";
 import pkg from "js-sha3";
 const { keccak256 } = pkg;
+import { requireScriptEnv } from "./script-guard.js";
 
 const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 const SYSTEM_PROGRAM = new PublicKey("11111111111111111111111111111111");
@@ -106,9 +107,10 @@ async function getCurrentEpoch(connection: Connection): Promise<bigint> {
 async function main() {
   const args = process.argv.slice(2);
 
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+
   // Load wallet for publishing
-  const walletPath =
-    process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/id.json`;
+  const walletPath = keypairPath;
   const payerWallet = Keypair.fromSecretKey(
     new Uint8Array(JSON.parse(fs.readFileSync(walletPath, "utf-8")))
   );
@@ -118,10 +120,7 @@ async function main() {
   const amount = args[1] ? BigInt(args[1]) : 100n;
 
   // Setup connection
-  const connection = new Connection(
-    process.env.SYNDICA_RPC!,
-    "confirmed"
-  );
+  const connection = new Connection(rpcUrl, "confirmed");
 
   // Get current epoch
   const currentEpoch = await getCurrentEpoch(connection);

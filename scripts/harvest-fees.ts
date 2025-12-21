@@ -28,6 +28,7 @@ import {
 } from '@solana/web3.js';
 import fs from 'fs';
 import path from 'path';
+import { requireScriptEnv } from './script-guard.js';
 
 const AO_PROGRAM_ID = new PublicKey(
   process.env.AO_PROGRAM_ID || 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop',
@@ -58,16 +59,10 @@ async function main() {
   const mint = new PublicKey(args[0]);
   const fromMint = args.includes('--from-mint');
 
-  const rpc =
-    process.env.AO_RPC_URL ||
-    process.env.SYNDICA_RPC ||
-    process.env.ANCHOR_PROVIDER_URL ||
-    'https://api.mainnet-beta.solana.com';
-  const connection = new Connection(rpc, 'confirmed');
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+  const connection = new Connection(rpcUrl, 'confirmed');
 
-  const walletPath =
-    process.env.ANCHOR_WALLET?.replace('~', process.env.HOME || '') ||
-    path.join(process.env.HOME || '', '.config/solana/id.json');
+  const walletPath = keypairPath;
   const payer = loadKeypair(walletPath);
 
   const wallet = new Wallet(payer);
@@ -101,7 +96,7 @@ async function main() {
   );
 
   console.log('\n=== Harvest Withheld Fees ===');
-  console.log(`RPC:           ${rpc}`);
+  console.log(`RPC:           ${rpcUrl}`);
   console.log(`AO Program:    ${AO_PROGRAM_ID.toBase58()}`);
   console.log(`Mint:          ${mint.toBase58()}`);
   console.log(`Payer:         ${payer.publicKey.toBase58()}`);
@@ -200,4 +195,3 @@ main().catch((err) => {
   console.error('\n❌ Error:', err);
   process.exit(1);
 });
-

@@ -24,6 +24,7 @@ import {
 import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor';
 import * as fs from 'fs';
 import * as path from 'path';
+import { requireScriptEnv } from './script-guard.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -48,16 +49,15 @@ async function main() {
   console.log('🚀 Initialize ExtraAccountMetaList for Transfer Hook\n');
   console.log(`📋 Mint: ${mint.toBase58()}`);
 
-  // Load wallet
-  const walletPath = process.env.ANCHOR_WALLET?.replace('~', process.env.HOME || '')
-    || path.join(process.env.HOME || '', '.config/solana/id.json');
+  const { rpcUrl, keypairPath } = requireScriptEnv();
 
+  // Load wallet
+  const walletPath = keypairPath;
   const walletKeypair = Keypair.fromSecretKey(
     new Uint8Array(JSON.parse(fs.readFileSync(walletPath, 'utf-8')))
   );
   console.log(`💼 Payer: ${walletKeypair.publicKey.toBase58()}`);
 
-  const rpcUrl = process.env.SYNDICA_RPC || 'https://api.mainnet-beta.solana.com';
   const connection = new Connection(rpcUrl, 'confirmed');
   const wallet = new Wallet(walletKeypair);
   const provider = new AnchorProvider(connection, wallet, {

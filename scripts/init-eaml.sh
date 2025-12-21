@@ -5,18 +5,37 @@
 # enabling Token-2022 to pass extra accounts to the hook program.
 #
 # Usage:
-#   ./scripts/init-eaml.sh <MINT_ADDRESS> [RPC_URL] [KEYPAIR_PATH]
-#
-# Examples:
-#   ./scripts/init-eaml.sh 7XJ8KF3wYPn4YvD2jZqZ1z2qZ3Z4Z5Z6Z7Z8Z9ZaZ
-#   ./scripts/init-eaml.sh 7XJ8KF3wYPn4YvD2jZqZ1z2qZ3Z4Z5Z6Z7Z8Z9ZaZ ${SYNDICA_RPC:-https://api.mainnet-beta.solana.com} ~/.config/solana/id.json
+#   CLUSTER=mainnet-beta KEYPAIR=~/.config/solana/id.json RPC_URL=... ./scripts/init-eaml.sh <MINT_ADDRESS>
 
 set -e
 
 # Args
-MINT=${1:?❌ Usage: $0 <MINT_ADDRESS> [RPC_URL] [KEYPAIR_PATH]}
-RPC_URL=${2:-${SYNDICA_RPC:-https://api.mainnet-beta.solana.com}}
-KEYPAIR=${3:-~/.config/solana/id.json}
+MINT=${1:?❌ Usage: $0 <MINT_ADDRESS>}
+
+CLUSTER=${CLUSTER:-}
+if [[ -z "${CLUSTER}" ]]; then
+  echo "❌ Missing CLUSTER. Set CLUSTER=localnet|devnet|testnet|mainnet-beta" >&2
+  exit 2
+fi
+if [[ "${CLUSTER}" == "mainnet" ]]; then
+  CLUSTER="mainnet-beta"
+fi
+if [[ "${CLUSTER}" == "mainnet-beta" && "${I_UNDERSTAND_MAINNET:-}" != "1" ]]; then
+  echo "❌ Refusing mainnet without I_UNDERSTAND_MAINNET=1" >&2
+  exit 2
+fi
+
+RPC_URL=${RPC_URL:-${ANCHOR_PROVIDER_URL:-${SYNDICA_RPC:-${SOLANA_RPC:-${SOLANA_URL:-}}}}}
+if [[ -z "${RPC_URL}" ]]; then
+  echo "❌ Missing RPC_URL (or ANCHOR_PROVIDER_URL/SYNDICA_RPC/SOLANA_RPC/SOLANA_URL)" >&2
+  exit 2
+fi
+
+KEYPAIR=${KEYPAIR:-${ANCHOR_WALLET:-}}
+if [[ -z "${KEYPAIR}" ]]; then
+  echo "❌ Missing KEYPAIR. Set KEYPAIR=/path/to/keypair.json" >&2
+  exit 2
+fi
 
 # Expand tilde in keypair path
 KEYPAIR="${KEYPAIR/#\~/$HOME}"
@@ -59,7 +78,8 @@ echo "  npx ts-node scripts/init-eaml.ts $MINT"
 echo ""
 echo "Step-by-step:"
 echo "  1. cd $(dirname $0)/.."
-echo "  2. export ANCHOR_PROVIDER_URL='$RPC_URL'"
-echo "  3. export ANCHOR_WALLET='$KEYPAIR'"
-echo "  4. npx ts-node scripts/init-eaml.ts $MINT"
+echo "  2. export CLUSTER='$CLUSTER'"
+echo "  3. export RPC_URL='$RPC_URL'"
+echo "  4. export KEYPAIR='$KEYPAIR'"
+echo "  5. npx ts-node scripts/init-eaml.ts $MINT"
 echo ""

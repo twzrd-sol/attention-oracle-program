@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Publish on-chain verification data, with optional remote submission.
 # - Uploads repo URL + commit + library name to the on-chain verification PDA
-# - Uses your default Solana keypair (~/.config/solana/id.json) unless overridden
+# - Requires explicit KEYPAIR and RPC_URL (no implicit defaults)
 # - Optionally submits a remote verification job after upload
 
 usage() {
@@ -16,8 +16,8 @@ Options:
   --commit <HASH>              Commit hash to verify (default: git rev-parse HEAD)
   --library-name <NAME>        Cargo lib name (e.g. token_2022)
   --mount-path <PATH>          Path to mount for build context (default: .)
-  --rpc-url <URL>              RPC endpoint (default: ${SYNDICA_RPC:-https://api.mainnet-beta.solana.com})
-  --wallet <PATH>              Path to keypair JSON (default: ~/.config/solana/id.json)
+  --rpc-url <URL>              RPC endpoint (required)
+  --wallet <PATH>              Path to keypair JSON (required)
   --skip-build                 Skip local 'anchor build --verifiable'
   --remote                     Submit a remote verification job after upload
   -h, --help                   Show this help
@@ -38,8 +38,8 @@ PROGRAM_ID="GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 REPO_URL="https://github.com/twzrd-sol/attention-oracle-program"
 LIB_NAME="token_2022"
 MOUNT_PATH="."
-RPC_URL="${SYNDICA_RPC:-https://api.mainnet-beta.solana.com}"
-WALLET_PATH="~/.config/solana/id.json"
+RPC_URL="${RPC_URL:-}"
+WALLET_PATH="${KEYPAIR:-${ANCHOR_WALLET:-}}"
 SKIP_BUILD=0
 DO_REMOTE=0
 
@@ -60,8 +60,35 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+CLUSTER=${CLUSTER:-}
+if [[ -z "${CLUSTER}" ]]; then
+  echo "Missing CLUSTER. Set CLUSTER=localnet|devnet|testnet|mainnet-beta" >&2
+  exit 2
+fi
+if [[ "${CLUSTER}" == "mainnet" ]]; then
+  CLUSTER="mainnet-beta"
+fi
+if [[ "${CLUSTER}" == "mainnet-beta" && "${I_UNDERSTAND_MAINNET:-}" != "1" ]]; then
+  echo "Refusing mainnet without I_UNDERSTAND_MAINNET=1" >&2
+  exit 2
+fi
+
+if [[ -z "${RPC_URL}" ]]; then
+  echo "Missing RPC_URL. Set RPC_URL or pass --rpc-url" >&2
+  exit 2
+fi
+
+if [[ -z "${WALLET_PATH}" ]]; then
+  echo "Missing KEYPAIR. Set KEYPAIR or pass --wallet" >&2
+  exit 2
+fi
+
 # Expand ~ in wallet path
 WALLET_PATH="${WALLET_PATH/#\~/$HOME}"
+if [[ ! -f "${WALLET_PATH}" ]]; then
+  echo "Keypair not found: ${WALLET_PATH}" >&2
+  exit 2
+fi
 
 # Commit
 COMMIT=${COMMIT:-$(git rev-parse HEAD)}
@@ -70,6 +97,9 @@ echo "🔗 Repo: $REPO_URL@${COMMIT}"
 echo "🏷️  Program: $PROGRAM_ID | Lib: $LIB_NAME | Mount: $MOUNT_PATH"
 echo "🌐 RPC: $RPC_URL"
 echo "🔑 Wallet: $WALLET_PATH"
+
+KEYPAIR_DIR=$(dirname "$WALLET_PATH")
+KEYPAIR_BASENAME=$(basename "$WALLET_PATH")
 
 # Optional local verifiable build
 if [[ $SKIP_BUILD -eq 0 ]]; then
@@ -122,11 +152,10 @@ docker run --rm \
   -e LIB_NAME="$LIB_NAME" \
   -e MOUNT_PATH="$MOUNT_PATH" \
   -e RPC_URL="$RPC_URL" \
-  -e KEYPAIR="/root/.config/solana/id.json" \
+  -e KEYPAIR="/keypair/$KEYPAIR_BASENAME" \
   -v "${PWD}":/work \
   -v "$HOME/.avm/bin":/avm \
-  -v "$HOME/.config/solana":/root/.config/solana \
-  -v "$HOME/.config/solana":/home/twzrd/.config/solana \
+  -v "$KEYPAIR_DIR":/keypair \
   -v "/var/run/docker.sock":/var/run/docker.sock \
   -w /work ubuntu:24.04 bash -lc '
     set -euo pipefail

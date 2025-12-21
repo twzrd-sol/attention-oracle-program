@@ -16,6 +16,7 @@ import { getAssociatedTokenAddressSync, TOKEN_2022_PROGRAM_ID } from "@solana/sp
 import { config } from "dotenv";
 import * as path from "path";
 import * as url from "url";
+import { requireScriptEnv } from "./script-guard.js";
 
 // ESM __dirname shim
 const __filename = url.fileURLToPath(import.meta.url);
@@ -149,15 +150,11 @@ export const TREASURY_ATA = _treasuryAta;
 // =============================================================================
 
 export function getRpcUrl(): string {
-  return (
-    process.env.SYNDICA_RPC ||
-    process.env.ANCHOR_PROVIDER_URL ||
-    "https://api.mainnet-beta.solana.com"
-  );
+  return requireScriptEnv().rpcUrl;
 }
 
 export function getWalletPath(): string {
-  return process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/id.json`;
+  return requireScriptEnv().keypairPath;
 }
 
 // =============================================================================

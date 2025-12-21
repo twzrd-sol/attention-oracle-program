@@ -8,11 +8,11 @@
  * so set_merkle_root_ring is unavailable. Use set_channel_merkle_root only.
  *
  * Usage:
- *   ANCHOR_WALLET=~/.config/solana/amm-admin.json \
+ *   CLUSTER=mainnet-beta RPC_URL=... KEYPAIR=~/.config/solana/amm-admin.json \
  *   ts-node publish-merkle-root.ts <channel> <epoch> <root_hex>
  *
  * Example:
- *   ANCHOR_WALLET=~/.config/solana/amm-admin.json \
+ *   CLUSTER=mainnet-beta RPC_URL=... KEYPAIR=~/.config/solana/amm-admin.json \
  *   ts-node publish-merkle-root.ts youtube_lofi 122523 97fbfdc785963a7fcd1c05d05fc4f893742d68292763ad2f6c500846d87826d1
  */
 
@@ -27,6 +27,7 @@ import {
 import fs from "fs";
 import pkg from "js-sha3";
 const { keccak256 } = pkg;
+import { requireScriptEnv } from "./script-guard.js";
 
 const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 const SYSTEM_PROGRAM = new PublicKey("11111111111111111111111111111111");
@@ -89,18 +90,16 @@ async function main() {
     process.exit(1);
   }
 
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+
   // Load wallet
-  const walletPath =
-    process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/id.json`;
+  const walletPath = keypairPath;
   const wallet = Keypair.fromSecretKey(
     new Uint8Array(JSON.parse(fs.readFileSync(walletPath, "utf-8")))
   );
 
   // Setup connection
-  const connection = new Connection(
-    process.env.SYNDICA_RPC!,
-    "confirmed"
-  );
+  const connection = new Connection(rpcUrl, "confirmed");
 
   // Default to live v3 CCM token
   const ATTENTION_MINT = new PublicKey(

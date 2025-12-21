@@ -15,8 +15,9 @@
  *   npx ts-node scripts/create-ccm-v3-mint.ts [--dry-run]
  *
  * Env:
- *   ANCHOR_WALLET - path to admin keypair
- *   SYNDICA_RPC - RPC endpoint
+ *   CLUSTER - localnet|devnet|testnet|mainnet-beta
+ *   RPC_URL - RPC endpoint (or ANCHOR_PROVIDER_URL/SYNDICA_RPC/SOLANA_RPC/SOLANA_URL)
+ *   KEYPAIR - path to admin keypair (or ANCHOR_WALLET)
  */
 
 import {
@@ -43,6 +44,7 @@ import {
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { requireScriptEnv } from "./script-guard.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -60,15 +62,16 @@ const MAX_FEE = BigInt(5_000) * BigInt(10 ** DECIMALS); // 5000 CCM max fee
 async function main() {
   console.log("=== CCM-v3 Mint Creation (2B Supply) ===\n");
 
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+
   // Load admin wallet
-  const walletPath = process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/id.json`;
+  const walletPath = keypairPath;
   const admin = Keypair.fromSecretKey(
     new Uint8Array(JSON.parse(fs.readFileSync(walletPath, "utf-8")))
   );
   console.log("Admin Wallet:", admin.publicKey.toBase58());
 
   // Setup connection
-  const rpcUrl = process.env.SYNDICA_RPC || "https://api.mainnet-beta.solana.com";
   const connection = new Connection(rpcUrl, "confirmed");
   console.log("RPC:", rpcUrl.substring(0, 50) + "...");
 

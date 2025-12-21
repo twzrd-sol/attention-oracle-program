@@ -9,6 +9,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import pkg from "js-sha3";
 const { keccak256 } = pkg;
+import { requireScriptEnv } from "./script-guard.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,17 +54,16 @@ async function main() {
     process.exit(1);
   }
 
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+
   // Load wallet
-  const walletPath = process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/id.json`;
+  const walletPath = keypairPath;
   const walletKeypair = Keypair.fromSecretKey(
     new Uint8Array(JSON.parse(fs.readFileSync(walletPath, "utf-8")))
   );
 
   // Setup connection
-  const connection = new Connection(
-    process.env.SYNDICA_RPC!,
-    "confirmed"
-  );
+  const connection = new Connection(rpcUrl, "confirmed");
 
   const wallet = new anchor.Wallet(walletKeypair);
   const provider = new anchor.AnchorProvider(connection, wallet, {
