@@ -40,3 +40,36 @@ These programs are upgradeable on-chain. If you integrate against them, you shou
 
 - See `INTEGRATION.md` for Token-2022 transfer-hook guidance.
 - See `DEPLOYMENTS.md` for program IDs and release policy.
+
+## Feature logic (no program upgrade required)
+
+### Gasless claims (sponsored)
+
+The program already supports a gasless claim path via `claim_channel_sponsored`:
+
+- **Payer signs, claimer does not.** Authorization comes from the Merkle proof, which encodes the
+  claimer pubkey in the leaf. Funds can only flow to the wallet in the published tree.
+- **Relayer flow (off-chain):**
+  1. Backend fetches proof + leaf data for an eligible wallet/epoch.
+  2. Backend builds a transaction calling `claim_channel_sponsored`, with the relayer as payer.
+  3. Backend submits, records the signature, and rate-limits per wallet/channel/epoch.
+- **Security model:** the relayer cannot redirect funds; proof verification + bitmap replay
+  protection enforce correctness.
+
+This enables trustless, gasless claims for non-crypto-native users without upgrading the program.
+
+### Streamer graph (off-chain)
+
+The streamer graph can be derived off-chain from watch-time/chat events and mapped to on-chain
+channels:
+
+- **Nodes:** streamers (channel subjects) and viewers (wallets or linked identities).
+- **Edges:** viewer → streamer with weights (watch seconds, chat count, streaks, unique days).
+- **Rollups:** per-epoch aggregates that can be used for reputation, boosts, or recommendations.
+
+This is an off-chain indexing task and does not require an on-chain change.
+
+## Planned (requires on-chain upgrade)
+
+- Auto-split CCM between viewers and creators.
+- Staking on streamers with earned CCM (multiplier + reputation).
