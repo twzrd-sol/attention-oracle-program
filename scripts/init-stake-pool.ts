@@ -8,6 +8,7 @@ import { TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { requireScriptEnv } from "./script-guard.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,17 +27,16 @@ async function main() {
 
   console.log(`Initializing stake pool with reward_rate=${rewardRate.toString()}`);
 
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+
   // Load wallet
-  const walletPath = process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/id.json`;
+  const walletPath = keypairPath;
   const walletKeypair = Keypair.fromSecretKey(
     new Uint8Array(JSON.parse(fs.readFileSync(walletPath, "utf-8")))
   );
 
   // Setup connection
-  const connection = new Connection(
-    process.env.SYNDICA_RPC || "https://api.mainnet-beta.solana.com",
-    "confirmed"
-  );
+  const connection = new Connection(rpcUrl, "confirmed");
 
   const wallet = new anchor.Wallet(walletKeypair);
   const provider = new anchor.AnchorProvider(connection, wallet, {

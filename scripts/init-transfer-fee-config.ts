@@ -11,8 +11,9 @@
  *   ts-node scripts/init-transfer-fee-config.ts <MINT> [--bps 0] [--max-fee 0]
  *
  * Env:
- * - AO_RPC_URL | SYNDICA_RPC | ANCHOR_PROVIDER_URL (RPC)
- * - ANCHOR_WALLET (payer keypair path)
+ * - CLUSTER (localnet|devnet|testnet|mainnet-beta)
+ * - RPC_URL (or ANCHOR_PROVIDER_URL/SYNDICA_RPC/SOLANA_RPC/SOLANA_URL)
+ * - KEYPAIR (or ANCHOR_WALLET) payer keypair path
  * - AO_PROGRAM_ID (defaults to GnGzNds...)
  */
 
@@ -33,7 +34,7 @@ import {
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
 import fs from 'fs';
-import path from 'path';
+import { requireScriptEnv } from './script-guard.js';
 
 const AO_PROGRAM_ID = new PublicKey(
   process.env.AO_PROGRAM_ID || 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop',
@@ -71,16 +72,10 @@ async function main() {
     throw new Error(`Invalid --max-fee ${maxFee} (expected >= 0)`);
   }
 
-  const rpc =
-    process.env.AO_RPC_URL ||
-    process.env.SYNDICA_RPC ||
-    process.env.ANCHOR_PROVIDER_URL ||
-    'https://api.mainnet-beta.solana.com';
-  const connection = new Connection(rpc, 'confirmed');
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+  const connection = new Connection(rpcUrl, 'confirmed');
 
-  const walletPath =
-    process.env.ANCHOR_WALLET?.replace('~', process.env.HOME || '') ||
-    path.join(process.env.HOME || '', '.config/solana/id.json');
+  const walletPath = keypairPath;
   const payer = loadKeypair(walletPath);
 
   const [protocolState] = PublicKey.findProgramAddressSync(
@@ -111,7 +106,7 @@ async function main() {
   const neededLenIfAdded = getMintLen([...existingExtTypes, ExtensionType.TransferFeeConfig]);
 
   console.log('\n=== Init TransferFeeConfig (Token-2022) ===');
-  console.log(`RPC:           ${rpc}`);
+  console.log(`RPC:           ${rpcUrl}`);
   console.log(`Mint:          ${mint.toBase58()}`);
   console.log(`Payer:         ${payer.publicKey.toBase58()}`);
   console.log(`ProtocolState: ${protocolState.toBase58()}`);

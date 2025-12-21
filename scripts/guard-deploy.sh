@@ -2,11 +2,27 @@
 set -euo pipefail
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-DEFAULT_RPC="${SYNDICA_RPC:-https://api.mainnet-beta.solana.com}"
 
-KEYPAIR_PATH=${ANCHOR_WALLET:-${1:-}}
+CLUSTER=${CLUSTER:-}
+if [[ -z "${CLUSTER}" ]]; then
+  echo "Missing CLUSTER. Set CLUSTER=localnet|devnet|testnet|mainnet-beta" >&2
+  exit 2
+fi
+if [[ "${CLUSTER}" != "mainnet-beta" && "${CLUSTER}" != "mainnet" ]]; then
+  echo "guard-deploy is mainnet-only. Set CLUSTER=mainnet-beta" >&2
+  exit 2
+fi
+if [[ "${CLUSTER}" == "mainnet" ]]; then
+  CLUSTER="mainnet-beta"
+fi
+if [[ "${I_UNDERSTAND_MAINNET:-}" != "1" ]]; then
+  echo "Refusing mainnet without I_UNDERSTAND_MAINNET=1" >&2
+  exit 2
+fi
+
+KEYPAIR_PATH=${KEYPAIR:-${ANCHOR_WALLET:-}}
 if [[ -z "${KEYPAIR_PATH}" ]]; then
-  echo "Usage: ANCHOR_WALLET=~/.config/solana/id.json scripts/guard-deploy.sh <command ...>" >&2
+  echo "Missing KEYPAIR. Set KEYPAIR=/path/to/keypair.json" >&2
   exit 2
 fi
 
@@ -19,11 +35,10 @@ fi
 PERMS=$(stat -c %a "$KEYPAIR_PATH" 2>/dev/null || stat -f %Lp "$KEYPAIR_PATH")
 [[ "$PERMS" == "600" || "$PERMS" == "400" ]] || { echo "Keypair perms must be 600/400 (got $PERMS)" >&2; exit 5; }
 
-RPC=${SOLANA_URL:-${SOLANA_RPC:-$DEFAULT_RPC}}
-if [[ "$RPC" == *"mainnet-beta"* || "$RPC" == *"solana-mainnet"* ]]; then
-  :
-else
-  echo "Not mainnet RPC: $RPC" >&2; exit 6;
+RPC=${RPC_URL:-${ANCHOR_PROVIDER_URL:-${SYNDICA_RPC:-${SOLANA_RPC:-${SOLANA_URL:-}}}}}
+if [[ -z "${RPC}" ]]; then
+  echo "Missing RPC_URL (or ANCHOR_PROVIDER_URL/SYNDICA_RPC/SOLANA_RPC/SOLANA_URL)" >&2
+  exit 6
 fi
 
 echo "[guard] mainnet op with $KEYPAIR_PATH on $RPC"; read -p "Type DEPLOY to continue: " c; [[ "$c" == DEPLOY ]] || exit 7

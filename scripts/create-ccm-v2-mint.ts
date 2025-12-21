@@ -29,6 +29,7 @@ import {
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { requireScriptEnv } from "./script-guard.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,15 +45,16 @@ const DECIMALS = 9;
 async function main() {
   console.log("=== CCM-v2 Mint Creation ===\n");
 
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+
   // Load wallet
-  const walletPath = process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/id.json`;
+  const walletPath = keypairPath;
   const wallet = Keypair.fromSecretKey(
     new Uint8Array(JSON.parse(fs.readFileSync(walletPath, "utf-8")))
   );
   console.log("Wallet:", wallet.publicKey.toBase58());
 
   // Setup connection
-  const rpcUrl = process.env.SYNDICA_RPC || "https://api.mainnet-beta.solana.com";
   const connection = new Connection(rpcUrl, "confirmed");
 
   // Check for existing mint keypair or generate new

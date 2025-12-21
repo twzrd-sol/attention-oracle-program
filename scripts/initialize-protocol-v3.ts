@@ -14,8 +14,9 @@
  *   ANCHOR_WALLET=~/.config/solana/id.json npx ts-node scripts/initialize-protocol-v3.ts [--dry-run]
  *
  * Env:
- *   ANCHOR_WALLET - path to admin keypair (must be ADMIN_AUTHORITY)
- *   SYNDICA_RPC - RPC endpoint
+ *   CLUSTER - localnet|devnet|testnet|mainnet-beta
+ *   RPC_URL - RPC endpoint (or ANCHOR_PROVIDER_URL/SYNDICA_RPC/SOLANA_RPC/SOLANA_URL)
+ *   KEYPAIR - path to admin keypair (or ANCHOR_WALLET) must be ADMIN_AUTHORITY
  */
 
 import {

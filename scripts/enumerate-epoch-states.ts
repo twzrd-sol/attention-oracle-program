@@ -14,7 +14,7 @@
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
-import BN from "bn.js";
+import { requireScriptEnv } from "./script-guard.js";
 
 const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
@@ -33,7 +33,7 @@ interface EpochStateInfo {
 async function main() {
   const jsonOutput = process.argv.includes("--json");
 
-  const rpcUrl = process.env.SYNDICA_RPC || process.env.RPC_URL || "https://api.mainnet-beta.solana.com";
+  const { rpcUrl } = requireScriptEnv();
   const connection = new Connection(rpcUrl, "confirmed");
 
   if (!jsonOutput) {

@@ -11,6 +11,7 @@ import {
 import fs from "fs";
 import pkg from "js-sha3";
 const { keccak256 } = pkg;
+import { requireScriptEnv } from "./script-guard.js";
 const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 const SYSTEM_PROGRAM = new PublicKey("11111111111111111111111111111111");
 
@@ -37,18 +38,16 @@ async function main() {
 
   const [channel] = args;
 
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+
   // Load wallet
-  const walletPath =
-    process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/id.json`;
+  const walletPath = keypairPath;
   const wallet = Keypair.fromSecretKey(
     new Uint8Array(JSON.parse(fs.readFileSync(walletPath, "utf-8")))
   );
 
   // Setup connection
-  const connection = new Connection(
-    process.env.SYNDICA_RPC!,
-    "confirmed"
-  );
+  const connection = new Connection(rpcUrl, "confirmed");
 
   // Default to live v3 CCM token
   const ATTENTION_MINT = new PublicKey(

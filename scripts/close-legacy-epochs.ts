@@ -20,8 +20,9 @@
  *   ts-node close-legacy-epochs.ts --epoch 12345 --subject <pubkey>
  *
  * Requirements:
- *   - ANCHOR_WALLET or ~/.config/solana/id.json must be the ADMIN_AUTHORITY
- *   - SYNDICA_RPC or ANCHOR_PROVIDER_URL environment variable
+ *   - CLUSTER (localnet|devnet|testnet|mainnet-beta)
+ *   - RPC_URL (or ANCHOR_PROVIDER_URL/SYNDICA_RPC/SOLANA_RPC/SOLANA_URL)
+ *   - KEYPAIR (or ANCHOR_WALLET) must be the ADMIN_AUTHORITY
  *   - Program built with --features legacy
  */
 
@@ -37,6 +38,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
+import { requireScriptEnv } from "./script-guard.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,8 +77,10 @@ async function main() {
     ? new PublicKey(args[args.indexOf("--subject") + 1])
     : null;
 
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+
   // Load wallet
-  const walletPath = process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/id.json`;
+  const walletPath = keypairPath;
   const walletKeypair = Keypair.fromSecretKey(
     new Uint8Array(JSON.parse(fs.readFileSync(walletPath, "utf-8")))
   );
@@ -87,7 +91,6 @@ async function main() {
   }
 
   // Setup connection
-  const rpcUrl = process.env.SYNDICA_RPC || process.env.ANCHOR_PROVIDER_URL || "https://api.mainnet-beta.solana.com";
   const connection = new Connection(rpcUrl, "confirmed");
 
   const wallet = walletKeypair;

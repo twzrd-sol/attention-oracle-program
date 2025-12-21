@@ -20,6 +20,7 @@ import {
 import * as fs from 'fs';
 import { createHash } from 'crypto';
 import jsSha3 from 'js-sha3';
+import { requireScriptEnv } from './script-guard.js';
 
 const { keccak256 } = jsSha3;
 
@@ -65,19 +66,16 @@ async function main() {
   const channel = process.argv[2] || 'youtube_lofi';
   console.log(`Resizing channel state for: ${channel}`);
 
-  const keypairPath =
-    process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/oracle-authority.json`;
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+
+  const resolvedKeypair = keypairPath;
   const keypair = Keypair.fromSecretKey(
-    Uint8Array.from(JSON.parse(fs.readFileSync(keypairPath, 'utf8'))),
+    Uint8Array.from(JSON.parse(fs.readFileSync(resolvedKeypair, 'utf8'))),
   );
   console.log(`Payer: ${keypair.publicKey.toBase58()}`);
 
-  const rpc =
-    process.env.SYNDICA_RPC ||
-    process.env.RPC_URL ||
-    'https://api.mainnet-beta.solana.com';
-  const connection = new Connection(rpc, 'confirmed');
-  console.log(`RPC: ${rpc}`);
+  const connection = new Connection(rpcUrl, 'confirmed');
+  console.log(`RPC: ${rpcUrl}`);
 
   const [protocolState] = PublicKey.findProgramAddressSync([PROTOCOL_SEED, CCM_MINT.toBuffer()], PROGRAM_ID);
   console.log(`Protocol State: ${protocolState.toBase58()}`);

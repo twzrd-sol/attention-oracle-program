@@ -9,6 +9,7 @@ import { Connection, Keypair, PublicKey, SystemProgram, Transaction, Transaction
 import * as fs from 'fs';
 import { createHash } from 'crypto';
 import jsSha3 from 'js-sha3';
+import { requireScriptEnv } from './script-guard.js';
 const { keccak256 } = jsSha3;
 
 const PROGRAM_ID = new PublicKey('GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop');
@@ -62,16 +63,16 @@ async function main() {
   const channel = process.argv[2] || 'pumpfun_attention';
   console.log(`Migrating channel: ${channel}`);
 
+  const { rpcUrl, keypairPath } = requireScriptEnv();
+
   // Load keypair
-  const keypairPath = process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/oracle-authority.json`;
+  const resolvedKeypair = keypairPath;
   const keypair = Keypair.fromSecretKey(
-    Uint8Array.from(JSON.parse(fs.readFileSync(keypairPath, 'utf8')))
+    Uint8Array.from(JSON.parse(fs.readFileSync(resolvedKeypair, 'utf8')))
   );
   console.log(`Payer: ${keypair.publicKey.toString()}`);
 
-  // Connect to mainnet
-  const rpc = process.env.SYNDICA_RPC || 'https://solana-mainnet.api.syndica.io/api-key/3PrmKxhs3WdLKAWu6SJcn6PY9PwmjvZBcQ7kJ3EcT9GFQqwxceqvS9ijuVHf6RZxBNSvS2EbYg4ZvQGbm4oFviCtGFYErqH1HY3';
-  const connection = new Connection(rpc, 'confirmed');
+  const connection = new Connection(rpcUrl, 'confirmed');
 
   // Derive PDAs
   const [protocolState] = PublicKey.findProgramAddressSync(
