@@ -15,6 +15,12 @@ use crate::state::{ChannelConfigV2, ClaimStateV2, ProtocolState, RootEntry};
 use super::channel::derive_subject_id;
 
 const CHANNEL_CONFIG_V2_VERSION: u8 = 1;
+
+/// Helper to get subject_id as [u8; 32] for use in Anchor seeds.
+/// Avoids lifetime issues with Pubkey::as_ref() in macro expansion.
+fn subject_id_bytes(channel: &str) -> [u8; 32] {
+    derive_subject_id(channel).to_bytes()
+}
 const CLAIM_STATE_V2_VERSION: u8 = 1;
 const MAX_PROOF_LEN: usize = 32;
 
@@ -40,7 +46,7 @@ pub struct InitializeChannelCumulative<'info> {
         init_if_needed,
         payer = payer,
         space = ChannelConfigV2::LEN,
-        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), derive_subject_id(&channel).as_ref()],
+        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), &subject_id_bytes(&channel)],
         bump,
     )]
     pub channel_config: Account<'info, ChannelConfigV2>,
@@ -101,7 +107,7 @@ pub struct PublishCumulativeRoot<'info> {
 
     #[account(
         mut,
-        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), derive_subject_id(&channel).as_ref()],
+        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), &subject_id_bytes(&channel)],
         bump = channel_config.bump,
     )]
     pub channel_config: Account<'info, ChannelConfigV2>,
@@ -163,7 +169,7 @@ pub struct ClaimCumulative<'info> {
     pub protocol_state: Account<'info, ProtocolState>,
 
     #[account(
-        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), derive_subject_id(&channel).as_ref()],
+        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), &subject_id_bytes(&channel)],
         bump = channel_config.bump,
     )]
     pub channel_config: Account<'info, ChannelConfigV2>,
@@ -312,7 +318,7 @@ pub struct ClaimCumulativeSponsored<'info> {
     pub protocol_state: Account<'info, ProtocolState>,
 
     #[account(
-        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), derive_subject_id(&channel).as_ref()],
+        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), &subject_id_bytes(&channel)],
         bump = channel_config.bump,
     )]
     pub channel_config: Account<'info, ChannelConfigV2>,
