@@ -7,97 +7,42 @@ use anchor_lang::prelude::*;
 /// Global protocol state (singleton)
 #[account]
 pub struct ProtocolState {
-    /// Initialization flag
     pub is_initialized: bool,
-
-    /// Current version for migrations
     pub version: u8,
-
-    /// Admin authority (can update config)
     pub admin: Pubkey,
-
-    /// Allowlisted publisher (optional). If set, this key may publish
-    /// merkle roots in addition to the admin. If Pubkey::default(),
-    /// only the admin is authorized.
     pub publisher: Pubkey,
-
-    /// Treasury PDA
     pub treasury: Pubkey,
-
-    /// CCM mint address
     pub mint: Pubkey,
-
-    /// Emergency pause flag
     pub paused: bool,
-
-    /// Require TWZRD Layer-1 cNFT receipt for claims (default: false)
-    /// Toggle via set_policy instruction for circuit breaker pattern
     pub require_receipt: bool,
-
-    /// Bump seed for PDA
     pub bump: u8,
 }
 
 impl ProtocolState {
-    pub const LEN: usize = 8 +  // discriminator
-        1 +    // is_initialized
-        1 +    // version
-        32 +   // admin
-        32 +   // publisher
-        32 +   // treasury
-        32 +   // mint
-        1 +    // paused
-        1 +    // require_receipt
-        1; // bump
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 32 + 32 + 1 + 1 + 1;
 }
 
 /// Fee configuration (PDA account)
 #[account]
 pub struct FeeConfig {
-    /// Transfer fee in basis points (10 = 0.1%)
     pub basis_points: u16,
-
-    /// Maximum fee amount
     pub max_fee: u64,
-
-    /// Drip threshold (volume triggers)
     pub drip_threshold: u64,
-
-    /// Treasury fee basis points (0.05% base)
     pub treasury_fee_bps: u16,
-
-    /// Creator fee basis points (0.05% base, multiplied by tier)
     pub creator_fee_bps: u16,
-
-    /// Tier multipliers for creator allocation (array of 6 f64 values)
-    /// Stores as fixed-point u32 (multiplied by 10000 for precision)
     pub tier_multipliers: [u32; 6],
-
-    /// Bump seed
     pub bump: u8,
 }
 
 impl FeeConfig {
-    pub const LEN: usize = 8 + // discriminator
-        2 +    // basis_points
-        8 +    // max_fee
-        8 +    // drip_threshold
-        2 +    // treasury_fee_bps
-        2 +    // creator_fee_bps
-        (4 * 6) + // tier_multipliers (6 u32s)
-        1; // bump
+    pub const LEN: usize = 8 + 2 + 8 + 8 + 2 + 2 + (4 * 6) + 1;
 }
 
 /// Fee distribution split
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct FeeSplit {
-    /// Percentage to LP (0-100)
     pub lp_allocation: u8,
-
-    /// Percentage to treasury (0-100)
     pub treasury_allocation: u8,
-
-    /// Percentage to burn (0-100)
     pub burn_allocation: u8,
 }
 
@@ -110,42 +55,6 @@ impl FeeSplit {
             OracleError::InvalidFeeSplit
         );
         Ok(())
-    }
-}
-
-/// Epoch state for legacy merkle claims (deprecated).
-#[cfg(feature = "legacy")]
-#[account]
-pub struct EpochState {
-    pub epoch: u64,
-    pub root: [u8; 32],
-    pub claim_count: u32,
-    pub mint: Pubkey,
-    pub subject: Pubkey,
-    pub treasury: Pubkey,
-    pub timestamp: i64,
-    pub bump: u8,
-    pub total_claimed: u64,
-    pub closed: bool,
-    pub claimed_bitmap: Vec<u8>,
-}
-
-#[cfg(feature = "legacy")]
-impl EpochState {
-    pub fn space_for(claims: usize) -> usize {
-        8 + // discriminator
-        8 + // epoch
-        32 + // root
-        4 + // claim_count
-        32 + // mint
-        32 + // subject
-        32 + // treasury
-        8 + // timestamp
-        1 + // bump
-        8 + // total_claimed
-        1 + // closed
-        4 + // vec length
-        ((claims + 7) / 8) // bitmap
     }
 }
 
@@ -166,24 +75,10 @@ pub struct PassportRegistry {
 }
 
 impl PassportRegistry {
-    pub const LEN: usize = 8 + // discriminator
-        32 + // owner
-        32 + // user_hash
-        1 +  // tier
-        8 +  // score
-        4 +  // epoch_count
-        8 +  // weighted_presence
-        4 +  // badges
-        32 + // tree
-        1 + 32 + // Option<[u8;32]> tag + value
-        8 +  // updated_at
-        1; // bump
+    pub const LEN: usize = 8 + 32 + 32 + 1 + 8 + 4 + 8 + 4 + 32 + 1 + 32 + 8 + 1;
 }
 
 /// Per-channel ring buffer state (stores recent epoch merkle roots).
-/// Uses `zero_copy` to avoid full deserialization of large accounts.
-///
-/// Size: 8 (disc) + 80 (header) + 16×560 (slots) = 9,048 bytes < 10KB CPI limit
 #[account(zero_copy)]
 #[repr(C)]
 pub struct ChannelState {
@@ -191,15 +86,13 @@ pub struct ChannelState {
     pub bump: u8,
     pub mint: Pubkey,
     pub subject: Pubkey,
-    pub _padding: [u8; 6], // Explicit padding for u64 alignment
+    pub _padding: [u8; 6],
     pub latest_epoch: u64,
-    // 16 slots fits under Solana's 10KB CPI realloc limit.
-    // With 60-min epochs: ~16 hours retention.
     pub slots: [ChannelSlot; CHANNEL_RING_SLOTS],
 }
 
 impl ChannelState {
-    pub const LEN: usize = 8 /* disc */ + core::mem::size_of::<ChannelState>();
+    pub const LEN: usize = 8 + core::mem::size_of::<ChannelState>();
 
     pub fn slot_index(epoch: u64) -> usize {
         (epoch as usize) % CHANNEL_RING_SLOTS
@@ -222,7 +115,7 @@ pub struct ChannelSlot {
     pub epoch: u64,
     pub root: [u8; 32],
     pub claim_count: u16,
-    pub _padding: [u8; 6], // Explicit padding to maintain 8-byte alignment
+    pub _padding: [u8; 6],
     pub claimed_bitmap: [u8; CHANNEL_BITMAP_BYTES],
 }
 
@@ -271,8 +164,6 @@ impl RootEntry {
     pub const LEN: usize = 8 + 32 + 32 + 8;
 }
 
-/// Per-channel cumulative root config (V2)
-/// Seeds: ["channel_cfg_v2", mint, subject_id]
 #[account]
 pub struct ChannelConfigV2 {
     pub version: u8,
@@ -286,19 +177,9 @@ pub struct ChannelConfigV2 {
 }
 
 impl ChannelConfigV2 {
-    pub const LEN: usize = 8 + // discriminator
-        1 + // version
-        1 + // bump
-        32 + // mint
-        32 + // subject
-        32 + // authority
-        8 + // latest_root_seq
-        8 + // cutover_epoch
-        (RootEntry::LEN * CUMULATIVE_ROOT_HISTORY);
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + (RootEntry::LEN * CUMULATIVE_ROOT_HISTORY);
 }
 
-/// Per-wallet cumulative claim state (V2)
-/// Seeds: ["claim_state_v2", channel_config, wallet]
 #[account]
 pub struct ClaimStateV2 {
     pub version: u8,
@@ -310,133 +191,64 @@ pub struct ClaimStateV2 {
 }
 
 impl ClaimStateV2 {
-    pub const LEN: usize = 8 + // discriminator
-        1 + // version
-        1 + // bump
-        32 + // channel
-        32 + // wallet
-        8 + // claimed_total
-        8; // last_claim_seq
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 8 + 8;
 }
 
 // =============================================================================
 // STAKING SYSTEM (V1)
 // =============================================================================
 
-/// Global stake pool state (mint-keyed)
-/// Seeds: ["stake_pool", mint]
 #[account]
 pub struct StakePool {
-    /// Version for future migrations
     pub version: u8,
-    /// PDA bump seed
     pub bump: u8,
-    /// CCM mint this pool is for
     pub mint: Pubkey,
-    /// Total CCM staked in pool
     pub total_staked: u64,
-    /// MasterChef-style accumulated reward per share (scaled by REWARD_PRECISION)
     pub acc_reward_per_share: u128,
-    /// Last time rewards were updated
     pub last_reward_time: i64,
-    /// Reward rate (CCM per second)
     pub reward_rate: u64,
-    /// Authority that can modify pool params
     pub authority: Pubkey,
-    /// Reserved for future use
     pub _reserved: [u8; 64],
 }
 
 impl StakePool {
-    pub const LEN: usize = 8 +  // discriminator
-        1 +     // version
-        1 +     // bump
-        32 +    // mint
-        8 +     // total_staked
-        16 +    // acc_reward_per_share
-        8 +     // last_reward_time
-        8 +     // reward_rate
-        32 +    // authority
-        64;     // _reserved
-    // Total: 178 bytes
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 8 + 16 + 8 + 8 + 32 + 64;
 }
 
-/// Per-user stake state (user + mint keyed)
-/// Seeds: ["user_stake", user, mint]
 #[account]
 pub struct UserStake {
-    /// Version for future migrations
     pub version: u8,
-    /// PDA bump seed
     pub bump: u8,
-    /// User pubkey
     pub user: Pubkey,
-    /// CCM mint this stake is for
     pub mint: Pubkey,
-    /// Amount of CCM staked
     pub staked_amount: u64,
-    /// Optional channel subject_id for delegation (keccak hash)
     pub delegated_subject: Option<[u8; 32]>,
-    /// Slot when lock expires (0 = unlocked)
     pub lock_end_slot: u64,
-    /// MasterChef reward debt (scaled by REWARD_PRECISION)
     pub reward_debt: u128,
-    /// Pending rewards to claim
     pub pending_rewards: u64,
-    /// Last action timestamp
     pub last_action_time: i64,
-    /// Reserved for future use
     pub _reserved: [u8; 32],
 }
 
 impl UserStake {
-    pub const LEN: usize = 8 +  // discriminator
-        1 +     // version
-        1 +     // bump
-        32 +    // user
-        32 +    // mint
-        8 +     // staked_amount
-        1 + 32 + // delegated_subject Option<[u8;32]>
-        8 +     // lock_end_slot
-        16 +    // reward_debt
-        8 +     // pending_rewards
-        8 +     // last_action_time
-        32;     // _reserved
-    // Total: 187 bytes
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 8 + 1 + 32 + 8 + 16 + 8 + 8 + 32;
 }
 
 // =============================================================================
 // CREATOR EXTENSIONS (V1)
 // =============================================================================
 
-/// Channel metadata for creator revenue sharing
-/// Seeds: ["channel_meta", channel_state]
 #[account]
 pub struct ChannelMeta {
-    /// Version for future migrations
     pub version: u8,
-    /// PDA bump seed
     pub bump: u8,
-    /// Associated channel state PDA
     pub channel_state: Pubkey,
-    /// Creator wallet that receives fee share
     pub creator_wallet: Pubkey,
-    /// Fee share in basis points (e.g., 1000 = 10%)
     pub fee_share_bps: u16,
-    /// Sum of delegated stakes to this channel
     pub total_delegated: u64,
-    /// Reserved for future use
     pub _reserved: [u8; 64],
 }
 
 impl ChannelMeta {
-    pub const LEN: usize = 8 +  // discriminator
-        1 +     // version
-        1 +     // bump
-        32 +    // channel_state
-        32 +    // creator_wallet
-        2 +     // fee_share_bps
-        8 +     // total_delegated
-        64;     // _reserved
-    // Total: 148 bytes
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 2 + 8 + 64;
 }

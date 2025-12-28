@@ -5,13 +5,13 @@ use anchor_spl::{
 };
 
 use crate::constants::{
-    CHANNEL_CONFIG_V2_SEED, CLAIM_STATE_V2_SEED, CUMULATIVE_ROOT_HISTORY, PROTOCOL_SEED,
+    CHANNEL_CONFIG_V2_SEED, CLAIM_STATE_V2_SEED, CUMULATIVE_ROOT_HISTORY,
+    PROTOCOL_SEED,
 };
 use crate::errors::OracleError;
 use crate::merkle_proof::{compute_cumulative_leaf, verify_proof};
 use crate::state::{ChannelConfigV2, ClaimStateV2, ProtocolState, RootEntry};
 
-// Re-use derive_subject_id from channel module
 use super::channel::derive_subject_id;
 
 const CHANNEL_CONFIG_V2_VERSION: u8 = 1;

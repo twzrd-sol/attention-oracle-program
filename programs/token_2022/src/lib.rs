@@ -1,7 +1,5 @@
 #![allow(ambiguous_glob_reexports)]
-// Security: Enforce strict lints for production-grade DeFi code
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
-// Allow necessary Anchor boilerplate patterns
 #![allow(clippy::too_many_arguments, clippy::missing_errors_doc)]
 #![allow(clippy::doc_markdown, clippy::must_use_candidate, clippy::needless_pass_by_value)]
 #![allow(clippy::manual_div_ceil)]
@@ -16,21 +14,6 @@
 //! # Attention Oracle Protocol
 //!
 //! A verifiable, high-throughput distribution primitive for the Solana blockchain.
-//!
-//! ## Architecture
-//!
-//! 1. **Ring-Buffer State**: Utilizes a fixed-size circular buffer to store historical
-//!    Merkle roots. This ensures O(1) storage costs regardless of protocol longevity.
-//! 2. **Treasury-Backed Distribution**: Tokens are transferred from a pre-funded treasury
-//!    rather than minted, ensuring strict supply caps and enabling circular economic flows.
-//! 3. **Token-2022 Integration**: Native support for Transfer Hooks and Extended Metadata,
-//!    enabling programmable yield and dynamic fee enforcement at the token standard level.
-//!
-//! ## Security Model
-//!
-//! - **Cryptographic Verification**: All claims are validated against on-chain Merkle roots.
-//! - **Bitmap Replay Protection**: Bit-level tracking prevents double-spending of claims.
-//! - **Role-Based Access**: Strict separation between Admin (Governance) and Publisher (Oracle).
 
 use anchor_lang::prelude::*;
 
@@ -53,7 +36,6 @@ pub use merkle_proof::*;
 pub use state::*;
 pub use token_transfer::*;
 
-// Program ID
 declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
 #[cfg(not(feature = "no-entrypoint"))]
@@ -74,8 +56,6 @@ pub mod token_2022 {
     // Protocol Initialization
     // -------------------------------------------------------------------------
 
-    /// Initialize the protocol state and bind it to a Token-2022 mint.
-    /// This establishes the Treasury and Fee Configuration PDAs.
     pub fn initialize_mint(
         ctx: Context<InitializeMint>,
         fee_basis_points: u16,
@@ -88,7 +68,6 @@ pub mod token_2022 {
     // Oracle & Distribution (Ring Buffer)
     // -------------------------------------------------------------------------
 
-    /// Initialize a new channel state account for a subject.
     pub fn initialize_channel(
         ctx: Context<InitializeChannel>,
         subject_id: Pubkey,
@@ -96,8 +75,6 @@ pub mod token_2022 {
         instructions::channel::initialize_channel(ctx, subject_id)
     }
 
-    /// Publish a new Merkle root for a specific channel epoch.
-    /// Updates the ring buffer, overwriting the oldest slot if full.
     pub fn set_channel_merkle_root(
         ctx: Context<SetChannelMerkleRoot>,
         channel: String,
@@ -107,8 +84,6 @@ pub mod token_2022 {
         instructions::channel::set_channel_merkle_root(ctx, channel, epoch, root)
     }
 
-    /// Execute a claim against a valid Merkle root in the ring buffer.
-    /// Verifies the proof and transfers tokens from the Treasury.
     pub fn claim_channel_open<'info>(
         ctx: Context<'_, '_, '_, 'info, ClaimChannel<'info>>,
         channel: String,
@@ -121,9 +96,6 @@ pub mod token_2022 {
         instructions::channel::claim_channel_open(ctx, channel, epoch, index, amount, id, proof)
     }
 
-    /// Execute a sponsored claim (for auto-claim / relay flows).
-    /// The claimer does NOT sign - authorization is via merkle proof verification.
-    /// The payer covers transaction fees and ATA creation costs.
     pub fn claim_channel_sponsored<'info>(
         ctx: Context<'_, '_, '_, 'info, ClaimChannelSponsored<'info>>,
         channel: String,
@@ -140,7 +112,6 @@ pub mod token_2022 {
     // Cumulative Roots (V2)
     // -------------------------------------------------------------------------
 
-    /// Initialize cumulative (v2) channel config.
     pub fn initialize_channel_cumulative(
         ctx: Context<InitializeChannelCumulative>,
         channel: String,
@@ -149,7 +120,6 @@ pub mod token_2022 {
         instructions::cumulative::initialize_channel_cumulative(ctx, channel, cutover_epoch)
     }
 
-    /// Publish a cumulative root (v2).
     pub fn publish_cumulative_root(
         ctx: Context<PublishCumulativeRoot>,
         channel: String,
@@ -160,7 +130,6 @@ pub mod token_2022 {
         instructions::cumulative::publish_cumulative_root(ctx, channel, root_seq, root, dataset_hash)
     }
 
-    /// Claim from cumulative root (v2).
     pub fn claim_cumulative<'info>(
         ctx: Context<'_, '_, '_, 'info, ClaimCumulative<'info>>,
         channel: String,
@@ -171,7 +140,6 @@ pub mod token_2022 {
         instructions::cumulative::claim_cumulative(ctx, channel, root_seq, cumulative_total, proof)
     }
 
-    /// Sponsored claim from cumulative root (v2).
     pub fn claim_cumulative_sponsored<'info>(
         ctx: Context<'_, '_, '_, 'info, ClaimCumulativeSponsored<'info>>,
         channel: String,
@@ -182,9 +150,6 @@ pub mod token_2022 {
         instructions::cumulative::claim_cumulative_sponsored(ctx, channel, root_seq, cumulative_total, proof)
     }
 
-    /// Push-distribute CCM to multiple recipients in a single transaction.
-    /// Publisher-only operation for batch airdrops/rewards.
-    /// Recipient ATAs must pre-exist (passed as remaining_accounts).
     pub fn push_distribute<'info>(
         ctx: Context<'_, '_, 'info, 'info, PushDistribute<'info>>,
         recipients: Vec<Pubkey>,
@@ -196,36 +161,26 @@ pub mod token_2022 {
         instructions::push_distribute::push_distribute(ctx, recipients, amounts, epoch, channel, batch_idx)
     }
 
-    /// Close a channel state account and reclaim rent to the admin.
-    /// Critical for cleaning up disabled streams (e.g. Twitch migration).
     pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> {
         instructions::channel::close_channel(ctx, channel)
     }
 
-    /// Close a legacy channel state account (with size mismatch) and reclaim rent.
-    /// For accounts created before CHANNEL_RING_SLOTS was increased.
     pub fn close_legacy_channel(ctx: Context<CloseLegacyChannel>, channel: String) -> Result<()> {
         instructions::channel::close_legacy_channel(ctx, channel)
     }
 
-    /// Migrate a channel state account from old size (728 bytes) to new size (5688 bytes).
-    /// Required after CHANNEL_MAX_CLAIMS upgrade from 1024 to 4096.
-    /// Publisher or admin can call. Preserves existing slot data.
     pub fn migrate_channel_state(ctx: Context<MigrateChannelState>, channel: String) -> Result<()> {
         instructions::migrate_channel::migrate_channel_state(ctx, channel)
     }
 
-    /// Resize a channel state account to match the current `CHANNEL_RING_SLOTS`.
-    /// Required after increasing the ring buffer window (e.g., 10 → 2016 epochs).
     pub fn resize_channel_state(ctx: Context<ResizeChannelState>) -> Result<()> {
         instructions::resize_channel::resize_channel_state(ctx)
     }
 
     // -------------------------------------------------------------------------
-    // Governance (DeFi Rails)
+    // Governance
     // -------------------------------------------------------------------------
 
-    /// Update the base transfer fee configuration.
     pub fn update_fee_config(
         ctx: Context<UpdateFeeConfig>,
         new_basis_points: u16,
@@ -234,7 +189,6 @@ pub mod token_2022 {
         instructions::governance::update_fee_config(ctx, new_basis_points, fee_split)
     }
 
-    /// Update fee configuration for a specific mint instance (Open Pattern).
     pub fn update_fee_config_open(
         ctx: Context<UpdateFeeConfigOpen>,
         new_basis_points: u16,
@@ -243,7 +197,6 @@ pub mod token_2022 {
         instructions::governance::update_fee_config_open(ctx, new_basis_points, fee_split)
     }
 
-    /// Update the dynamic tier multipliers used for fee discounting/rewards.
     pub fn update_tier_multipliers(
         ctx: Context<UpdateTierMultipliers>,
         new_multipliers: [u32; 6],
@@ -251,9 +204,6 @@ pub mod token_2022 {
         instructions::governance::update_tier_multipliers(ctx, new_multipliers)
     }
 
-    /// Harvest withheld fees from source ATAs to treasury.
-    /// Pass source ATAs (user/LP accounts with withheld fees) via remaining_accounts.
-    /// This closes the economic loop by refilling the Treasury.
     pub fn harvest_fees<'info>(
         ctx: Context<'_, '_, 'info, 'info, HarvestFees<'info>>,
     ) -> Result<()> {
@@ -300,7 +250,7 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
-    // Identity Layer (Passport)
+    // Identity
     // -------------------------------------------------------------------------
 
     pub fn mint_passport_open(
@@ -351,10 +301,9 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
-    // Staking System (V1)
+    // Staking
     // -------------------------------------------------------------------------
 
-    /// Initialize the stake pool for a mint (admin only)
     pub fn initialize_stake_pool(
         ctx: Context<InitializeStakePool>,
         reward_rate: u64,
@@ -362,7 +311,6 @@ pub mod token_2022 {
         instructions::staking::initialize_stake_pool(ctx, reward_rate)
     }
 
-    /// Stake CCM tokens with optional lock period
     pub fn stake<'info>(
         ctx: Context<'_, '_, '_, 'info, Stake<'info>>,
         amount: u64,
@@ -371,7 +319,6 @@ pub mod token_2022 {
         instructions::staking::stake(ctx, amount, lock_slots)
     }
 
-    /// Unstake CCM tokens (after lock expires)
     pub fn unstake<'info>(
         ctx: Context<'_, '_, '_, 'info, Unstake<'info>>,
         amount: u64,
@@ -379,12 +326,10 @@ pub mod token_2022 {
         instructions::staking::unstake(ctx, amount)
     }
 
-    /// Delegate stake to a channel (backs creator for network effects)
     pub fn delegate_stake(ctx: Context<DelegateStake>, subject_id: Option<[u8; 32]>) -> Result<()> {
         instructions::staking::delegate_stake(ctx, subject_id)
     }
 
-    /// Claim accumulated staking rewards
     pub fn claim_stake_rewards<'info>(
         ctx: Context<'_, '_, '_, 'info, ClaimStakeRewards<'info>>,
     ) -> Result<()> {
@@ -392,10 +337,9 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
-    // Creator Extensions (V1)
+    // Creator Extensions
     // -------------------------------------------------------------------------
 
-    /// Initialize channel metadata for creator revenue sharing
     pub fn initialize_channel_meta(
         ctx: Context<InitializeChannelMeta>,
         channel: String,
@@ -405,12 +349,10 @@ pub mod token_2022 {
         instructions::creator::initialize_channel_meta(ctx, channel, creator_wallet, fee_share_bps)
     }
 
-    /// Update the creator wallet for fee distribution
     pub fn set_creator_wallet(ctx: Context<SetCreatorWallet>, new_wallet: Pubkey) -> Result<()> {
         instructions::creator::set_creator_wallet(ctx, new_wallet)
     }
 
-    /// Update the creator fee share percentage
     pub fn set_creator_fee_share(
         ctx: Context<SetCreatorFeeShare>,
         new_fee_share_bps: u16,
@@ -418,7 +360,6 @@ pub mod token_2022 {
         instructions::creator::set_creator_fee_share(ctx, new_fee_share_bps)
     }
 
-    /// Update total delegated stake for a channel (publisher operation)
     pub fn update_total_delegated(
         ctx: Context<UpdateTotalDelegated>,
         total_delegated: u64,
@@ -427,129 +368,11 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
-    // Migration (CCM-v1 → CCM-v2)
+    // Migration
     // -------------------------------------------------------------------------
 
-    /// Migrate CCM tokens from v1 (no TransferFeeConfig) to v2 (with TransferFeeConfig).
-    /// Burns v1 tokens and mints v2 tokens at 1:1 ratio.
     #[cfg(feature = "migration")]
     pub fn migrate(ctx: Context<Migrate>, amount: u64) -> Result<()> {
         instructions::migrate::migrate(ctx, amount)
     }
-
-    // -------------------------------------------------------------------------
-    // Legacy / Deprecated Paths
-    // -------------------------------------------------------------------------
-    // Note: These are feature-gated and should be disabled in production builds
-    // unless required for backward compatibility with V1 state.
-
-    #[cfg(feature = "legacy")]
-    pub fn initialize_mint_open(
-        ctx: Context<InitializeMintOpen>,
-        fee_basis_points: u16,
-        max_fee: u64,
-    ) -> Result<()> {
-        instructions::initialize_mint::handler_open(ctx, fee_basis_points, max_fee)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn set_merkle_root(
-        ctx: Context<SetMerkleRoot>,
-        root: [u8; 32],
-        epoch: u64,
-        claim_count: u32,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::merkle::set_merkle_root(ctx, root, epoch, claim_count, subject_id)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn claim<'info>(
-        ctx: Context<'_, '_, '_, 'info, Claim<'info>>,
-        subject_index: u8,
-        index: u32,
-        amount: u64,
-        id: String,
-        proof: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        instructions::claim::claim(ctx, subject_index, index, amount, id, proof)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn claim_open<'info>(
-        ctx: Context<'_, '_, '_, 'info, ClaimOpen<'info>>,
-        subject_index: u8,
-        index: u32,
-        amount: u64,
-        id: String,
-        proof: Vec<[u8; 32]>,
-        channel: Option<String>,
-        twzrd_epoch: Option<u64>,
-    ) -> Result<()> {
-        instructions::claim::claim_open(
-            ctx,
-            subject_index,
-            index,
-            amount,
-            id,
-            proof,
-            channel,
-            twzrd_epoch,
-        )
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn set_merkle_root_open(
-        ctx: Context<SetMerkleRootOpen>,
-        root: [u8; 32],
-        epoch: u64,
-        claim_count: u32,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::merkle::set_merkle_root_open(ctx, root, epoch, claim_count, subject_id)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn close_epoch_state(
-        ctx: Context<CloseEpochState>,
-        epoch: u64,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup_epoch::close_epoch_state(ctx, epoch, subject_id)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn force_close_epoch_state_legacy(
-        ctx: Context<ForceCloseEpochStateLegacy>,
-        epoch: u64,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup_epoch::force_close_epoch_state_legacy(ctx, epoch, subject_id)
-    }
-
-    #[cfg(feature = "legacy")]
-    pub fn force_close_epoch_state_open(
-        ctx: Context<ForceCloseEpochStateOpen>,
-        epoch: u64,
-        subject_id: Pubkey,
-        mint: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup_epoch::force_close_epoch_state_open(ctx, epoch, subject_id, mint)
-    }
-
-    /// Close a channel state account (admin only, via ProtocolState)
-    pub fn close_channel_state(ctx: Context<CloseChannelState>, subject_id: Pubkey) -> Result<()> {
-        instructions::cleanup::close_channel_state(ctx, subject_id)
-    }
-
-    /// Force close legacy channel state (hardcoded admin, for pre-ops cleanup)
-    #[cfg(feature = "legacy")]
-    pub fn force_close_channel_state_legacy(
-        ctx: Context<ForceCloseChannelStateLegacy>,
-        subject_id: Pubkey,
-        mint: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup::force_close_channel_state_legacy(ctx, subject_id, mint)
-    }
-
 }

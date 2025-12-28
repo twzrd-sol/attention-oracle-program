@@ -13,12 +13,6 @@ pub mod passport;
 pub mod push_distribute;
 pub mod resize_channel;
 pub mod staking;
-#[cfg(feature = "legacy")]
-pub mod cleanup_epoch;
-#[cfg(feature = "legacy")]
-pub mod claim;
-#[cfg(feature = "legacy")]
-pub mod merkle;
 #[cfg(feature = "migration")]
 pub mod migrate;
 
@@ -36,11 +30,5 @@ pub use passport::*;
 pub use push_distribute::*;
 pub use resize_channel::*;
 pub use staking::*;
-#[cfg(feature = "legacy")]
-pub use cleanup_epoch::*;
-#[cfg(feature = "legacy")]
-pub use claim::*;
-#[cfg(feature = "legacy")]
-pub use merkle::*;
 #[cfg(feature = "migration")]
 pub use migrate::*;

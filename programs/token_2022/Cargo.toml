@@ -1,10 +1,9 @@
-## Production-ready crate config (Agave 3.0.10 SBF=rustc 1.84.1; workspace Rust 1.91.1)
 [package]
 name = "attention-oracle-token-2022"
 version = "0.2.0"
 description = "Verifiable Distribution Protocol (Token-2022)"
 edition = "2021"
-rust-version = "1.84"  # Temporarily relaxed; restore to 1.89 when SBF toolchain supports it
+rust-version = "1.84"
 license = "MIT"
 
 [lib]
@@ -18,15 +17,10 @@ no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
-# Embed security.txt metadata (https://github.com/neodyme-labs/solana-security-txt)
 security-txt = []
-# Optional, off by default to keep binary lean
 receipts = []
-# Legacy epoch-state / merkle instructions (off by default)
-legacy = []
-# Demo-only ring buffer helpers (old path; off by default)
+# Legacy feature removed
 demo = []
-# One-off mint migration flows (off by default)
 migration = []
 
 [dependencies]
