@@ -68,45 +68,8 @@ pub mod token_2022 {
     // Oracle & Distribution (Ring Buffer)
     // -------------------------------------------------------------------------
 
-    pub fn initialize_channel(
-        ctx: Context<InitializeChannel>,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::channel::initialize_channel(ctx, subject_id)
-    }
-
-    pub fn set_channel_merkle_root(
-        ctx: Context<SetChannelMerkleRoot>,
-        channel: String,
-        epoch: u64,
-        root: [u8; 32],
-    ) -> Result<()> {
-        instructions::channel::set_channel_merkle_root(ctx, channel, epoch, root)
-    }
-
-    pub fn claim_channel_open<'info>(
-        ctx: Context<'_, '_, '_, 'info, ClaimChannel<'info>>,
-        channel: String,
-        epoch: u64,
-        index: u32,
-        amount: u64,
-        id: String,
-        proof: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        instructions::channel::claim_channel_open(ctx, channel, epoch, index, amount, id, proof)
-    }
-
-    pub fn claim_channel_sponsored<'info>(
-        ctx: Context<'_, '_, '_, 'info, ClaimChannelSponsored<'info>>,
-        channel: String,
-        epoch: u64,
-        index: u32,
-        amount: u64,
-        id: String,
-        proof: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        instructions::claim_sponsored::claim_channel_sponsored(ctx, channel, epoch, index, amount, id, proof)
-    }
+    // V1 Instructions removed.
+    // kept for rent reclaim:
 
     // -------------------------------------------------------------------------
     // Cumulative Roots (V2)
@@ -169,12 +132,20 @@ pub mod token_2022 {
         instructions::channel::close_legacy_channel(ctx, channel)
     }
 
-    pub fn migrate_channel_state(ctx: Context<MigrateChannelState>, channel: String) -> Result<()> {
-        instructions::migrate_channel::migrate_channel_state(ctx, channel)
+    pub fn force_close_epoch_state_legacy(
+        ctx: Context<ForceCloseEpochStateLegacy>,
+        epoch: u64,
+        subject_id: Pubkey,
+    ) -> Result<()> {
+        instructions::cleanup::force_close_epoch_state_legacy(ctx, epoch, subject_id)
     }
 
-    pub fn resize_channel_state(ctx: Context<ResizeChannelState>) -> Result<()> {
-        instructions::resize_channel::resize_channel_state(ctx)
+    pub fn force_close_channel_state_legacy(
+        ctx: Context<ForceCloseChannelStateLegacy>,
+        mint: Pubkey,
+        subject_id: Pubkey,
+    ) -> Result<()> {
+        instructions::cleanup::force_close_channel_state_legacy(ctx, mint, subject_id)
     }
 
     // -------------------------------------------------------------------------

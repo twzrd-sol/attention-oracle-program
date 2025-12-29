@@ -1,109 +1,110 @@
-use crate::{
-    constants::{CHANNEL_STATE_SEED, PROTOCOL_SEED},
-    errors::OracleError,
-    state::{ChannelState, ProtocolState},
-};
-use anchor_lang::accounts::account_loader::AccountLoader;
 use anchor_lang::prelude::*;
-
-#[cfg(feature = "legacy")]
 use crate::constants::ADMIN_AUTHORITY;
+use crate::errors::OracleError;
+use anchor_lang::Discriminator;
+use crate::state::ChannelState;
 
-/// Close a channel state account (with ProtocolState admin auth)
+// EpochState discriminator: sha256("account:EpochState")[0..8]
+// [191, 63, 139, 237, 144, 12, 223, 210]
+const EPOCH_STATE_DISCRIMINATOR: [u8; 8] = [0xbf, 0x3f, 0x8b, 0xed, 0x90, 0x0c, 0xdf, 0xd2];
+
 #[derive(Accounts)]
-#[instruction(subject_id: Pubkey)]
-pub struct CloseChannelState<'info> {
+pub struct ForceCloseEpochStateLegacy<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
 
-    /// Protocol state to verify admin authority
-    #[account(
-        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
-        bump = protocol_state.bump,
-        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
-    )]
-    pub protocol_state: Account<'info, ProtocolState>,
-
-    /// Channel state to close - using AccountLoader for zero_copy
-    /// CHECK: Seeds validated, lamports transferred manually
-    #[account(
-        mut,
-        seeds = [CHANNEL_STATE_SEED, protocol_state.mint.as_ref(), subject_id.as_ref()],
-        bump,
-    )]
-    pub channel_state: AccountLoader<'info, ChannelState>,
-
-    pub system_program: Program<'info, System>,
+    /// CHECK: Manual discriminator/owner check for legacy cleanup
+    #[account(mut)]
+    pub epoch_state: UncheckedAccount<'info>,
 }
 
-pub fn close_channel_state(ctx: Context<CloseChannelState>, subject_id: Pubkey) -> Result<()> {
-    let channel_info = ctx.accounts.channel_state.to_account_info();
-    let admin_info = ctx.accounts.admin.to_account_info();
+pub fn force_close_epoch_state_legacy(
+    ctx: Context<ForceCloseEpochStateLegacy>,
+    _epoch: u64,
+    _subject_id: Pubkey,
+) -> Result<()> {
+    // 1. Verify Admin (Legacy Hardcoded OR Protocol Admin)
+    let is_legacy_admin = ctx.accounts.admin.key() == ADMIN_AUTHORITY;
+    require!(is_legacy_admin, OracleError::Unauthorized);
 
-    // Transfer all lamports to admin
-    let lamports = channel_info.lamports();
-    **channel_info.try_borrow_mut_lamports()? = 0;
+    let account_info = &ctx.accounts.epoch_state;
+
+    // 2. Verify Ownership
+    require!(
+        account_info.owner == ctx.program_id,
+        OracleError::InvalidChannelState
+    );
+
+    // 3. Verify Discriminator (EpochState)
+    let data = account_info.try_borrow_data()?;
+    if data.len() >= 8 {
+        require!(
+            data[0..8] == EPOCH_STATE_DISCRIMINATOR,
+            OracleError::InvalidChannelState
+        );
+    }
+    drop(data);
+
+    // 4. Close Account
+    let admin_info = ctx.accounts.admin.to_account_info();
+    let lamports = account_info.lamports();
+    
+    **account_info.try_borrow_mut_lamports()? = 0;
     **admin_info.try_borrow_mut_lamports()? = admin_info
         .lamports()
         .checked_add(lamports)
         .ok_or(OracleError::MathOverflow)?;
 
-    // Zero out account data to mark as closed
-    channel_info.assign(&System::id());
-    channel_info.resize(0)?;
+    account_info.assign(&System::id());
+    account_info.resize(0)?;
 
-    msg!("Closed channel_state for subject {}", subject_id);
+    msg!("Force closed legacy EpochState. Reclaimed {} lamports.", lamports);
+
     Ok(())
 }
 
-/// Force close legacy channel state (pre-ProtocolState, hardcoded admin)
-#[cfg(feature = "legacy")]
 #[derive(Accounts)]
-#[instruction(subject_id: Pubkey, mint: Pubkey)]
 pub struct ForceCloseChannelStateLegacy<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
 
-    /// Channel state to close (legacy: mint in seeds but no ProtocolState check)
-    /// CHECK: Seeds validated, lamports transferred manually
-    #[account(
-        mut,
-        seeds = [CHANNEL_STATE_SEED, mint.as_ref(), subject_id.as_ref()],
-        bump,
-    )]
-    pub channel_state: AccountLoader<'info, ChannelState>,
-
-    pub system_program: Program<'info, System>,
+    /// CHECK: Manual discriminator/owner check
+    #[account(mut)]
+    pub channel_state: UncheckedAccount<'info>,
 }
 
-#[cfg(feature = "legacy")]
 pub fn force_close_channel_state_legacy(
     ctx: Context<ForceCloseChannelStateLegacy>,
-    subject_id: Pubkey,
     _mint: Pubkey,
+    _subject_id: Pubkey,
 ) -> Result<()> {
-    // Only hardcoded admin can force close
-    require_keys_eq!(
-        ctx.accounts.admin.key(),
-        ADMIN_AUTHORITY,
-        OracleError::Unauthorized
+    // 1. Verify Admin
+    msg!("Invoking force_close_channel_state_legacy");
+    let is_legacy_admin = ctx.accounts.admin.key() == ADMIN_AUTHORITY;
+    require!(is_legacy_admin, OracleError::Unauthorized);
+
+    let account_info = &ctx.accounts.channel_state;
+
+    // 3. Verify Ownership (Program must own the account)
+    require!(
+        account_info.owner == ctx.program_id,
+        OracleError::InvalidChannelState
     );
 
-    let channel_info = ctx.accounts.channel_state.to_account_info();
+    // 4. Close Account
     let admin_info = ctx.accounts.admin.to_account_info();
-
-    // Transfer all lamports to admin
-    let lamports = channel_info.lamports();
-    **channel_info.try_borrow_mut_lamports()? = 0;
+    let lamports = account_info.lamports();
+    
+    **account_info.try_borrow_mut_lamports()? = 0;
     **admin_info.try_borrow_mut_lamports()? = admin_info
         .lamports()
         .checked_add(lamports)
         .ok_or(OracleError::MathOverflow)?;
 
-    // Zero out account data
-    channel_info.assign(&System::id());
-    channel_info.resize(0)?;
+    account_info.assign(&System::id());
+    account_info.resize(0)?;
 
-    msg!("Force closed legacy channel_state for subject {}", subject_id);
+    msg!("Force closed legacy ChannelState. Reclaimed {} lamports.", lamports);
+
     Ok(())
 }

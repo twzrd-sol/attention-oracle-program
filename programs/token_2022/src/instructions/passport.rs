@@ -71,18 +71,18 @@ pub struct ReissuePassportOpen<'info> {
 #[instruction(user_hash: [u8; 32])]
 pub struct RevokePassportOpen<'info> {
     #[account(mut)]
-    pub admin: Signer<'info>,
+    pub authority: Signer<'info>,
     #[account(
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = protocol_state.admin == admin.key() @ PassportError::Unauthorized
     )]
     pub protocol_state: Account<'info, ProtocolState>,
     #[account(
         mut,
         seeds = [PASSPORT_SEED, user_hash.as_ref()],
         bump = registry.bump,
-        constraint = registry.user_hash == user_hash @ PassportError::InvalidUserHash
+        constraint = registry.user_hash == user_hash @ PassportError::InvalidUserHash,
+        constraint = (authority.key() == registry.owner || authority.key() == protocol_state.admin) @ PassportError::Unauthorized
     )]
     pub registry: Account<'info, PassportRegistry>,
 }
