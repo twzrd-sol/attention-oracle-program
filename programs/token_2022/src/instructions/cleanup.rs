@@ -1,8 +1,6 @@
 use anchor_lang::prelude::*;
 use crate::constants::ADMIN_AUTHORITY;
 use crate::errors::OracleError;
-use anchor_lang::Discriminator;
-use crate::state::ChannelState;
 
 // EpochState discriminator: sha256("account:EpochState")[0..8]
 // [191, 63, 139, 237, 144, 12, 223, 210]
