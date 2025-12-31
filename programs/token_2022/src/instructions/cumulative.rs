@@ -283,14 +283,14 @@ pub fn claim_cumulative<'info>(
         .checked_sub(claim_state.claimed_total)
         .ok_or(OracleError::MathOverflow)?;
 
-    // Calculate creator/user split
+    // Calculate creator/user split (use u128 to prevent overflow on large claims)
     let creator_fee_bps = cfg.creator_fee_bps;
     let (user_amount, creator_amount) = if creator_fee_bps > 0 {
-        let creator_cut = delta
-            .checked_mul(creator_fee_bps as u64)
+        let creator_cut = (delta as u128)
+            .checked_mul(creator_fee_bps as u128)
             .ok_or(OracleError::MathOverflow)?
             .checked_div(10000)
-            .ok_or(OracleError::MathOverflow)?;
+            .ok_or(OracleError::MathOverflow)? as u64; // Safe cast: result < delta
         let user_cut = delta.checked_sub(creator_cut).ok_or(OracleError::MathOverflow)?;
         (user_cut, creator_cut)
     } else {
@@ -489,14 +489,14 @@ pub fn claim_cumulative_sponsored<'info>(
         .checked_sub(claim_state.claimed_total)
         .ok_or(OracleError::MathOverflow)?;
 
-    // Calculate creator/user split
+    // Calculate creator/user split (use u128 to prevent overflow on large claims)
     let creator_fee_bps = cfg.creator_fee_bps;
     let (user_amount, creator_amount) = if creator_fee_bps > 0 {
-        let creator_cut = delta
-            .checked_mul(creator_fee_bps as u64)
+        let creator_cut = (delta as u128)
+            .checked_mul(creator_fee_bps as u128)
             .ok_or(OracleError::MathOverflow)?
             .checked_div(10000)
-            .ok_or(OracleError::MathOverflow)?;
+            .ok_or(OracleError::MathOverflow)? as u64; // Safe cast: result < delta
         let user_cut = delta.checked_sub(creator_cut).ok_or(OracleError::MathOverflow)?;
         (user_cut, creator_cut)
     } else {
@@ -726,14 +726,14 @@ pub fn claim_and_stake_sponsored<'info>(
         .checked_sub(claim_state.claimed_total)
         .ok_or(OracleError::MathOverflow)?;
 
-    // Calculate creator/stake split
+    // Calculate creator/stake split (use u128 to prevent overflow on large claims)
     let creator_fee_bps = cfg.creator_fee_bps;
     let (stake_amount, creator_amount) = if creator_fee_bps > 0 {
-        let creator_cut = delta
-            .checked_mul(creator_fee_bps as u64)
+        let creator_cut = (delta as u128)
+            .checked_mul(creator_fee_bps as u128)
             .ok_or(OracleError::MathOverflow)?
             .checked_div(10000)
-            .ok_or(OracleError::MathOverflow)?;
+            .ok_or(OracleError::MathOverflow)? as u64; // Safe cast: result < delta
         let stake_cut = delta.checked_sub(creator_cut).ok_or(OracleError::MathOverflow)?;
         (stake_cut, creator_cut)
     } else {
