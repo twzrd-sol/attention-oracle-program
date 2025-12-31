@@ -79,8 +79,16 @@ pub mod token_2022 {
         ctx: Context<InitializeChannelCumulative>,
         channel: String,
         cutover_epoch: u64,
+        creator_wallet: Pubkey,
+        creator_fee_bps: u16,
     ) -> Result<()> {
-        instructions::cumulative::initialize_channel_cumulative(ctx, channel, cutover_epoch)
+        instructions::cumulative::initialize_channel_cumulative(
+            ctx,
+            channel,
+            cutover_epoch,
+            creator_wallet,
+            creator_fee_bps,
+        )
     }
 
     pub fn publish_cumulative_root(
@@ -111,6 +119,29 @@ pub mod token_2022 {
         proof: Vec<[u8; 32]>,
     ) -> Result<()> {
         instructions::cumulative::claim_cumulative_sponsored(ctx, channel, root_seq, cumulative_total, proof)
+    }
+
+    /// Invisible staking: Claims rewards directly into the stake vault.
+    /// No liquid tokens hit the user's wallet - protects pool TVL.
+    pub fn claim_and_stake_sponsored<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimAndStakeSponsored<'info>>,
+        channel: String,
+        root_seq: u64,
+        cumulative_total: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::cumulative::claim_and_stake_sponsored(ctx, channel, root_seq, cumulative_total, proof)
+    }
+
+    /// Migrate existing ChannelConfigV2 accounts to add creator_wallet fields.
+    /// One-time migration for accounts created before schema change.
+    pub fn migrate_channel_config_v2(
+        ctx: Context<MigrateChannelConfigV2>,
+        channel: String,
+        creator_wallet: Pubkey,
+        creator_fee_bps: u16,
+    ) -> Result<()> {
+        instructions::cumulative::migrate_channel_config_v2(ctx, channel, creator_wallet, creator_fee_bps)
     }
 
     pub fn push_distribute<'info>(

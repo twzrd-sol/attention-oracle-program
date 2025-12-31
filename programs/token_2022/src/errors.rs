@@ -149,4 +149,7 @@ pub enum OracleError {
 
     #[msg("Claim state mismatch")]
     InvalidClaimState,
+
+    #[msg("Creator ATA required when creator fee > 0")]
+    MissingCreatorAta,
 }

@@ -173,11 +173,18 @@ pub struct ChannelConfigV2 {
     pub authority: Pubkey,
     pub latest_root_seq: u64,
     pub cutover_epoch: u64,
+    /// Creator wallet for receiving fee split from claims
+    pub creator_wallet: Pubkey,
+    /// Creator fee in basis points (0-5000 = 0-50%)
+    pub creator_fee_bps: u16,
+    /// Padding for alignment
+    pub _padding: [u8; 6],
     pub roots: [RootEntry; CUMULATIVE_ROOT_HISTORY],
 }
 
 impl ChannelConfigV2 {
-    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + (RootEntry::LEN * CUMULATIVE_ROOT_HISTORY);
+    // 8 (discriminator) + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (80 * 4)
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (RootEntry::LEN * CUMULATIVE_ROOT_HISTORY);
 }
 
 #[account]
