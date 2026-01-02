@@ -12,10 +12,10 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 
 ## Quick Status
 
-| Program | Verification | Deployed Slot (UTC) | On-Chain Hash | Matching Repo Commit |
-|---------|--------------|---------------------|--------------|----------------------|
-| token_2022 | 🟡 Pending | `390464000` (2025-12-31T21:06:25Z) | `5898135a6fe46985d4329c6b18387593b9fc0c3ca5572c8133df2d59922916fe` | Unknown |
-| ccm_hook | 🟡 Pending | `384832984` (2025-12-06T08:54:41Z) | `394a919a7b816c3ae323de1ea9927767af50f451c243670b39fed45e2298fa90` | Unknown |
+| Program | Verification | Deployed Slot (UTC) | On-Chain Hash | Tagged Commit |
+|---------|--------------|---------------------|--------------|---------------|
+| token_2022 | 🟡 Pending | `390464000` (2025-12-31T21:06:25Z) | `5898135a...` | `mainnet/token_2022@390464000` (`3042848`) |
+| ccm_hook | 🟡 Pending | `384832984` (2025-12-06T08:54:41Z) | `394a919a...` | `mainnet/ccm_hook@384832984` (`a56b21b`) |
 
 ---
 
@@ -28,8 +28,10 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 | Last Deployed Slot | `390464000` |
 | Deploy Timestamp | 2025-12-31T21:06:25Z |
 | On-Chain Hash | `5898135a6fe46985d4329c6b18387593b9fc0c3ca5572c8133df2d59922916fe` |
-| Matching Repo Commit | Unknown (not yet tagged/verified) |
-| Verification Status | 🟡 Pending |
+| Tagged Commit | `mainnet/token_2022@390464000` → `3042848` |
+| Verification Status | 🟡 Pending (verifiable build not yet run) |
+
+**Drift from main:** 2 commits add `update_channel_creator_fee` instruction (not yet deployed).
 
 ---
 
@@ -42,8 +44,10 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 | Last Deployed Slot | `384832984` |
 | Deploy Timestamp | 2025-12-06T08:54:41Z |
 | On-Chain Hash | `394a919a7b816c3ae323de1ea9927767af50f451c243670b39fed45e2298fa90` |
-| Matching Repo Commit | Unknown (not yet tagged/verified) |
-| Verification Status | 🟡 Pending |
+| Tagged Commit | `mainnet/ccm_hook@384832984` → `a56b21b` |
+| Verification Status | 🟡 Pending (verifiable build not yet run) |
+
+**Drift from main:** None (no changes to ccm_hook since deployment).
 
 ---
 
@@ -82,12 +86,18 @@ git diff <COMMIT>..main -- programs/ccm_hook/
 
 ## Tagging Convention
 
-Once verification is complete, tag the deployed commits:
+Tags created for live deployments:
 
 ```bash
-git tag -a mainnet/token_2022@390464000 <COMMIT> -m "Mainnet deploy slot 390464000"
-git tag -a mainnet/ccm_hook@384832984 <COMMIT> -m "Mainnet deploy slot 384832984"
-git push origin --tags
+# Already pushed to origin:
+mainnet/token_2022@390464000  →  3042848
+mainnet/ccm_hook@384832984    →  a56b21b
+```
+
+To build from a tagged commit:
+```bash
+git checkout mainnet/token_2022@390464000
+anchor build --verifiable --program-name token_2022
 ```
 
 ---
