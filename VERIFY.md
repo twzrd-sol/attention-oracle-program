@@ -1,55 +1,91 @@
 # Program Verification
 
-## Deployed Program
+This repo contains two upgradeable programs deployed on Solana mainnet:
 
-| Network | Program ID | Status |
-|---------|------------|--------|
-| Mainnet | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | Active |
+- `token_2022` (oracle + claims + staking)
+- `ccm_hook` (Token-2022 transfer-hook helper program)
 
-## Current On-Chain Hash
+Verification is intentionally treated as a first-class status item. Until the repo commit that matches the deployed
+bytecode is tagged (or mainnet is upgraded to a verifiable build of a tagged release), verification remains **Pending**
+(yellow).
 
-```
-98d11157c302a71b294056ceb7854c8cf70c5fddd60dbf0b5b00a5d990c94b8b
-```
+## Current Status (Mainnet)
 
-Last verified: 2025-12-06
+| Program | Program ID | Last Deployed Slot | On-Chain Executable Hash | Verification |
+|--------|-----------|--------------------|--------------------------|-------------|
+| token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `390464000` (`2025-12-31T21:06:25Z`) | `5898135a6fe46985d4329c6b18387593b9fc0c3ca5572c8133df2d59922916fe` | Pending |
+| ccm_hook | `8VE2Wt5JNusGUCwkrpVmdwgdgyD6vYPEHop2g2CAArzS` | `384832984` (`2025-12-06T08:54:41Z`) | `394a919a7b816c3ae323de1ea9927767af50f451c243670b39fed45e2298fa90` | Pending |
 
-## Verification Steps
+Repo `main` head does **not** currently match the on-chain hashes above.
+
+## Path 1: Solana Verify CLI (Recommended)
+
+### 1) Fetch on-chain hash
 
 ```bash
-# 1. Install solana-verify
-cargo install solana-verify
-
-# 2. Get on-chain program hash
-solana-verify get-program-hash -u mainnet-beta GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
-
-# 3. Build deterministic binary (requires Docker)
-anchor build --verifiable
-
-# 4. Get local build hash
-solana-verify get-executable-hash target/verifiable/token_2022.so
-
-# 5. Compare hashes
+solana-verify get-program-hash -u https://api.mainnet-beta.solana.com <PROGRAM_ID>
 ```
 
-## Build Environment
+Note: `solana-verify` expects a full RPC URL for `-u`. If `-u mainnet-beta` fails, use the HTTPS URL above (or set your
+default RPC via `solana config set --url https://api.mainnet-beta.solana.com`).
 
-- Anchor: 0.32.1
-- Solana: 3.0.10
-- Rust: 1.91.1 (workspace), 1.84.x (SBF target)
+### 2) Build deterministic artifacts (Docker)
 
-## Release History
+Anchor verifiable builds (recommended for this repo):
 
-| Version | Commit | Hash | Date |
-|---------|--------|------|------|
-| v1.0.0-mainnet | - | `4923cd27ee5a87ec1a3470efa5ced0e88ff10ece4dc278d1f998f58904607fe2` | 2025-11-23 |
-| current | main HEAD | `98d11157c302a71b294056ceb7854c8cf70c5fddd60dbf0b5b00a5d990c94b8b` | 2025-12-06 |
+```bash
+anchor build --verifiable --program-name token_2022 --no-idl
+anchor build --verifiable --program-name ccm_hook --no-idl
+```
 
-## Notes
+Hash the local verifiable artifacts:
 
-The on-chain program was upgraded after v1.0.0-mainnet with bug fixes:
-- `fix: drop lamports borrow before CPI`
-- `fix: assign via system CPI`
-- `fix: release channel_state borrow`
+```bash
+solana-verify get-executable-hash target/verifiable/token_2022.so
+solana-verify get-executable-hash target/verifiable/ccm_hook.so
+```
 
-A new tagged release should be created to match the current on-chain deployment.
+### 3) Verify a specific commit directly from GitHub
+
+```bash
+solana-verify verify-from-repo https://github.com/twzrd-sol/attention-oracle-program.git \
+  --program-id <PROGRAM_ID> \
+  --commit-hash <COMMIT> \
+  --library-name <LIBRARY_NAME> \
+  --mount-path .
+```
+
+## Path 2: Anchor Verify (Wrapper Around solana-verify)
+
+From the repo root:
+
+```bash
+anchor verify --program-name token_2022 --current-dir GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop -- -u https://api.mainnet-beta.solana.com
+anchor verify --program-name ccm_hook --current-dir 8VE2Wt5JNusGUCwkrpVmdwgdgyD6vYPEHop2g2CAArzS -- -u https://api.mainnet-beta.solana.com
+```
+
+## How We Turn Pending → Verified
+
+1) **Tag the exact deployed commit**
+
+- Identify the commit that reproduces the on-chain hash for each program.
+- Tag it (e.g., `mainnet-token_2022-2025-12-31`, `mainnet-ccm_hook-2025-12-06`).
+- Re-run `solana-verify verify-from-repo ... --commit-hash <TAG_COMMIT>` and record results here.
+
+2) **Upgrade mainnet to a verifiable build from a tagged release**
+
+- Produce a verifiable build (`anchor build --verifiable`).
+- Deploy that exact artifact to mainnet.
+- Immediately verify and record the on-chain hash + the release tag in `DEPLOYMENTS.md` and this file.
+
+## Gotchas
+
+- Avoid deploying a non-verifiable build after producing a verified artifact for the same release; hashes will not match.
+- Verification is per-program; `token_2022` and `ccm_hook` may be on different deployed versions.
+
+## Toolchain (Reference)
+
+- solana-cli: 3.0.10
+- solana-verify: 0.4.12
+- anchor-cli: 0.32.1
+- Docker image: `solanafoundation/anchor:v0.32.1`
