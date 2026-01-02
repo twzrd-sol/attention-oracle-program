@@ -65,14 +65,7 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
-    // Oracle & Distribution (Ring Buffer)
-    // -------------------------------------------------------------------------
-
-    // V1 Instructions removed.
-    // kept for rent reclaim:
-
-    // -------------------------------------------------------------------------
-    // Cumulative Roots (V2)
+    // Cumulative Roots (V2) - ACTIVE CLAIM SYSTEM
     // -------------------------------------------------------------------------
 
     pub fn initialize_channel_cumulative(
@@ -122,7 +115,6 @@ pub mod token_2022 {
     }
 
     /// Invisible staking: Claims rewards directly into the stake vault.
-    /// No liquid tokens hit the user's wallet - protects pool TVL.
     pub fn claim_and_stake_sponsored<'info>(
         ctx: Context<'_, '_, '_, 'info, ClaimAndStakeSponsored<'info>>,
         channel: String,
@@ -134,7 +126,6 @@ pub mod token_2022 {
     }
 
     /// Migrate existing ChannelConfigV2 accounts to add creator_wallet fields.
-    /// One-time migration for accounts created before schema change.
     pub fn migrate_channel_config_v2(
         ctx: Context<MigrateChannelConfigV2>,
         channel: String,
@@ -151,41 +142,6 @@ pub mod token_2022 {
         new_creator_fee_bps: u16,
     ) -> Result<()> {
         instructions::cumulative::update_channel_creator_fee(ctx, channel, new_creator_fee_bps)
-    }
-
-    pub fn push_distribute<'info>(
-        ctx: Context<'_, '_, 'info, 'info, PushDistribute<'info>>,
-        recipients: Vec<Pubkey>,
-        amounts: Vec<u64>,
-        epoch: u64,
-        channel: String,
-        batch_idx: u32,
-    ) -> Result<()> {
-        instructions::push_distribute::push_distribute(ctx, recipients, amounts, epoch, channel, batch_idx)
-    }
-
-    pub fn close_channel(ctx: Context<CloseChannel>, channel: String) -> Result<()> {
-        instructions::channel::close_channel(ctx, channel)
-    }
-
-    pub fn close_legacy_channel(ctx: Context<CloseLegacyChannel>, channel: String) -> Result<()> {
-        instructions::channel::close_legacy_channel(ctx, channel)
-    }
-
-    pub fn force_close_epoch_state_legacy(
-        ctx: Context<ForceCloseEpochStateLegacy>,
-        epoch: u64,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup::force_close_epoch_state_legacy(ctx, epoch, subject_id)
-    }
-
-    pub fn force_close_channel_state_legacy(
-        ctx: Context<ForceCloseChannelStateLegacy>,
-        mint: Pubkey,
-        subject_id: Pubkey,
-    ) -> Result<()> {
-        instructions::cleanup::force_close_channel_state_legacy(ctx, mint, subject_id)
     }
 
     // -------------------------------------------------------------------------
@@ -348,38 +304,7 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
-    // Creator Extensions
-    // -------------------------------------------------------------------------
-
-    pub fn initialize_channel_meta(
-        ctx: Context<InitializeChannelMeta>,
-        channel: String,
-        creator_wallet: Pubkey,
-        fee_share_bps: u16,
-    ) -> Result<()> {
-        instructions::creator::initialize_channel_meta(ctx, channel, creator_wallet, fee_share_bps)
-    }
-
-    pub fn set_creator_wallet(ctx: Context<SetCreatorWallet>, new_wallet: Pubkey) -> Result<()> {
-        instructions::creator::set_creator_wallet(ctx, new_wallet)
-    }
-
-    pub fn set_creator_fee_share(
-        ctx: Context<SetCreatorFeeShare>,
-        new_fee_share_bps: u16,
-    ) -> Result<()> {
-        instructions::creator::set_creator_fee_share(ctx, new_fee_share_bps)
-    }
-
-    pub fn update_total_delegated(
-        ctx: Context<UpdateTotalDelegated>,
-        total_delegated: u64,
-    ) -> Result<()> {
-        instructions::creator::update_total_delegated(ctx, total_delegated)
-    }
-
-    // -------------------------------------------------------------------------
-    // Migration
+    // Migration (Feature-gated)
     // -------------------------------------------------------------------------
 
     #[cfg(feature = "migration")]

@@ -1,10 +1,14 @@
-use crate::constants::{
-    CHANNEL_BITMAP_BYTES, CHANNEL_MAX_CLAIMS, CHANNEL_RING_SLOTS, CUMULATIVE_ROOT_HISTORY,
-};
+//! On-chain state definitions for the Attention Oracle Protocol.
+
+use crate::constants::CUMULATIVE_ROOT_HISTORY;
 use crate::errors::OracleError;
 use anchor_lang::prelude::*;
 
-/// Global protocol state (singleton)
+// =============================================================================
+// PROTOCOL STATE
+// =============================================================================
+
+/// Global protocol state (singleton per mint)
 #[account]
 pub struct ProtocolState {
     pub is_initialized: bool,
@@ -58,6 +62,10 @@ impl FeeSplit {
     }
 }
 
+// =============================================================================
+// IDENTITY (PASSPORT)
+// =============================================================================
+
 /// Passport registry entry (oracle snapshot for viewer reputation)
 #[account]
 pub struct PassportRegistry {
@@ -78,78 +86,8 @@ impl PassportRegistry {
     pub const LEN: usize = 8 + 32 + 32 + 1 + 8 + 4 + 8 + 4 + 32 + 1 + 32 + 8 + 1;
 }
 
-/// Per-channel ring buffer state (stores recent epoch merkle roots).
-#[account(zero_copy)]
-#[repr(C)]
-pub struct ChannelState {
-    pub version: u8,
-    pub bump: u8,
-    pub mint: Pubkey,
-    pub subject: Pubkey,
-    pub _padding: [u8; 6],
-    pub latest_epoch: u64,
-    pub slots: [ChannelSlot; CHANNEL_RING_SLOTS],
-}
-
-impl ChannelState {
-    pub const LEN: usize = 8 + core::mem::size_of::<ChannelState>();
-
-    pub fn slot_index(epoch: u64) -> usize {
-        (epoch as usize) % CHANNEL_RING_SLOTS
-    }
-
-    pub fn slot(&self, epoch: u64) -> &ChannelSlot {
-        let idx = Self::slot_index(epoch);
-        &self.slots[idx]
-    }
-
-    pub fn slot_mut(&mut self, epoch: u64) -> &mut ChannelSlot {
-        let idx = Self::slot_index(epoch);
-        &mut self.slots[idx]
-    }
-}
-
-#[zero_copy]
-#[repr(C)]
-pub struct ChannelSlot {
-    pub epoch: u64,
-    pub root: [u8; 32],
-    pub claim_count: u16,
-    pub _padding: [u8; 6],
-    pub claimed_bitmap: [u8; CHANNEL_BITMAP_BYTES],
-}
-
-impl ChannelSlot {
-    pub const LEN: usize = core::mem::size_of::<ChannelSlot>();
-
-    pub fn reset(&mut self, epoch: u64, root: [u8; 32]) {
-        self.epoch = epoch;
-        self.root = root;
-        self.claim_count = 0;
-        self._padding = [0u8; 6];
-        self.claimed_bitmap = [0u8; CHANNEL_BITMAP_BYTES];
-    }
-
-    pub fn test_bit(&self, index: usize) -> bool {
-        let byte = index / 8;
-        let bit = index % 8;
-        (self.claimed_bitmap[byte] & (1u8 << bit)) != 0
-    }
-
-    pub fn set_bit(&mut self, index: usize) {
-        let byte = index / 8;
-        let bit = index % 8;
-        self.claimed_bitmap[byte] |= 1u8 << bit;
-    }
-
-    pub fn validate_index(index: usize) -> Result<()> {
-        require!(index < CHANNEL_MAX_CLAIMS, OracleError::InvalidIndex);
-        Ok(())
-    }
-}
-
 // =============================================================================
-// CUMULATIVE ROOTS (V2)
+// CUMULATIVE ROOTS (V2 CLAIMS)
 // =============================================================================
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, Default)]
@@ -164,6 +102,8 @@ impl RootEntry {
     pub const LEN: usize = 8 + 32 + 32 + 8;
 }
 
+/// Channel configuration for V2 cumulative claims.
+/// Stores recent merkle roots and creator fee settings.
 #[account]
 pub struct ChannelConfigV2 {
     pub version: u8,
@@ -183,10 +123,11 @@ pub struct ChannelConfigV2 {
 }
 
 impl ChannelConfigV2 {
-    // 8 (discriminator) + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (80 * 4)
     pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (RootEntry::LEN * CUMULATIVE_ROOT_HISTORY);
 }
 
+/// Per-user claim state for V2 cumulative system.
+/// Tracks total claimed amount to enable delta-based claims.
 #[account]
 pub struct ClaimStateV2 {
     pub version: u8,
@@ -202,9 +143,10 @@ impl ClaimStateV2 {
 }
 
 // =============================================================================
-// STAKING SYSTEM (V1)
+// STAKING
 // =============================================================================
 
+/// Global stake pool state (MasterChef-style).
 #[account]
 pub struct StakePool {
     pub version: u8,
@@ -222,6 +164,7 @@ impl StakePool {
     pub const LEN: usize = 8 + 1 + 1 + 32 + 8 + 16 + 8 + 8 + 32 + 64;
 }
 
+/// Per-user stake position.
 #[account]
 pub struct UserStake {
     pub version: u8,
@@ -239,23 +182,4 @@ pub struct UserStake {
 
 impl UserStake {
     pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 8 + 1 + 32 + 8 + 16 + 8 + 8 + 32;
-}
-
-// =============================================================================
-// CREATOR EXTENSIONS (V1)
-// =============================================================================
-
-#[account]
-pub struct ChannelMeta {
-    pub version: u8,
-    pub bump: u8,
-    pub channel_state: Pubkey,
-    pub creator_wallet: Pubkey,
-    pub fee_share_bps: u16,
-    pub total_delegated: u64,
-    pub _reserved: [u8; 64],
-}
-
-impl ChannelMeta {
-    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 2 + 8 + 64;
 }
