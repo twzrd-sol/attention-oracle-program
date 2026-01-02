@@ -144,6 +144,15 @@ pub mod token_2022 {
         instructions::cumulative::migrate_channel_config_v2(ctx, channel, creator_wallet, creator_fee_bps)
     }
 
+    /// Update creator fee on already-migrated ChannelConfigV2.
+    pub fn update_channel_creator_fee(
+        ctx: Context<UpdateChannelCreatorFee>,
+        channel: String,
+        new_creator_fee_bps: u16,
+    ) -> Result<()> {
+        instructions::cumulative::update_channel_creator_fee(ctx, channel, new_creator_fee_bps)
+    }
+
     pub fn push_distribute<'info>(
         ctx: Context<'_, '_, 'info, 'info, PushDistribute<'info>>,
         recipients: Vec<Pubkey>,

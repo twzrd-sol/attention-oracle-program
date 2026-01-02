@@ -1090,3 +1090,50 @@ pub fn migrate_channel_config_v2(
 
     Ok(())
 }
+
+// =============================================================================
+// UPDATE CHANNEL CREATOR FEE (V2)
+// =============================================================================
+
+/// Update creator fee on already-migrated ChannelConfigV2.
+/// Admin-only operation.
+#[derive(Accounts)]
+#[instruction(channel: String)]
+pub struct UpdateChannelCreatorFee<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        mut,
+        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), &subject_id_bytes(&channel)],
+        bump = channel_config.bump,
+    )]
+    pub channel_config: Account<'info, ChannelConfigV2>,
+}
+
+pub fn update_channel_creator_fee(
+    ctx: Context<UpdateChannelCreatorFee>,
+    _channel: String,
+    new_creator_fee_bps: u16,
+) -> Result<()> {
+    require!(new_creator_fee_bps <= 5000, OracleError::CreatorFeeTooHigh);
+
+    let cfg = &mut ctx.accounts.channel_config;
+    let old_fee = cfg.creator_fee_bps;
+    cfg.creator_fee_bps = new_creator_fee_bps;
+
+    msg!(
+        "Updated creator fee: {} -> {} bps",
+        old_fee,
+        new_creator_fee_bps
+    );
+
+    Ok(())
+}
