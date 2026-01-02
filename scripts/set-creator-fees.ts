@@ -1,3 +1,19 @@
+/**
+ * ⚠️  BLOCKED: This script requires a program upgrade before use.
+ *
+ * The `update_channel_creator_fee` instruction exists in the repo but is
+ * NOT YET DEPLOYED to mainnet. Running this script will fail with:
+ *   "Transaction simulation failed: Error processing Instruction 0:
+ *    custom program error: 0x..."
+ *
+ * Before using this script:
+ *   1. Deploy the updated token_2022 program with `update_channel_creator_fee`
+ *   2. Verify deployment via `solana program show GnGzNds...`
+ *   3. Update docs/LIVE_STATUS.md with new deployment slot
+ *
+ * See: programs/token_2022/src/lib.rs:140-147
+ */
+
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { PublicKey, Connection, Keypair } from "@solana/web3.js";
