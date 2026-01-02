@@ -1,11 +1,12 @@
 #!/usr/bin/env ts-node
 
 /**
- * Publish merkle roots for channel epochs to mainnet.
+ * LEGACY: V1 ring-buffer publish script.
  *
- * NOTE: This is the canonical publish script for mainnet.
- * The contract on mainnet does NOT include the demo feature,
- * so set_merkle_root_ring is unavailable. Use set_channel_merkle_root only.
+ * ⚠️  DEPRECATED - Use publish-root-v2.ts for V2 cumulative root publishing.
+ *
+ * This script targets the legacy set_channel_merkle_root instruction (V1 ring buffer).
+ * V2 cumulative roots are now the active system on mainnet.
  *
  * Usage:
  *   CLUSTER=mainnet-beta RPC_URL=... KEYPAIR=~/.config/solana/amm-admin.json \

@@ -27,6 +27,15 @@ These programs are upgradeable on-chain. If you integrate against them, you shou
 - `scripts/` - Operational scripts (require explicit CLUSTER + KEYPAIR).
 - `docs/` - Public protocol specs.
 
+## Root System
+
+**V2 cumulative roots are the active system on mainnet.**
+
+- `publish-root-v2.ts` - Current publisher script (calls `publish_cumulative_root`)
+- `publish-merkle-root.ts` - Legacy V1 script (deprecated)
+
+V1 ring-buffer channels can be migrated and their rent reclaimed via `cleanup_v1_ring`.
+
 ## Build and verify
 
 - Build: `anchor build`
@@ -40,3 +49,4 @@ These programs are upgradeable on-chain. If you integrate against them, you shou
 
 - See `INTEGRATION.md` for Token-2022 transfer-hook guidance.
 - See `DEPLOYMENTS.md` for program IDs and release policy.
+- See `docs/LIVE_STATUS.md` for exact on-chain vs repo commit mapping.
