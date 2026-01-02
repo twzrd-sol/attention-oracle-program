@@ -143,6 +143,13 @@ pub struct Stake<'info> {
     /// CCM Token-2022 mint
     pub mint: InterfaceAccount<'info, Mint>,
 
+    /// Protocol state (for pause check)
+    #[account(
+        seeds = [PROTOCOL_SEED, mint.key().as_ref()],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
     /// Stake pool PDA
     #[account(
         mut,
@@ -189,6 +196,9 @@ pub fn stake<'info>(
     amount: u64,
     lock_slots: u64,
 ) -> Result<()> {
+    // Block staking while paused
+    require!(!ctx.accounts.protocol_state.paused, OracleError::ProtocolPaused);
+
     require!(amount >= MIN_STAKE_AMOUNT, OracleError::StakeBelowMinimum);
     require!(lock_slots <= MAX_LOCK_SLOTS, OracleError::LockPeriodTooLong);
 
@@ -288,6 +298,13 @@ pub struct Unstake<'info> {
     /// CCM Token-2022 mint
     pub mint: InterfaceAccount<'info, Mint>,
 
+    /// Protocol state (for pause check)
+    #[account(
+        seeds = [PROTOCOL_SEED, mint.key().as_ref()],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
     /// Stake pool PDA
     #[account(
         mut,
@@ -327,6 +344,9 @@ pub struct Unstake<'info> {
 }
 
 pub fn unstake<'info>(ctx: Context<'_, '_, '_, 'info, Unstake<'info>>, amount: u64) -> Result<()> {
+    // Block unstaking while paused
+    require!(!ctx.accounts.protocol_state.paused, OracleError::ProtocolPaused);
+
     let clock = Clock::get()?;
     let ts = clock.unix_timestamp;
     let current_slot = clock.slot;
@@ -436,6 +456,13 @@ pub struct DelegateStake<'info> {
     /// CCM Token-2022 mint
     pub mint: InterfaceAccount<'info, Mint>,
 
+    /// Protocol state (for pause check)
+    #[account(
+        seeds = [PROTOCOL_SEED, mint.key().as_ref()],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
     /// Stake pool PDA (for reward updates)
     #[account(
         mut,
@@ -456,6 +483,9 @@ pub struct DelegateStake<'info> {
 }
 
 pub fn delegate_stake(ctx: Context<DelegateStake>, subject_id: Option<[u8; 32]>) -> Result<()> {
+    // Block delegation while paused
+    require!(!ctx.accounts.protocol_state.paused, OracleError::ProtocolPaused);
+
     let pool = &mut ctx.accounts.stake_pool;
     let user_stake = &mut ctx.accounts.user_stake;
     let ts = Clock::get()?.unix_timestamp;
@@ -545,6 +575,9 @@ pub struct ClaimStakeRewards<'info> {
 pub fn claim_stake_rewards<'info>(
     ctx: Context<'_, '_, '_, 'info, ClaimStakeRewards<'info>>,
 ) -> Result<()> {
+    // Block reward claims while paused
+    require!(!ctx.accounts.protocol_state.paused, OracleError::ProtocolPaused);
+
     let pool = &mut ctx.accounts.stake_pool;
     let user_stake = &mut ctx.accounts.user_stake;
     let ts = Clock::get()?.unix_timestamp;

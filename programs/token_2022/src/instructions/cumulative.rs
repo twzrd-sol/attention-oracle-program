@@ -138,6 +138,9 @@ pub fn publish_cumulative_root(
         protocol_state.publisher != Pubkey::default() && signer == protocol_state.publisher;
     require!(is_admin || is_publisher, OracleError::Unauthorized);
 
+    // Block publishing while paused (only admin can publish during pause)
+    require!(!protocol_state.paused || is_admin, OracleError::ProtocolPaused);
+
     let subject_id = derive_subject_id(&channel);
     let cfg = &mut ctx.accounts.channel_config;
 
@@ -235,6 +238,9 @@ pub fn claim_cumulative<'info>(
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
     let cfg = &ctx.accounts.channel_config;
+
+    // Block claims while paused
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
 
     require_keys_eq!(
         ctx.accounts.mint.key(),
@@ -441,6 +447,9 @@ pub fn claim_cumulative_sponsored<'info>(
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
     let cfg = &ctx.accounts.channel_config;
+
+    // Block claims while paused
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
 
     require_keys_eq!(
         ctx.accounts.mint.key(),
@@ -674,6 +683,9 @@ pub fn claim_and_stake_sponsored<'info>(
 ) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
     let cfg = &ctx.accounts.channel_config;
+
+    // Block claims while paused
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
 
     require_keys_eq!(
         ctx.accounts.mint.key(),
@@ -1133,6 +1145,57 @@ pub fn update_channel_creator_fee(
         "Updated creator fee: {} -> {} bps",
         old_fee,
         new_creator_fee_bps
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// ADMIN ROOT SEQUENCE RECOVERY
+// =============================================================================
+
+/// Admin-only instruction to recover from a skipped root sequence.
+/// Allows setting latest_root_seq to a higher value to unbrick a channel.
+/// The next publish must use new_seq + 1.
+#[derive(Accounts)]
+#[instruction(channel: String)]
+pub struct AdminRecoverRootSeq<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        mut,
+        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), &subject_id_bytes(&channel)],
+        bump = channel_config.bump,
+    )]
+    pub channel_config: Account<'info, ChannelConfigV2>,
+}
+
+pub fn admin_recover_root_seq(
+    ctx: Context<AdminRecoverRootSeq>,
+    _channel: String,
+    new_seq: u64,
+) -> Result<()> {
+    let cfg = &mut ctx.accounts.channel_config;
+
+    // Must be strictly greater than current seq (no rollback)
+    require!(new_seq > cfg.latest_root_seq, OracleError::InvalidRootSeq);
+
+    let old_seq = cfg.latest_root_seq;
+    cfg.latest_root_seq = new_seq;
+
+    msg!(
+        "Admin recovered root seq: {} -> {} (next publish must use {})",
+        old_seq,
+        new_seq,
+        new_seq + 1
     );
 
     Ok(())

@@ -144,6 +144,15 @@ pub mod token_2022 {
         instructions::cumulative::update_channel_creator_fee(ctx, channel, new_creator_fee_bps)
     }
 
+    /// Admin-only: Recover from skipped root sequence to unbrick a channel.
+    pub fn admin_recover_root_seq(
+        ctx: Context<AdminRecoverRootSeq>,
+        channel: String,
+        new_seq: u64,
+    ) -> Result<()> {
+        instructions::cumulative::admin_recover_root_seq(ctx, channel, new_seq)
+    }
+
     // -------------------------------------------------------------------------
     // Governance
     // -------------------------------------------------------------------------
