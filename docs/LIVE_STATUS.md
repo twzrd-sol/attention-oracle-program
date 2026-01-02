@@ -47,7 +47,7 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 | Tagged Commit | `mainnet/ccm_hook@384832984` → `a56b21b` |
 | Verification Status | 🟡 Pending (verifiable build not yet run) |
 
-**Drift from main:** None (no changes to ccm_hook since deployment).
+**Drift from main:** 2 commits touch `ccm_hook` (build hygiene + safer instruction parsing), not yet deployed.
 
 ---
 
@@ -107,5 +107,5 @@ anchor build --verifiable --program-name token_2022
 | Status | Meaning |
 |--------|---------|
 | 🟢 Verified | On-chain hash matches verifiable build from tagged commit |
-| 🟡 Pending | On-chain hash recorded; matching repo commit not yet tagged/verified |
+| 🟡 Pending | On-chain hash recorded; tagged candidate exists but verifiable hash match not yet proven |
 | 🔴 Mismatch | On-chain hash does not match a verifiable build for any attempted commit |
