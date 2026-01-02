@@ -44,7 +44,7 @@ The deployed program can be verified against this source code:
 cargo install solana-verify
 
 # Get on-chain hash
-solana-verify get-program-hash -u mainnet-beta GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+solana-verify get-program-hash -u https://api.mainnet-beta.solana.com GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 
 # Build and compare
 anchor build --verifiable
