@@ -2,7 +2,7 @@
 
 This repository contains the on-chain Solana programs for TWZRD's attention oracle, including:
 
-- Merkle-based reward claims for watch-time participation.
+- Merkle-based reward claims for verified social engagement.
 - Token-2022 transfer-hook logic and related configuration.
 - On-chain state for channels, epochs, and protocol governance.
 
@@ -32,9 +32,8 @@ These programs are upgradeable on-chain. If you integrate against them, you shou
 **V2 cumulative roots are the active system on mainnet.**
 
 - `publish-root-v2.ts` - Current publisher script (calls `publish_cumulative_root`)
-- `publish-merkle-root.ts` - Legacy V1 script (deprecated)
 
-V1 ring-buffer channels can be migrated and their rent reclaimed via `cleanup_v1_ring`.
+All V1 ring-buffer infrastructure has been removed. Legacy accounts have been closed and rent reclaimed.
 
 ## Build and verify
 
