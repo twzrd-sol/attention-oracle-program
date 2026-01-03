@@ -14,11 +14,6 @@
 
 import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor';
 import {
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  getAssociatedTokenAddressSync,
-  TOKEN_2022_PROGRAM_ID,
-} from '@solana/spl-token';
-import {
   ComputeBudgetProgram,
   Connection,
   Keypair,
@@ -29,6 +24,22 @@ import {
 import fs from 'fs';
 import path from 'path';
 import { requireScriptEnv } from './script-guard.js';
+
+// Token-2022 and Associated Token Program IDs (inline to avoid @solana/spl-token dependency)
+const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+
+/**
+ * Derive the Associated Token Address for a given mint and owner.
+ * Replaces getAssociatedTokenAddressSync from @solana/spl-token to avoid bigint-buffer vulnerability.
+ */
+function deriveAta(mint: PublicKey, owner: PublicKey, tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID): PublicKey {
+  const [ata] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), tokenProgramId.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+  return ata;
+}
 
 const AO_PROGRAM_ID = new PublicKey(
   process.env.AO_PROGRAM_ID || 'GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop',
@@ -87,13 +98,7 @@ async function main() {
     AO_PROGRAM_ID,
   );
 
-  const treasuryAta = getAssociatedTokenAddressSync(
-    mint,
-    protocolState,
-    true, // PDA owner
-    TOKEN_2022_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID,
-  );
+  const treasuryAta = deriveAta(mint, protocolState, TOKEN_2022_PROGRAM_ID);
 
   console.log('\n=== Harvest Withheld Fees ===');
   console.log(`RPC:           ${rpcUrl}`);
