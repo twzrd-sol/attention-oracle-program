@@ -1,7 +1,11 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::sysvar::instructions as ix_sysvar;
 use anchor_spl::token_interface::{Mint, TokenAccount};
 use spl_tlv_account_resolution::state::ExtraAccountMetaList;
 use spl_transfer_hook_interface::instruction::ExecuteInstruction;
+
+/// Token-2022 program ID (the only valid caller for transfer_hook)
+const TOKEN_2022_PROGRAM_ID: Pubkey = anchor_spl::token_interface::spl_token_2022::ID;
 
 declare_id!("8VE2Wt5JNusGUCwkrpVmdwgdgyD6vYPEHop2g2CAArzS");
 
@@ -61,7 +65,26 @@ pub mod ccm_hook {
     /// - Fee collection (requires PermanentDelegate or pre-approval)
     /// - Transfer validation/blocking
     /// - Analytics/metrics
+    ///
+    /// SECURITY: Verifies caller is Token-2022 program via instruction sysvar.
     pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
+        // SECURITY: Verify this is a CPI from Token-2022, not a direct call
+        let ix_sysvar_info = &ctx.accounts.instructions_sysvar;
+        let current_index = ix_sysvar::load_current_index_checked(ix_sysvar_info)
+            .map_err(|_| HookError::InvalidInstruction)?;
+
+        // Get the instruction that invoked us (should be a Token-2022 transfer)
+        let current_ix = ix_sysvar::load_instruction_at_checked(
+            current_index as usize,
+            ix_sysvar_info,
+        ).map_err(|_| HookError::InvalidInstruction)?;
+
+        // Verify the caller is the Token-2022 program
+        require!(
+            current_ix.program_id == TOKEN_2022_PROGRAM_ID,
+            HookError::UnauthorizedCaller
+        );
+
         let source = &ctx.accounts.source_token;
         let destination = &ctx.accounts.destination_token;
         let mint = &ctx.accounts.mint;
@@ -82,16 +105,6 @@ pub mod ccm_hook {
             amount,
             timestamp: Clock::get()?.unix_timestamp,
         });
-
-        // Future: Fee collection logic would go here
-        // This would require:
-        // 1. PermanentDelegate on the mint, OR
-        // 2. Pre-approved allowance from users
-        //
-        // let fee = amount / 100; // 1%
-        // if fee > 0 {
-        //     // CPI to transfer fee from destination to treasury
-        // }
 
         Ok(())
     }
@@ -170,6 +183,11 @@ pub struct TransferHook<'info> {
         bump,
     )]
     pub extra_account_meta_list: UncheckedAccount<'info>,
+
+    /// Instructions sysvar for verifying the caller
+    /// CHECK: Validated by address constraint
+    #[account(address = ix_sysvar::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
 }
 
 #[event]
@@ -189,4 +207,6 @@ pub enum HookError {
     NotEnoughAccounts,
     #[msg("Invalid instruction data")]
     InvalidInstruction,
+    #[msg("Unauthorized caller - must be invoked via Token-2022 CPI")]
+    UnauthorizedCaller,
 }

@@ -785,7 +785,12 @@ pub fn claim_and_stake_sponsored<'info>(
     }
 
     // Transfer to STAKE VAULT (locked - no sell pressure)
+    // Track actual received amount due to transfer fees
+    let actual_staked: u64;
     if stake_amount > 0 {
+        // Record vault balance BEFORE transfer
+        let vault_balance_before = ctx.accounts.stake_vault.amount;
+
         let to = ctx.accounts.stake_vault.to_account_info();
         crate::transfer_checked_with_remaining(
             &token_program,
@@ -798,6 +803,17 @@ pub fn claim_and_stake_sponsored<'info>(
             signer,
             ctx.remaining_accounts,
         )?;
+
+        // Reload vault to get post-transfer balance
+        ctx.accounts.stake_vault.reload()?;
+        let vault_balance_after = ctx.accounts.stake_vault.amount;
+
+        // Calculate actual received (accounts for transfer fees)
+        actual_staked = vault_balance_after
+            .checked_sub(vault_balance_before)
+            .ok_or(OracleError::MathOverflow)?;
+    } else {
+        actual_staked = 0;
     }
 
     // Update staking state
@@ -832,10 +848,10 @@ pub fn claim_and_stake_sponsored<'info>(
             .ok_or(OracleError::MathOverflow)?;
     }
 
-    // Add claimed amount to staked balance
+    // Add ACTUAL received amount to staked balance (not requested stake_amount)
     user_stake.staked_amount = user_stake
         .staked_amount
-        .checked_add(stake_amount)
+        .checked_add(actual_staked)
         .ok_or(OracleError::MathOverflow)?;
     user_stake.last_action_time = ts;
 
@@ -845,10 +861,10 @@ pub fn claim_and_stake_sponsored<'info>(
         pool.acc_reward_per_share,
     )?;
 
-    // Update pool total
+    // Update pool total with actual received
     pool.total_staked = pool
         .total_staked
-        .checked_add(stake_amount)
+        .checked_add(actual_staked)
         .ok_or(OracleError::MathOverflow)?;
 
     // Update claim state
@@ -858,7 +874,7 @@ pub fn claim_and_stake_sponsored<'info>(
     emit!(InvisibleStaked {
         channel: cfg.key(),
         claimer: ctx.accounts.claimer.key(),
-        staked_amount: stake_amount,
+        staked_amount: actual_staked, // Emit actual received, not requested
         creator_amount,
         cumulative_total,
         root_seq,
@@ -866,7 +882,8 @@ pub fn claim_and_stake_sponsored<'info>(
     });
 
     msg!(
-        "Invisible stake: {} CCM staked for {}, {} CCM to creator",
+        "Invisible stake: {} CCM staked (requested {}) for {}, {} CCM to creator",
+        actual_staked,
         stake_amount,
         ctx.accounts.claimer.key(),
         creator_amount

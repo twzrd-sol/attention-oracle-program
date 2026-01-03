@@ -229,6 +229,10 @@ pub fn stake<'info>(
     // Harvest pending rewards before adding new stake
     harvest_pending(user_stake, pool)?;
 
+    // Record vault balance BEFORE transfer to compute actual received amount
+    // (Token-2022 transfer fees mean vault receives less than `amount`)
+    let vault_balance_before = ctx.accounts.stake_vault.amount;
+
     // Transfer tokens to vault (forward remaining accounts for Token-2022 hooks/extensions).
     let token_program = ctx.accounts.token_program.to_account_info();
     let from = ctx.accounts.user_token_account.to_account_info();
@@ -248,10 +252,19 @@ pub fn stake<'info>(
         ctx.remaining_accounts,
     )?;
 
-    // Update state
+    // Reload vault to get post-transfer balance
+    ctx.accounts.stake_vault.reload()?;
+    let vault_balance_after = ctx.accounts.stake_vault.amount;
+
+    // Calculate actual received amount (accounts for transfer fees)
+    let actual_received = vault_balance_after
+        .checked_sub(vault_balance_before)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // Update state with ACTUAL received amount, not input amount
     user_stake.staked_amount = user_stake
         .staked_amount
-        .checked_add(amount)
+        .checked_add(actual_received)
         .ok_or(OracleError::MathOverflow)?;
 
     // Set lock if provided (extend only, never reduce)
@@ -265,20 +278,21 @@ pub fn stake<'info>(
 
     pool.total_staked = pool
         .total_staked
-        .checked_add(amount)
+        .checked_add(actual_received)
         .ok_or(OracleError::MathOverflow)?;
 
     emit!(Staked {
         user: ctx.accounts.user.key(),
         mint: ctx.accounts.mint.key(),
-        amount,
+        amount: actual_received, // Emit actual received, not input amount
         lock_end_slot: user_stake.lock_end_slot,
         total_staked: user_stake.staked_amount,
         timestamp: ts,
     });
 
     msg!(
-        "Staked {} CCM, total={}, lock_end={}",
+        "Staked {} CCM (requested {}), total={}, lock_end={}",
+        actual_received,
         amount,
         user_stake.staked_amount,
         user_stake.lock_end_slot
