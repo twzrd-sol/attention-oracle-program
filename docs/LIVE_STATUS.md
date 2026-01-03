@@ -6,7 +6,7 @@ repository.
 Until a repo commit is proven to reproduce the on-chain hash via a verifiable build (and is tagged), any statement like
 "this exact commit is live" is intentionally treated as **Unknown**.
 
-**Last updated:** 2026-01-02
+**Last updated:** 2026-01-03
 
 ---
 
@@ -31,7 +31,8 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 | Tagged Commit | `mainnet/token_2022@390464000` → `3042848` |
 | Verification Status | 🟡 Pending (verifiable build not yet run) |
 
-**Drift from main:** 4 commits not yet deployed:
+**Drift from main:** 5 commits not yet deployed:
+- `70e411b` fix: correct transfer fee accounting and add hook caller verification
 - `6d79298` security: pause enforcement + root recovery
 - `664c475` refactor: prune V1 legacy code
 - `c5c29fd` chore: remove unused imports
@@ -51,7 +52,8 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 | Tagged Commit | `mainnet/ccm_hook@384832984` → `a56b21b` |
 | Verification Status | 🟡 Pending (verifiable build not yet run) |
 
-**Drift from main:** 2 commits not yet deployed:
+**Drift from main:** 3 commits not yet deployed:
+- `70e411b` fix: correct transfer fee accounting and add hook caller verification
 - `155f37c` fix: build fixes and safer defaults
 - `9742bee` feat: add admin_mint_v2 for CCM-v2 bootstrap
 
