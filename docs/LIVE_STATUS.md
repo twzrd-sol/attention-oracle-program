@@ -6,7 +6,7 @@ repository.
 Until a repo commit is proven to reproduce the on-chain hash via a verifiable build (and is tagged), any statement like
 "this exact commit is live" is intentionally treated as **Unknown**.
 
-**Last updated:** 2026-01-03
+**Last updated:** 2026-01-04
 
 ---
 
@@ -14,8 +14,8 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 
 | Program | Verification | Deployed Slot (UTC) | On-Chain Hash | Tagged Commit |
 |---------|--------------|---------------------|--------------|---------------|
-| token_2022 | 🟡 Pending | `390464000` (2025-12-31T21:06:25Z) | `5898135a...` | `mainnet/token_2022@390464000` (`3042848`) |
-| ccm_hook | 🟡 Pending | `384832984` (2025-12-06T08:54:41Z) | `394a919a...` | `mainnet/ccm_hook@384832984` (`a56b21b`) |
+| token_2022 | 🟢 Verified | `391176164` (2026-01-04T03:00:04Z) | `ca17ba59...` | `mainnet/token_2022@391176164` (`0c493e5`) |
+| ccm_hook | 🟢 Verified | `391176540` (2026-01-04T03:02:31Z) | `fae7cf0c...` | `mainnet/ccm_hook@391176540` (`0c493e5`) |
 
 ---
 
@@ -25,18 +25,13 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 
 | Property | Value |
 |----------|-------|
-| Last Deployed Slot | `390464000` |
-| Deploy Timestamp | 2025-12-31T21:06:25Z |
-| On-Chain Hash | `5898135a6fe46985d4329c6b18387593b9fc0c3ca5572c8133df2d59922916fe` |
-| Tagged Commit | `mainnet/token_2022@390464000` → `3042848` |
-| Verification Status | 🟡 Pending (verifiable build not yet run) |
+| Last Deployed Slot | `391176164` |
+| Deploy Timestamp | 2026-01-04T03:00:04Z |
+| On-Chain Hash | `ca17ba5923d1867e1a66feb6aaa05e18b27ebeee0f98a04dcea8e5c6af6ab18d` |
+| Tagged Commit | `mainnet/token_2022@391176164` → `0c493e5` |
+| Verification Status | 🟢 Verified (on-chain hash matches verifiable build) |
 
-**Drift from main:** 5 commits not yet deployed:
-- `70e411b` fix: correct transfer fee accounting and add hook caller verification
-- `6d79298` security: pause enforcement + root recovery
-- `664c475` refactor: prune V1 legacy code
-- `c5c29fd` chore: remove unused imports
-- `b68c01e` chore: add update_channel_creator_fee instruction
+**Drift from main:** 0 commits (up to date)
 
 ---
 
@@ -46,16 +41,13 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 
 | Property | Value |
 |----------|-------|
-| Last Deployed Slot | `384832984` |
-| Deploy Timestamp | 2025-12-06T08:54:41Z |
-| On-Chain Hash | `394a919a7b816c3ae323de1ea9927767af50f451c243670b39fed45e2298fa90` |
-| Tagged Commit | `mainnet/ccm_hook@384832984` → `a56b21b` |
-| Verification Status | 🟡 Pending (verifiable build not yet run) |
+| Last Deployed Slot | `391176540` |
+| Deploy Timestamp | 2026-01-04T03:02:31Z |
+| On-Chain Hash | `fae7cf0cd9fcd6d19d97fd45720727f85bfd4c2d31d102d7d8b7be9df4c06140` |
+| Tagged Commit | `mainnet/ccm_hook@391176540` → `0c493e5` |
+| Verification Status | 🟢 Verified (on-chain hash matches verifiable build) |
 
-**Drift from main:** 3 commits not yet deployed:
-- `70e411b` fix: correct transfer fee accounting and add hook caller verification
-- `155f37c` fix: build fixes and safer defaults
-- `9742bee` feat: add admin_mint_v2 for CCM-v2 bootstrap
+**Drift from main:** 0 commits (up to date)
 
 ---
 
@@ -97,14 +89,18 @@ git diff <COMMIT>..main -- programs/ccm_hook/
 Tags created for live deployments:
 
 ```bash
-# Already pushed to origin:
+# Current deployment:
+mainnet/token_2022@391176164  →  0c493e5
+mainnet/ccm_hook@391176540    →  0c493e5
+
+# Previous deployments:
 mainnet/token_2022@390464000  →  3042848
 mainnet/ccm_hook@384832984    →  a56b21b
 ```
 
 To build from a tagged commit:
 ```bash
-git checkout mainnet/token_2022@390464000
+git checkout mainnet/token_2022@391176164
 anchor build --verifiable --program-name token_2022
 ```
 
