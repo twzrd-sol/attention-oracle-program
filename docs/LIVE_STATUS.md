@@ -6,7 +6,7 @@ repository.
 Until a repo commit is proven to reproduce the on-chain hash via a verifiable build (and is tagged), any statement like
 "this exact commit is live" is intentionally treated as **Unknown**.
 
-**Last updated:** 2026-01-04
+**Last updated:** 2026-01-05
 
 ---
 
@@ -14,8 +14,8 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 
 | Program | Verification | Deployed Slot (UTC) | On-Chain Hash | Tagged Commit |
 |---------|--------------|---------------------|--------------|---------------|
-| token_2022 | 🟢 Verified | `391176164` (2026-01-04T03:00:04Z) | `ca17ba59...` | `mainnet/token_2022@391176164` (`0c493e5`) |
-| ccm_hook | 🟢 Verified | `391176540` (2026-01-04T03:02:31Z) | `fae7cf0c...` | `mainnet/ccm_hook@391176540` (`0c493e5`) |
+| token_2022 | 🟢 Verified | `391176164` (2026-01-04T03:00:04Z) | `ca17ba59...` | `mainnet/token_2022@391176164` (`3215f7b`) |
+| ccm_hook | 🟢 Verified | `391176540` (2026-01-04T03:02:31Z) | `fae7cf0c...` | `mainnet/ccm_hook@391176540` (`3215f7b`) |
 
 ---
 
@@ -28,7 +28,7 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 | Last Deployed Slot | `391176164` |
 | Deploy Timestamp | 2026-01-04T03:00:04Z |
 | On-Chain Hash | `ca17ba5923d1867e1a66feb6aaa05e18b27ebeee0f98a04dcea8e5c6af6ab18d` |
-| Tagged Commit | `mainnet/token_2022@391176164` → `0c493e5` |
+| Tagged Commit | `mainnet/token_2022@391176164` → `3215f7b` |
 | Verification Status | 🟢 Verified (on-chain hash matches verifiable build) |
 
 **Drift from main:** 0 commits (up to date)
@@ -44,7 +44,7 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 | Last Deployed Slot | `391176540` |
 | Deploy Timestamp | 2026-01-04T03:02:31Z |
 | On-Chain Hash | `fae7cf0cd9fcd6d19d97fd45720727f85bfd4c2d31d102d7d8b7be9df4c06140` |
-| Tagged Commit | `mainnet/ccm_hook@391176540` → `0c493e5` |
+| Tagged Commit | `mainnet/ccm_hook@391176540` → `3215f7b` |
 | Verification Status | 🟢 Verified (on-chain hash matches verifiable build) |
 
 **Drift from main:** 0 commits (up to date)
@@ -90,8 +90,8 @@ Tags created for live deployments:
 
 ```bash
 # Current deployment:
-mainnet/token_2022@391176164  →  0c493e5
-mainnet/ccm_hook@391176540    →  0c493e5
+mainnet/token_2022@391176164  →  3215f7b
+mainnet/ccm_hook@391176540    →  3215f7b
 
 # Previous deployments:
 mainnet/token_2022@390464000  →  3042848

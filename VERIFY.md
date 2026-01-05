@@ -5,18 +5,18 @@ This repo contains two upgradeable programs deployed on Solana mainnet:
 - `token_2022` (oracle + claims + staking)
 - `ccm_hook` (Token-2022 transfer-hook helper program)
 
-Verification is intentionally treated as a first-class status item. Until the repo commit that matches the deployed
-bytecode is tagged (or mainnet is upgraded to a verifiable build of a tagged release), verification remains **Pending**
-(yellow).
+Verification is intentionally treated as a first-class status item. When the repo commit that matches the deployed
+bytecode is tagged (or mainnet is upgraded to a verifiable build of a tagged release), verification is **Verified**
+(green).
 
 ## Current Status (Mainnet)
 
 | Program | Program ID | Last Deployed Slot | On-Chain Executable Hash | Verification |
 |--------|-----------|--------------------|--------------------------|-------------|
-| token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `390464000` (`2025-12-31T21:06:25Z`) | `5898135a6fe46985d4329c6b18387593b9fc0c3ca5572c8133df2d59922916fe` | Pending |
-| ccm_hook | `8VE2Wt5JNusGUCwkrpVmdwgdgyD6vYPEHop2g2CAArzS` | `384832984` (`2025-12-06T08:54:41Z`) | `394a919a7b816c3ae323de1ea9927767af50f451c243670b39fed45e2298fa90` | Pending |
+| token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `391176164` (`2026-01-04T03:00:04Z`) | `ca17ba5923d1867e1a66feb6aaa05e18b27ebeee0f98a04dcea8e5c6af6ab18d` | Verified |
+| ccm_hook | `8VE2Wt5JNusGUCwkrpVmdwgdgyD6vYPEHop2g2CAArzS` | `391176540` (`2026-01-04T03:02:31Z`) | `fae7cf0cd9fcd6d19d97fd45720727f85bfd4c2d31d102d7d8b7be9df4c06140` | Verified |
 
-Repo `main` head does **not** currently match the on-chain hashes above.
+Repo `main` head matches the on-chain hashes above (commit `3215f7b`).
 
 ## Path 1: Solana Verify CLI (Recommended)
 
@@ -64,7 +64,7 @@ anchor verify --program-name token_2022 --current-dir GnGzNdsQMxMpJfMeqnkGPsvHm8
 anchor verify --program-name ccm_hook --current-dir 8VE2Wt5JNusGUCwkrpVmdwgdgyD6vYPEHop2g2CAArzS -- -u https://api.mainnet-beta.solana.com
 ```
 
-## How We Turn Pending → Verified
+## How We Keep Verified
 
 1) **Tag the exact deployed commit**
 
