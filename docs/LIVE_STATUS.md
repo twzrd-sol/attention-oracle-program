@@ -6,7 +6,7 @@ repository.
 Until a repo commit is proven to reproduce the on-chain hash via a verifiable build (and is tagged), any statement like
 "this exact commit is live" is intentionally treated as **Unknown**.
 
-**Last updated:** 2026-01-05
+**Last updated:** 2026-01-06
 
 ---
 
@@ -31,7 +31,7 @@ Until a repo commit is proven to reproduce the on-chain hash via a verifiable bu
 | Tagged Commit | `mainnet/token_2022@391176164` → `3215f7b` |
 | Verification Status | 🟢 Verified (on-chain hash matches verifiable build) |
 
-**Drift from main:** 0 commits (up to date)
+**Drift from main:** 1 commits (repo has unreleased changes)
 
 ---
 
