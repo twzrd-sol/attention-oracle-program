@@ -214,12 +214,17 @@ pub struct ClaimCumulative<'info> {
     )]
     pub claimer_ata: InterfaceAccount<'info, TokenAccount>,
 
+    /// CHECK: Wallet of the creator, verified by channel_config
+    #[account(address = channel_config.creator_wallet)]
+    pub creator_wallet: UncheckedAccount<'info>,
+
     /// Creator's token account for receiving fee split.
     /// Optional: If creator_fee_bps > 0, this must be provided.
     #[account(
-        mut,
+        init_if_needed,
+        payer = claimer,
         associated_token::mint = mint,
-        associated_token::authority = channel_config.creator_wallet,
+        associated_token::authority = creator_wallet,
         associated_token::token_program = token_program
     )]
     pub creator_ata: Option<InterfaceAccount<'info, TokenAccount>>,
@@ -423,12 +428,17 @@ pub struct ClaimCumulativeSponsored<'info> {
     )]
     pub claimer_ata: InterfaceAccount<'info, TokenAccount>,
 
+    /// CHECK: Wallet of the creator, verified by channel_config
+    #[account(address = channel_config.creator_wallet)]
+    pub creator_wallet: UncheckedAccount<'info>,
+
     /// Creator's token account for receiving fee split.
     /// Optional: If creator_fee_bps > 0, this must be provided.
     #[account(
-        mut,
+        init_if_needed,
+        payer = payer,
         associated_token::mint = mint,
-        associated_token::authority = channel_config.creator_wallet,
+        associated_token::authority = creator_wallet,
         associated_token::token_program = token_program
     )]
     pub creator_ata: Option<InterfaceAccount<'info, TokenAccount>>,
@@ -628,12 +638,17 @@ pub struct ClaimAndStakeSponsored<'info> {
     )]
     pub treasury_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    /// CHECK: Wallet of the creator, verified by channel_config
+    #[account(address = channel_config.creator_wallet)]
+    pub creator_wallet: UncheckedAccount<'info>,
+
     /// Creator's token account for receiving fee split (liquid).
     /// Optional: If creator_fee_bps > 0, this must be provided.
     #[account(
-        mut,
+        init_if_needed,
+        payer = payer,
         associated_token::mint = mint,
-        associated_token::authority = channel_config.creator_wallet,
+        associated_token::authority = creator_wallet,
         associated_token::token_program = token_program
     )]
     pub creator_ata: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
