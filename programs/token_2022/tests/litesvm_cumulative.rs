@@ -14,9 +14,9 @@ use solana_sdk::{
     message::Message,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
-    system_program,
     transaction::Transaction,
 };
+use solana_system_interface::program as system_program;
 use std::path::Path;
 
 // Program ID (must match declared_id! in lib.rs)
@@ -173,7 +173,7 @@ fn load_program(svm: &mut LiteSVM) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let program_bytes = std::fs::read(program_path)?;
-    svm.add_program(program_id(), &program_bytes);
+    svm.add_program(program_id(), &program_bytes)?;
     Ok(())
 }
 
@@ -333,7 +333,7 @@ fn test_initialize_protocol() {
             AccountMeta::new(admin.pubkey(), true),
             AccountMeta::new(protocol_state, false),
             AccountMeta::new(mint.pubkey(), true),
-            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new_readonly(system_program::ID, false),
         ],
         data,
     };
