@@ -5,8 +5,9 @@ use anchor_spl::{
 };
 
 use crate::constants::{
-    CHANNEL_CONFIG_V2_SEED, CLAIM_STATE_V2_SEED, CUMULATIVE_ROOT_HISTORY,
-    PROTOCOL_SEED, REWARD_PRECISION, STAKE_POOL_SEED, STAKE_VAULT_SEED, USER_STAKE_SEED,
+    calculate_boost_bps, BOOST_PRECISION, CHANNEL_CONFIG_V2_SEED, CLAIM_STATE_V2_SEED,
+    CUMULATIVE_ROOT_HISTORY, PROTOCOL_SEED, REWARD_PRECISION, STAKE_POOL_SEED,
+    STAKE_VAULT_SEED, USER_STAKE_SEED,
 };
 use crate::errors::OracleError;
 use crate::events::{CumulativeRewardsClaimed, InvisibleStaked};
@@ -831,7 +832,9 @@ pub fn claim_and_stake_sponsored<'info>(
     };
 
     // Update staking state
-    let ts = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let ts = clock.unix_timestamp;
+    let current_slot = clock.slot;
     let pool = &mut ctx.accounts.stake_pool;
     let user_stake = &mut ctx.accounts.user_stake;
 
@@ -854,6 +857,9 @@ pub fn claim_and_stake_sponsored<'info>(
         user_stake._reserved = [0u8; 24];
     }
 
+    // Capture old weighted stake before changes
+    let old_weight = user_stake.get_effective_stake();
+
     // Harvest any pending rewards before adding new stake
     let pending = calculate_pending_inline(user_stake, pool)?;
     if pending > 0 {
@@ -870,17 +876,32 @@ pub fn claim_and_stake_sponsored<'info>(
         .ok_or(OracleError::MathOverflow)?;
     user_stake.last_action_time = ts;
 
-    // Recalculate reward debt
-    user_stake.reward_debt = calculate_reward_debt_inline(
-        user_stake.staked_amount,
-        pool.acc_reward_per_share,
-    )?;
+    // Calculate new boost and weighted stake
+    let new_boost = calculate_boost_bps(user_stake.lock_end_slot, current_slot);
+    let new_weight = (user_stake.staked_amount as u128)
+        .checked_mul(new_boost as u128)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(BOOST_PRECISION as u128)
+        .ok_or(OracleError::MathOverflow)? as u64;
 
-    // Update pool total with actual received
+    // Update pool totals with weighted stake
+    let effective_total = pool.get_effective_total();
+    pool.total_weighted_stake = effective_total
+        .checked_sub(old_weight)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_add(new_weight)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // Raw total_staked for compatibility
     pool.total_staked = pool
         .total_staked
         .checked_add(actual_staked)
         .ok_or(OracleError::MathOverflow)?;
+
+    // Save weighted stake and reward debt
+    user_stake.weighted_stake = new_weight;
+    user_stake.reward_debt =
+        calculate_reward_debt_inline(new_weight, pool.acc_reward_per_share)?;
 
     // Update claim state
     claim_state.claimed_total = cumulative_total;
@@ -911,8 +932,11 @@ pub fn claim_and_stake_sponsored<'info>(
 // INLINE HELPERS (MasterChef-style, duplicated to avoid circular deps)
 // =============================================================================
 
+/// Update accumulated rewards per share based on time elapsed.
+/// Uses total_weighted_stake for boost-aware reward distribution.
 fn update_pool_rewards_inline(pool: &mut StakePool, current_time: i64) -> Result<()> {
-    if pool.total_staked == 0 {
+    let effective_total = pool.get_effective_total();
+    if effective_total == 0 {
         pool.last_reward_time = current_time;
         return Ok(());
     }
@@ -931,7 +955,7 @@ fn update_pool_rewards_inline(pool: &mut StakePool, current_time: i64) -> Result
     let reward_per_share = rewards
         .checked_mul(REWARD_PRECISION)
         .ok_or(OracleError::MathOverflow)?
-        .checked_div(pool.total_staked as u128)
+        .checked_div(effective_total as u128)
         .ok_or(OracleError::MathOverflow)?;
 
     pool.acc_reward_per_share = pool
@@ -943,12 +967,15 @@ fn update_pool_rewards_inline(pool: &mut StakePool, current_time: i64) -> Result
     Ok(())
 }
 
+/// Calculate pending rewards for a user.
+/// Uses effective (weighted) stake for boost-aware rewards.
 fn calculate_pending_inline(user_stake: &UserStake, pool: &StakePool) -> Result<u64> {
-    if user_stake.staked_amount == 0 {
+    let effective_stake = user_stake.get_effective_stake();
+    if effective_stake == 0 {
         return Ok(0);
     }
 
-    let accumulated = (user_stake.staked_amount as u128)
+    let accumulated = (effective_stake as u128)
         .checked_mul(pool.acc_reward_per_share)
         .ok_or(OracleError::MathOverflow)?
         .checked_div(REWARD_PRECISION)
@@ -961,8 +988,9 @@ fn calculate_pending_inline(user_stake: &UserStake, pool: &StakePool) -> Result<
     Ok(pending)
 }
 
-fn calculate_reward_debt_inline(staked_amount: u64, acc_reward_per_share: u128) -> Result<u128> {
-    let debt = (staked_amount as u128)
+/// Calculate reward debt for weighted stake amount.
+fn calculate_reward_debt_inline(weighted_amount: u64, acc_reward_per_share: u128) -> Result<u128> {
+    let debt = (weighted_amount as u128)
         .checked_mul(acc_reward_per_share)
         .ok_or(OracleError::MathOverflow)?
         .checked_div(REWARD_PRECISION)

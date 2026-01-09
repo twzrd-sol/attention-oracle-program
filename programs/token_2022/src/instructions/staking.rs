@@ -1,7 +1,7 @@
 use crate::{
     constants::{
-        MAX_LOCK_SLOTS, MIN_STAKE_AMOUNT, PROTOCOL_SEED, REWARD_PRECISION, STAKE_POOL_SEED,
-        STAKE_VAULT_SEED, USER_STAKE_SEED,
+        calculate_boost_bps, BOOST_PRECISION, MAX_LOCK_SLOTS, MIN_STAKE_AMOUNT, PROTOCOL_SEED,
+        REWARD_PRECISION, STAKE_POOL_SEED, STAKE_VAULT_SEED, USER_STAKE_SEED,
     },
     errors::OracleError,
     state::{ProtocolState, StakePool, UserStake},
@@ -228,6 +228,9 @@ pub fn stake<'info>(
         user_stake._reserved = [0u8; 24];
     }
 
+    // Capture old weighted stake BEFORE any modifications
+    let old_weight = user_stake.get_effective_stake();
+
     // Harvest pending rewards before adding new stake
     harvest_pending(user_stake, pool)?;
 
@@ -263,7 +266,7 @@ pub fn stake<'info>(
         .checked_sub(vault_balance_before)
         .ok_or(OracleError::MathOverflow)?;
 
-    // Update state with ACTUAL received amount, not input amount
+    // Update raw staked amount
     user_stake.staked_amount = user_stake
         .staked_amount
         .checked_add(actual_received)
@@ -275,13 +278,32 @@ pub fn stake<'info>(
         user_stake.lock_end_slot = new_lock_end;
     }
 
-    user_stake.last_action_time = ts;
-    user_stake.reward_debt = calculate_reward_debt(user_stake.staked_amount, pool.acc_reward_per_share)?;
+    // Calculate new boost and weighted stake
+    let new_boost = calculate_boost_bps(user_stake.lock_end_slot, current_slot);
+    let new_weight = (user_stake.staked_amount as u128)
+        .checked_mul(new_boost as u128)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(BOOST_PRECISION as u128)
+        .ok_or(OracleError::MathOverflow)? as u64;
 
+    // Update pool totals: remove old weight, add new weight
+    let effective_total = pool.get_effective_total();
+    pool.total_weighted_stake = effective_total
+        .checked_sub(old_weight)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_add(new_weight)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // Update raw total_staked for backwards compat
     pool.total_staked = pool
         .total_staked
         .checked_add(actual_received)
         .ok_or(OracleError::MathOverflow)?;
+
+    // Save user's new weighted stake
+    user_stake.weighted_stake = new_weight;
+    user_stake.last_action_time = ts;
+    user_stake.reward_debt = calculate_reward_debt(new_weight, pool.acc_reward_per_share)?;
 
     emit!(Staked {
         user: ctx.accounts.user.key(),
@@ -378,6 +400,9 @@ pub fn unstake<'info>(ctx: Context<'_, '_, '_, 'info, Unstake<'info>>, amount: u
         OracleError::InsufficientStake
     );
 
+    // Capture old weighted stake BEFORE any modifications
+    let old_weight = ctx.accounts.user_stake.get_effective_stake();
+
     // Extract values needed for CPI before mutable borrows
     let mint_key = ctx.accounts.mint.key();
     let pool_bump = ctx.accounts.stake_pool.bump;
@@ -433,12 +458,32 @@ pub fn unstake<'info>(ctx: Context<'_, '_, '_, 'info, Unstake<'info>>, amount: u
         .checked_sub(amount)
         .ok_or(OracleError::MathOverflow)?;
 
+    // Calculate new boost and weighted stake (lock may have expired)
+    let new_boost = calculate_boost_bps(user_stake.lock_end_slot, current_slot);
+    let new_weight = (user_stake.staked_amount as u128)
+        .checked_mul(new_boost as u128)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(BOOST_PRECISION as u128)
+        .ok_or(OracleError::MathOverflow)? as u64;
+
+    // Save user's new weighted stake
+    user_stake.weighted_stake = new_weight;
     user_stake.last_action_time = ts;
-    user_stake.reward_debt = calculate_reward_debt(user_stake.staked_amount, acc_reward_per_share)?;
+    user_stake.reward_debt = calculate_reward_debt(new_weight, acc_reward_per_share)?;
 
     let remaining_stake = user_stake.staked_amount;
 
     let pool = &mut ctx.accounts.stake_pool;
+
+    // Update pool weighted total: remove old weight, add new weight
+    let effective_total = pool.get_effective_total();
+    pool.total_weighted_stake = effective_total
+        .checked_sub(old_weight)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_add(new_weight)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // Update raw total_staked for backwards compat
     pool.total_staked = pool
         .total_staked
         .checked_sub(amount)
@@ -637,9 +682,9 @@ pub fn claim_stake_rewards<'info>(
         ctx.remaining_accounts,
     )?;
 
-    // Reset pending rewards and update debt
+    // Reset pending rewards and update debt using weighted stake
     user_stake.pending_rewards = 0;
-    user_stake.reward_debt = calculate_reward_debt(user_stake.staked_amount, pool.acc_reward_per_share)?;
+    user_stake.reward_debt = calculate_reward_debt(user_stake.get_effective_stake(), pool.acc_reward_per_share)?;
     user_stake.last_action_time = ts;
 
     emit!(RewardsClaimed {
@@ -657,9 +702,11 @@ pub fn claim_stake_rewards<'info>(
 // HELPER FUNCTIONS (MasterChef-style accounting)
 // =============================================================================
 
-/// Update accumulated rewards per share based on time elapsed
+/// Update accumulated rewards per share based on time elapsed.
+/// Uses total_weighted_stake for boost-aware reward distribution.
 fn update_pool_rewards(pool: &mut StakePool, current_time: i64) -> Result<()> {
-    if pool.total_staked == 0 {
+    let effective_total = pool.get_effective_total();
+    if effective_total == 0 {
         pool.last_reward_time = current_time;
         return Ok(());
     }
@@ -676,11 +723,11 @@ fn update_pool_rewards(pool: &mut StakePool, current_time: i64) -> Result<()> {
         .checked_mul(pool.reward_rate as u128)
         .ok_or(OracleError::MathOverflow)?;
 
-    // acc_reward_per_share += (rewards * PRECISION) / total_staked
+    // acc_reward_per_share += (rewards * PRECISION) / total_weighted_stake
     let reward_per_share = rewards
         .checked_mul(REWARD_PRECISION)
         .ok_or(OracleError::MathOverflow)?
-        .checked_div(pool.total_staked as u128)
+        .checked_div(effective_total as u128)
         .ok_or(OracleError::MathOverflow)?;
 
     pool.acc_reward_per_share = pool
@@ -692,14 +739,16 @@ fn update_pool_rewards(pool: &mut StakePool, current_time: i64) -> Result<()> {
     Ok(())
 }
 
-/// Calculate pending rewards for a user
+/// Calculate pending rewards for a user.
+/// Uses effective (weighted) stake for boost-aware rewards.
 fn calculate_pending_rewards(user_stake: &UserStake, pool: &StakePool) -> Result<u64> {
-    if user_stake.staked_amount == 0 {
+    let effective_stake = user_stake.get_effective_stake();
+    if effective_stake == 0 {
         return Ok(0);
     }
 
-    // accumulated = (staked_amount * acc_reward_per_share) / PRECISION
-    let accumulated = (user_stake.staked_amount as u128)
+    // accumulated = (weighted_stake * acc_reward_per_share) / PRECISION
+    let accumulated = (effective_stake as u128)
         .checked_mul(pool.acc_reward_per_share)
         .ok_or(OracleError::MathOverflow)?
         .checked_div(REWARD_PRECISION)
@@ -713,9 +762,10 @@ fn calculate_pending_rewards(user_stake: &UserStake, pool: &StakePool) -> Result
     Ok(pending)
 }
 
-/// Calculate reward debt for current stake
-fn calculate_reward_debt(staked_amount: u64, acc_reward_per_share: u128) -> Result<u128> {
-    let debt = (staked_amount as u128)
+/// Calculate reward debt for weighted stake amount.
+/// Uses weighted_amount (not raw staked_amount) for boost-aware accounting.
+fn calculate_reward_debt(weighted_amount: u64, acc_reward_per_share: u128) -> Result<u128> {
+    let debt = (weighted_amount as u128)
         .checked_mul(acc_reward_per_share)
         .ok_or(OracleError::MathOverflow)?
         .checked_div(REWARD_PRECISION)
