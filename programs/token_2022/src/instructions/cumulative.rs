@@ -801,8 +801,7 @@ pub fn claim_and_stake_sponsored<'info>(
 
     // Transfer to STAKE VAULT (locked - no sell pressure)
     // Track actual received amount due to transfer fees
-    let actual_staked: u64;
-    if stake_amount > 0 {
+    let actual_staked: u64 = if stake_amount > 0 {
         // Record vault balance BEFORE transfer
         let vault_balance_before = ctx.accounts.stake_vault.amount;
 
@@ -824,12 +823,12 @@ pub fn claim_and_stake_sponsored<'info>(
         let vault_balance_after = ctx.accounts.stake_vault.amount;
 
         // Calculate actual received (accounts for transfer fees)
-        actual_staked = vault_balance_after
+        vault_balance_after
             .checked_sub(vault_balance_before)
-            .ok_or(OracleError::MathOverflow)?;
+            .ok_or(OracleError::MathOverflow)?
     } else {
-        actual_staked = 0;
-    }
+        0
+    };
 
     // Update staking state
     let ts = Clock::get()?.unix_timestamp;
