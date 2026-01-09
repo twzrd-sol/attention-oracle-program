@@ -284,7 +284,6 @@ fn test_discriminator_computation() {
 }
 
 #[test]
-#[ignore] // Run with: cargo test test_program_load -- --ignored
 fn test_program_load() {
     let mut svm = LiteSVM::new();
 
@@ -302,7 +301,6 @@ fn test_program_load() {
 // ============================================================================
 
 #[test]
-#[ignore] // Run with: cargo test test_initialize_protocol -- --ignored
 fn test_initialize_protocol() {
     let mut svm = LiteSVM::new();
 
