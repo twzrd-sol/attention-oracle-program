@@ -157,11 +157,24 @@ pub struct StakePool {
     pub last_reward_time: i64,
     pub reward_rate: u64,
     pub authority: Pubkey,
-    pub _reserved: [u8; 64],
+    /// Sum of all users' weighted stake amounts (for boosted reward distribution)
+    pub total_weighted_stake: u64,
+    pub _reserved: [u8; 56],
 }
 
 impl StakePool {
-    pub const LEN: usize = 8 + 1 + 1 + 32 + 8 + 16 + 8 + 8 + 32 + 64;
+    // LEN preserved: 64 bytes _reserved -> 8 bytes total_weighted_stake + 56 bytes _reserved
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 8 + 16 + 8 + 8 + 32 + 8 + 56;
+
+    /// Get effective total stake for reward calculations.
+    /// Falls back to total_staked if total_weighted_stake is 0 (legacy/uninitialized).
+    pub fn get_effective_total(&self) -> u64 {
+        if self.total_weighted_stake > 0 {
+            self.total_weighted_stake
+        } else {
+            self.total_staked
+        }
+    }
 }
 
 /// Per-user stake position.
@@ -177,9 +190,22 @@ pub struct UserStake {
     pub reward_debt: u128,
     pub pending_rewards: u64,
     pub last_action_time: i64,
-    pub _reserved: [u8; 32],
+    /// Cached weighted stake (staked_amount * boost multiplier)
+    pub weighted_stake: u64,
+    pub _reserved: [u8; 24],
 }
 
 impl UserStake {
-    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 8 + 1 + 32 + 8 + 16 + 8 + 8 + 32;
+    // LEN preserved: 32 bytes _reserved -> 8 bytes weighted_stake + 24 bytes _reserved
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 8 + 1 + 32 + 8 + 16 + 8 + 8 + 8 + 24;
+
+    /// Get effective stake weight for reward calculations.
+    /// Falls back to staked_amount if weighted_stake is 0 (legacy/uninitialized).
+    pub fn get_effective_stake(&self) -> u64 {
+        if self.weighted_stake > 0 {
+            self.weighted_stake
+        } else {
+            self.staked_amount
+        }
+    }
 }

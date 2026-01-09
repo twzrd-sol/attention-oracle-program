@@ -60,6 +60,36 @@ pub const MAX_LOCK_SLOTS: u64 = 432_000 * 30;
 pub const REWARD_PRECISION: u128 = 1_000_000_000_000; // 1e12
 
 // =============================================================================
+// STAKING BOOST
+// =============================================================================
+
+/// Precision for boost calculations (100% = 10000)
+pub const BOOST_PRECISION: u64 = 10_000;
+
+/// Slots per day (approximate at 400ms slot time)
+pub const SLOTS_PER_DAY: u64 = 216_000;
+
+/// Calculate boost basis points based on remaining lock duration.
+/// Returns multiplier in basis points (10000 = 1.0x, 30000 = 3.0x)
+pub fn calculate_boost_bps(lock_end_slot: u64, current_slot: u64) -> u64 {
+    if lock_end_slot <= current_slot {
+        return BOOST_PRECISION; // 1.0x - no lock or expired
+    }
+
+    let remaining_slots = lock_end_slot - current_slot;
+    let days = remaining_slots / SLOTS_PER_DAY;
+
+    match days {
+        0..=6 => 10_000,      // 1.0x   - less than 7 days
+        7..=29 => 12_500,     // 1.25x  - 7-29 days
+        30..=89 => 15_000,    // 1.5x   - 30-89 days
+        90..=179 => 20_000,   // 2.0x   - 90-179 days
+        180..=364 => 25_000,  // 2.5x   - 180-364 days
+        _ => 30_000,          // 3.0x   - 365+ days
+    }
+}
+
+// =============================================================================
 // PASSPORT / IDENTITY
 // =============================================================================
 

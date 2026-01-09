@@ -118,7 +118,8 @@ pub fn initialize_stake_pool(ctx: Context<InitializeStakePool>, reward_rate: u64
     pool.last_reward_time = ts;
     pool.reward_rate = reward_rate;
     pool.authority = ctx.accounts.admin.key();
-    pool._reserved = [0u8; 64];
+    pool.total_weighted_stake = 0;
+    pool._reserved = [0u8; 56];
 
     emit!(StakePoolInitialized {
         mint: pool.mint,
@@ -223,7 +224,8 @@ pub fn stake<'info>(
         user_stake.reward_debt = 0;
         user_stake.pending_rewards = 0;
         user_stake.last_action_time = ts;
-        user_stake._reserved = [0u8; 32];
+        user_stake.weighted_stake = 0;
+        user_stake._reserved = [0u8; 24];
     }
 
     // Harvest pending rewards before adding new stake

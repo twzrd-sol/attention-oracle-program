@@ -850,7 +850,8 @@ pub fn claim_and_stake_sponsored<'info>(
         user_stake.reward_debt = 0;
         user_stake.pending_rewards = 0;
         user_stake.last_action_time = ts;
-        user_stake._reserved = [0u8; 32];
+        user_stake.weighted_stake = 0;
+        user_stake._reserved = [0u8; 24];
     }
 
     // Harvest any pending rewards before adding new stake
