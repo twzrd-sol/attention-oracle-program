@@ -31,6 +31,8 @@ sha3 = "0.10"
 solana-security-txt = "1.1"
 
 [dev-dependencies]
+# litesvm 0.7.1 uses Solana SDK 2.3, compatible with anchor-spl 0.32.1
+# NOTE: litesvm 0.8+ uses Solana 3.x types (incompatible with Anchor 0.32.x)
 litesvm = "0.7.1"
 solana-sdk = "2.2"
 solana-system-interface = "1.0"
