@@ -18,10 +18,6 @@ no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 security-txt = []
-receipts = []
-# Legacy feature removed
-demo = []
-migration = []
 
 [dependencies]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed", "interface-instructions"] }

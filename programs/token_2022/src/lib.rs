@@ -311,13 +311,4 @@ pub mod token_2022 {
     ) -> Result<()> {
         instructions::staking::claim_stake_rewards(ctx)
     }
-
-    // -------------------------------------------------------------------------
-    // Migration (Feature-gated)
-    // -------------------------------------------------------------------------
-
-    #[cfg(feature = "migration")]
-    pub fn migrate(ctx: Context<Migrate>, amount: u64) -> Result<()> {
-        instructions::migrate::migrate(ctx, amount)
-    }
 }

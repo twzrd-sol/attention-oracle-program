@@ -8,9 +8,6 @@ pub mod initialize_mint;
 pub mod passport;
 pub mod staking;
 
-#[cfg(feature = "migration")]
-pub mod migrate;
-
 // Re-exports
 pub use admin::*;
 pub use channel::*;
@@ -19,6 +16,3 @@ pub use governance::*;
 pub use initialize_mint::*;
 pub use passport::*;
 pub use staking::*;
-
-#[cfg(feature = "migration")]
-pub use migrate::*;
