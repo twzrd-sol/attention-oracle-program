@@ -13,6 +13,20 @@ pub const PASSPORT_SEED: &[u8] = b"passport_owner";
 pub const STAKE_POOL_SEED: &[u8] = b"stake_pool";
 pub const USER_STAKE_SEED: &[u8] = b"user_stake";
 pub const STAKE_VAULT_SEED: &[u8] = b"stake_vault";
+pub const WITHDRAW_TRACKER_SEED: &[u8] = b"withdraw_tracker";
+
+// =============================================================================
+// TREASURY WITHDRAW LIMITS
+// =============================================================================
+
+/// Maximum single withdrawal (50M CCM with 9 decimals)
+pub const MAX_WITHDRAW_PER_TX: u64 = 50_000_000 * 1_000_000_000;
+
+/// Maximum daily withdrawal (100M CCM with 9 decimals)
+pub const MAX_WITHDRAW_PER_DAY: u64 = 100_000_000 * 1_000_000_000;
+
+/// Seconds in a day (for daily limit reset)
+pub const SECONDS_PER_DAY: i64 = 86_400;
 
 // =============================================================================
 // CUMULATIVE V2 CLAIMS

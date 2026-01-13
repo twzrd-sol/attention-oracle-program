@@ -1,9 +1,16 @@
 use crate::{
-    constants::PROTOCOL_SEED,
+    constants::{
+        PROTOCOL_SEED, WITHDRAW_TRACKER_SEED,
+        MAX_WITHDRAW_PER_TX, MAX_WITHDRAW_PER_DAY, SECONDS_PER_DAY,
+    },
     errors::OracleError,
-    state::ProtocolState,
+    events::TreasuryWithdrawn,
+    state::{ProtocolState, WithdrawTracker},
+    token_transfer::transfer_checked_with_remaining,
 };
 use anchor_lang::prelude::*;
+use anchor_spl::token_2022::spl_token_2022;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 /// Update the allowlisted publisher (singleton protocol_state)
 #[derive(Accounts)]
@@ -176,5 +183,158 @@ pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> 
     require!(new_admin != Pubkey::default(), OracleError::InvalidPubkey);
     let state = &mut ctx.accounts.protocol_state;
     state.admin = new_admin;
+    Ok(())
+}
+
+// =============================================================================
+// TREASURY WITHDRAW (ADMIN ONLY)
+// =============================================================================
+
+/// Admin-only treasury withdrawal with rate limits.
+/// Security controls:
+/// - Per-transaction limit: 50M CCM
+/// - Per-day limit: 100M CCM
+/// - Events emitted for audit trail
+/// - Only protocol admin can call
+#[derive(Accounts)]
+pub struct AdminWithdraw<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        init_if_needed,
+        payer = admin,
+        space = WithdrawTracker::LEN,
+        seeds = [WITHDRAW_TRACKER_SEED, mint.key().as_ref()],
+        bump,
+    )]
+    pub withdraw_tracker: Account<'info, WithdrawTracker>,
+
+    #[account(
+        constraint = mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    /// Treasury token account (owned by protocol_state PDA)
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = protocol_state,
+        associated_token::token_program = token_program,
+    )]
+    pub treasury_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Destination token account for withdrawn funds
+    #[account(
+        mut,
+        constraint = destination_ata.mint == mint.key() @ OracleError::InvalidMint,
+    )]
+    pub destination_ata: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(
+        constraint = token_program.key() == spl_token_2022::ID @ OracleError::InvalidTokenProgram,
+    )]
+    pub token_program: Interface<'info, TokenInterface>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn admin_withdraw<'info>(
+    ctx: Context<'_, '_, '_, 'info, AdminWithdraw<'info>>,
+    amount: u64,
+) -> Result<()> {
+    // Validate amount > 0
+    require!(amount > 0, OracleError::InvalidAmount);
+
+    // Validate per-transaction limit
+    require!(amount <= MAX_WITHDRAW_PER_TX, OracleError::ExceedsWithdrawLimit);
+
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
+    let tracker = &mut ctx.accounts.withdraw_tracker;
+
+    // Initialize tracker if new
+    if tracker.version == 0 {
+        tracker.version = 1;
+        tracker.mint = ctx.accounts.mint.key();
+        tracker.day_start = now - (now % SECONDS_PER_DAY);
+        tracker.withdrawn_today = 0;
+        tracker.total_withdrawn = 0;
+        tracker.last_withdraw_at = 0;
+    }
+
+    // Check if we've rolled into a new day (reset daily counter)
+    let current_day_start = now - (now % SECONDS_PER_DAY);
+    if current_day_start > tracker.day_start {
+        tracker.day_start = current_day_start;
+        tracker.withdrawn_today = 0;
+    }
+
+    // Validate daily limit
+    let new_daily_total = tracker.withdrawn_today
+        .checked_add(amount)
+        .ok_or(OracleError::MathOverflow)?;
+    require!(new_daily_total <= MAX_WITHDRAW_PER_DAY, OracleError::DailyLimitExceeded);
+
+    // Validate treasury balance
+    require!(
+        ctx.accounts.treasury_ata.amount >= amount,
+        OracleError::InsufficientTreasuryBalance
+    );
+
+    // Execute transfer (PDA signs)
+    let mint_key = ctx.accounts.mint.key();
+    let seeds = &[
+        PROTOCOL_SEED,
+        mint_key.as_ref(),
+        &[ctx.accounts.protocol_state.bump],
+    ];
+    let signer_seeds = &[&seeds[..]];
+
+    transfer_checked_with_remaining(
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.treasury_ata.to_account_info(),
+        &ctx.accounts.mint.to_account_info(),
+        &ctx.accounts.destination_ata.to_account_info(),
+        &ctx.accounts.protocol_state.to_account_info(),
+        amount,
+        ctx.accounts.mint.decimals,
+        signer_seeds,
+        ctx.remaining_accounts,
+    )?;
+
+    // Update tracker
+    tracker.withdrawn_today = new_daily_total;
+    tracker.total_withdrawn = tracker.total_withdrawn
+        .checked_add(amount)
+        .ok_or(OracleError::MathOverflow)?;
+    tracker.last_withdraw_at = now;
+
+    // Emit audit event
+    emit!(TreasuryWithdrawn {
+        admin: ctx.accounts.admin.key(),
+        destination: ctx.accounts.destination_ata.key(),
+        amount,
+        withdrawn_today: tracker.withdrawn_today,
+        total_withdrawn: tracker.total_withdrawn,
+        timestamp: now,
+    });
+
+    msg!(
+        "Treasury withdraw: {} CCM to {}, daily total: {}/{}",
+        amount / 1_000_000_000,
+        ctx.accounts.destination_ata.key(),
+        tracker.withdrawn_today / 1_000_000_000,
+        MAX_WITHDRAW_PER_DAY / 1_000_000_000,
+    );
+
     Ok(())
 }

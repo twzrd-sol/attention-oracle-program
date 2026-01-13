@@ -59,3 +59,15 @@ pub struct InvisibleStaked {
     pub root_seq: u64,
     pub total_staked: u64,
 }
+
+/// Emitted when admin withdraws from treasury.
+/// Critical audit event - monitor this off-chain.
+#[event]
+pub struct TreasuryWithdrawn {
+    pub admin: Pubkey,
+    pub destination: Pubkey,
+    pub amount: u64,
+    pub withdrawn_today: u64,
+    pub total_withdrawn: u64,
+    pub timestamp: i64,
+}

@@ -112,6 +112,12 @@ pub enum OracleError {
     #[msg("Invalid amount")]
     InvalidAmount,
 
+    #[msg("Withdrawal exceeds per-transaction limit (50M CCM)")]
+    ExceedsWithdrawLimit,
+
+    #[msg("Withdrawal exceeds daily limit (100M CCM)")]
+    DailyLimitExceeded,
+
     // =========================================================================
     // STAKING
     // =========================================================================

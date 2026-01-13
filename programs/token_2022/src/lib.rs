@@ -225,6 +225,15 @@ pub mod token_2022 {
         instructions::admin::update_admin(ctx, new_admin)
     }
 
+    /// Admin-only treasury withdrawal with rate limits.
+    /// Security: 50M CCM per tx, 100M CCM per day, audit events emitted.
+    pub fn admin_withdraw<'info>(
+        ctx: Context<'_, '_, '_, 'info, AdminWithdraw<'info>>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::admin::admin_withdraw(ctx, amount)
+    }
+
     // -------------------------------------------------------------------------
     // Identity
     // -------------------------------------------------------------------------

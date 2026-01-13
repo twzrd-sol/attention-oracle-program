@@ -143,6 +143,31 @@ impl ClaimStateV2 {
 }
 
 // =============================================================================
+// TREASURY WITHDRAW TRACKING
+// =============================================================================
+
+/// Tracks daily withdrawal limits for treasury admin withdrawals.
+/// Resets automatically when a new day begins.
+#[account]
+pub struct WithdrawTracker {
+    pub version: u8,
+    pub bump: u8,
+    pub mint: Pubkey,
+    /// Unix timestamp of the current tracking day (start of day)
+    pub day_start: i64,
+    /// Amount withdrawn so far today (resets when day changes)
+    pub withdrawn_today: u64,
+    /// Total amount ever withdrawn (audit trail)
+    pub total_withdrawn: u64,
+    /// Last withdrawal timestamp
+    pub last_withdraw_at: i64,
+}
+
+impl WithdrawTracker {
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 8 + 8 + 8 + 8;
+}
+
+// =============================================================================
 // STAKING
 // =============================================================================
 
