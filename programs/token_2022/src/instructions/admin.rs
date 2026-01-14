@@ -262,10 +262,42 @@ pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> 
 // =============================================================================
 // TREASURY WITHDRAW
 // =============================================================================
+//
+// SECURITY CONTEXT (read before flagging as "backdoor"):
+//
+// This instruction exists for legitimate operational needs:
+// - LP seeding (adding liquidity to DEXs like Meteora/Raydium)
+// - Partner/creator payments
+// - Protocol operational expenses
+//
+// It is NOT an unlimited withdrawal mechanism. Constraints:
+//
+// 1. RATE LIMITS: 50M per tx, 100M per day (~5% of supply)
+//    - At max rate, full drain would take ~20 days
+//    - Provides time window to detect compromise and respond
+//
+// 2. AUDIT TRAIL: Every withdrawal emits TreasuryWithdrawn event
+//    - On-chain, immutable record of all fund movements
+//    - Monitoring bots can alert on unusual patterns
+//
+// 3. GOVERNANCE ROADMAP:
+//    - Current: Single admin key (operational phase)
+//    - Phase 2: Multisig (3-of-5) before significant withdrawals
+//    - Phase 3: DAO governance with timelock
+//
+// 4. PDA CONTROL: Treasury is owned by protocol_state PDA
+//    - No private key can directly move funds
+//    - Only this instruction (with constraints) can transfer
+//
+// The rate limits are a circuit breaker, not a security guarantee.
+// The real security comes from key management (multisig) and monitoring.
+// =============================================================================
 
 /// Admin treasury withdrawal with rate limits.
 /// - Per-transaction limit: 50M CCM
-/// - Per-day limit: 100M CCM
+/// - Per-day limit: 100M CCM (~5% of 2B supply)
+///
+/// See SECURITY CONTEXT comment block above for rationale.
 #[derive(Accounts)]
 pub struct AdminWithdraw<'info> {
     #[account(mut)]

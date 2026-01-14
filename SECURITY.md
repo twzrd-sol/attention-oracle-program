@@ -51,6 +51,24 @@ anchor build --verifiable
 solana-verify get-executable-hash target/verifiable/token_2022.so
 ```
 
+## Treasury Controls
+
+The `admin_withdraw` instruction allows treasury fund movement with rate limits:
+
+| Limit | Value | Rationale |
+|-------|-------|-----------|
+| Per-tx | 50M CCM | Bounds single-transaction exposure |
+| Per-day | 100M CCM | ~5% of supply; 20-day minimum drain time |
+
+**Design rationale:** Rate limits are a circuit breaker providing detection/response time if admin key is compromised. They are not a substitute for proper key management.
+
+**Governance roadmap:**
+1. Current: Single admin key with rate limits
+2. Phase 2: Multisig (3-of-5) via Squads/Realms
+3. Phase 3: DAO governance with timelock
+
+See [docs/TREASURY.md](/docs/TREASURY.md) for full details.
+
 ## Audit Status
 
 - [ ] Formal audit pending
