@@ -236,6 +236,8 @@ pub struct AdminWithdraw<'info> {
     #[account(
         mut,
         constraint = destination_ata.mint == mint.key() @ OracleError::InvalidMint,
+        // FIX: Ensure the account is owned by the expected token program (Token-2022)
+        constraint = *destination_ata.to_account_info().owner == spl_token_2022::ID @ OracleError::InvalidTokenProgram,
     )]
     pub destination_ata: InterfaceAccount<'info, TokenAccount>,
 

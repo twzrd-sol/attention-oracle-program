@@ -261,6 +261,12 @@ pub fn claim_cumulative<'info>(
     require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
     require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
 
+    // FIX: Early validation - fail fast if creator fee is set but ATA is missing
+    require!(
+        cfg.creator_fee_bps == 0 || ctx.accounts.creator_ata.is_some(),
+        OracleError::MissingCreatorAta
+    );
+
     let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
     let entry = cfg.roots[idx];
     require!(entry.seq == root_seq, OracleError::RootTooOldOrMissing);
@@ -474,6 +480,12 @@ pub fn claim_cumulative_sponsored<'info>(
     require!(cfg.version == CHANNEL_CONFIG_V2_VERSION, OracleError::InvalidChannelState);
     require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
     require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
+
+    // FIX: Early validation - fail fast if creator fee is set but ATA is missing
+    require!(
+        cfg.creator_fee_bps == 0 || ctx.accounts.creator_ata.is_some(),
+        OracleError::MissingCreatorAta
+    );
 
     let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
     let entry = cfg.roots[idx];
@@ -715,6 +727,12 @@ pub fn claim_and_stake_sponsored<'info>(
     require!(cfg.version == CHANNEL_CONFIG_V2_VERSION, OracleError::InvalidChannelState);
     require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
     require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
+
+    // FIX: Early validation - fail fast if creator fee is set but ATA is missing
+    require!(
+        cfg.creator_fee_bps == 0 || ctx.accounts.creator_ata.is_some(),
+        OracleError::MissingCreatorAta
+    );
 
     // Validate root exists
     let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
@@ -1082,6 +1100,10 @@ pub fn migrate_channel_config_v2(
     // Read old fields we need to preserve
     let (version, bump, mint_bytes, subject_bytes, authority_bytes, latest_root_seq, cutover_epoch) = {
         let data = account_info.try_borrow_data()?;
+        // FIX: Bounds check before slicing to prevent panic
+        if data.len() < 122 {
+            return Err(OracleError::InvalidChannelState.into());
+        }
         let version = data[8];
         let bump = data[9];
         let mut mint = [0u8; 32];
@@ -1090,8 +1112,13 @@ pub fn migrate_channel_config_v2(
         subject.copy_from_slice(&data[42..74]);
         let mut authority = [0u8; 32];
         authority.copy_from_slice(&data[74..106]);
-        let latest_root_seq = u64::from_le_bytes(data[106..114].try_into().unwrap());
-        let cutover_epoch = u64::from_le_bytes(data[114..122].try_into().unwrap());
+        // FIX: Replace unwrap() with proper error handling
+        let latest_root_seq = u64::from_le_bytes(
+            data[106..114].try_into().map_err(|_| OracleError::InvalidChannelState)?
+        );
+        let cutover_epoch = u64::from_le_bytes(
+            data[114..122].try_into().map_err(|_| OracleError::InvalidChannelState)?
+        );
         (version, bump, mint, subject, authority, latest_root_seq, cutover_epoch)
     };
 
