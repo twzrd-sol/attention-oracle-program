@@ -10,21 +10,31 @@ use crate::constants::{
     STAKE_VAULT_SEED, USER_STAKE_SEED,
 };
 use crate::errors::OracleError;
-use crate::events::{CumulativeRewardsClaimed, InvisibleStaked};
+use crate::events::{CumulativeRewardsClaimed, InvisibleStaked, CreatorFeeUpdated, RootSeqRecovered};
 use crate::merkle_proof::{compute_cumulative_leaf, verify_proof};
 use crate::state::{ChannelConfigV2, ClaimStateV2, ProtocolState, RootEntry, StakePool, UserStake};
 
 use super::channel::derive_subject_id;
 
 const CHANNEL_CONFIG_V2_VERSION: u8 = 1;
+const CLAIM_STATE_V2_VERSION: u8 = 1;
+const MAX_PROOF_LEN: usize = 32;
+const MAX_CHANNEL_LEN: usize = 64;
 
 /// Helper to get subject_id as [u8; 32] for use in Anchor seeds.
 /// Avoids lifetime issues with Pubkey::as_ref() in macro expansion.
 fn subject_id_bytes(channel: &str) -> [u8; 32] {
     derive_subject_id(channel).to_bytes()
 }
-const CLAIM_STATE_V2_VERSION: u8 = 1;
-const MAX_PROOF_LEN: usize = 32;
+
+/// Validate channel name: 1-64 ASCII characters.
+fn validate_channel(channel: &str) -> Result<()> {
+    require!(
+        !channel.is_empty() && channel.len() <= MAX_CHANNEL_LEN && channel.is_ascii(),
+        OracleError::InvalidChannelName
+    );
+    Ok(())
+}
 
 // =============================================================================
 // INITIALIZE CHANNEL CONFIG (V2)
@@ -63,6 +73,8 @@ pub fn initialize_channel_cumulative(
     creator_wallet: Pubkey,
     creator_fee_bps: u16,
 ) -> Result<()> {
+    validate_channel(&channel)?;
+
     let protocol_state = &ctx.accounts.protocol_state;
 
     // Authorization: admin or allowlisted publisher
@@ -130,6 +142,8 @@ pub fn publish_cumulative_root(
     root: [u8; 32],
     dataset_hash: [u8; 32],
 ) -> Result<()> {
+    validate_channel(&channel)?;
+
     let protocol_state = &ctx.accounts.protocol_state;
 
     // Authorization: admin or allowlisted publisher
@@ -242,6 +256,8 @@ pub fn claim_cumulative<'info>(
     cumulative_total: u64,
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
+    validate_channel(&channel)?;
+
     let protocol_state = &ctx.accounts.protocol_state;
     let cfg = &ctx.accounts.channel_config;
 
@@ -462,6 +478,8 @@ pub fn claim_cumulative_sponsored<'info>(
     cumulative_total: u64,
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
+    validate_channel(&channel)?;
+
     let protocol_state = &ctx.accounts.protocol_state;
     let cfg = &ctx.accounts.channel_config;
 
@@ -709,6 +727,8 @@ pub fn claim_and_stake_sponsored<'info>(
     cumulative_total: u64,
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
+    validate_channel(&channel)?;
+
     let protocol_state = &ctx.accounts.protocol_state;
     let cfg = &ctx.accounts.channel_config;
 
@@ -1057,10 +1077,12 @@ pub struct MigrateChannelConfigV2<'info> {
 
 pub fn migrate_channel_config_v2(
     ctx: Context<MigrateChannelConfigV2>,
-    _channel: String,
+    channel: String,
     creator_wallet: Pubkey,
     creator_fee_bps: u16,
 ) -> Result<()> {
+    validate_channel(&channel)?;
+
     let protocol_state = &ctx.accounts.protocol_state;
     let payer = &ctx.accounts.payer;
 
@@ -1219,14 +1241,23 @@ pub struct UpdateChannelCreatorFee<'info> {
 
 pub fn update_channel_creator_fee(
     ctx: Context<UpdateChannelCreatorFee>,
-    _channel: String,
+    channel: String,
     new_creator_fee_bps: u16,
 ) -> Result<()> {
+    validate_channel(&channel)?;
     require!(new_creator_fee_bps <= 5000, OracleError::CreatorFeeTooHigh);
 
     let cfg = &mut ctx.accounts.channel_config;
     let old_fee = cfg.creator_fee_bps;
     cfg.creator_fee_bps = new_creator_fee_bps;
+
+    emit!(CreatorFeeUpdated {
+        admin: ctx.accounts.admin.key(),
+        channel_config: ctx.accounts.channel_config.key(),
+        old_fee_bps: old_fee,
+        new_fee_bps: new_creator_fee_bps,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
 
     msg!(
         "Updated creator fee: {} -> {} bps",
@@ -1241,8 +1272,7 @@ pub fn update_channel_creator_fee(
 // ADMIN ROOT SEQUENCE RECOVERY
 // =============================================================================
 
-/// Admin-only instruction to recover from a skipped root sequence.
-/// Allows setting latest_root_seq to a higher value to unbrick a channel.
+/// Admin instruction to set latest_root_seq to a higher value.
 /// The next publish must use new_seq + 1.
 #[derive(Accounts)]
 #[instruction(channel: String)]
@@ -1267,9 +1297,11 @@ pub struct AdminRecoverRootSeq<'info> {
 
 pub fn admin_recover_root_seq(
     ctx: Context<AdminRecoverRootSeq>,
-    _channel: String,
+    channel: String,
     new_seq: u64,
 ) -> Result<()> {
+    validate_channel(&channel)?;
+
     let cfg = &mut ctx.accounts.channel_config;
 
     // Must be strictly greater than current seq (no rollback)
@@ -1278,11 +1310,19 @@ pub fn admin_recover_root_seq(
     let old_seq = cfg.latest_root_seq;
     cfg.latest_root_seq = new_seq;
 
-    msg!(
-        "Admin recovered root seq: {} -> {} (next publish must use {})",
+    emit!(RootSeqRecovered {
+        admin: ctx.accounts.admin.key(),
+        channel_config: ctx.accounts.channel_config.key(),
         old_seq,
         new_seq,
-        new_seq + 1
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
+    msg!(
+        "Admin set root seq: {} -> {} (next publish: {})",
+        old_seq,
+        new_seq,
+        new_seq.saturating_add(1)
     );
 
     Ok(())

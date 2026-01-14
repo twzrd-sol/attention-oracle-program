@@ -174,4 +174,7 @@ pub enum OracleError {
 
     #[msg("Channel meta not initialized")]
     ChannelMetaNotInitialized,
+
+    #[msg("Invalid channel name (must be 1-64 ASCII characters)")]
+    InvalidChannelName,
 }

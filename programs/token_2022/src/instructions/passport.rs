@@ -80,12 +80,16 @@ pub struct RevokePassportOpen<'info> {
     pub protocol_state: Account<'info, ProtocolState>,
     #[account(
         mut,
+        close = rent_destination,
         seeds = [PASSPORT_SEED, user_hash.as_ref()],
         bump = registry.bump,
         constraint = registry.user_hash == user_hash @ OracleError::InvalidUserHash,
         constraint = (authority.key() == registry.owner || authority.key() == protocol_state.admin) @ OracleError::Unauthorized
     )]
     pub registry: Account<'info, PassportRegistry>,
+    /// CHECK: Rent destination can be any account, typically the authority or admin
+    #[account(mut)]
+    pub rent_destination: UncheckedAccount<'info>,
 }
 
 
@@ -203,7 +207,7 @@ pub fn reissue_passport_open(
 }
 
 pub fn revoke_passport_open(ctx: Context<RevokePassportOpen>, user_hash: [u8; 32]) -> Result<()> {
-    let registry = &mut ctx.accounts.registry;
+    let registry = &ctx.accounts.registry;
     let current_time = Clock::get()?.unix_timestamp;
 
     require!(
@@ -211,16 +215,24 @@ pub fn revoke_passport_open(ctx: Context<RevokePassportOpen>, user_hash: [u8; 32
         OracleError::InvalidUserHash
     );
 
-    registry.tier = 0;
-    registry.score = 0;
-    registry.leaf_hash = None;
-    registry.updated_at = current_time;
+    // Capture data before account is closed by Anchor
+    let owner = registry.owner;
+    let lamports = registry.to_account_info().lamports();
 
     emit!(PassportRevoked {
         user_hash,
-        owner: registry.owner,
+        owner,
         updated_at: current_time,
     });
 
+    emit!(PassportAccountClosed {
+        user_hash,
+        owner,
+        rent_returned_to: ctx.accounts.rent_destination.key(),
+        lamports_returned: lamports,
+        timestamp: current_time,
+    });
+
+    // Account will be closed automatically by Anchor's close attribute
     Ok(())
 }

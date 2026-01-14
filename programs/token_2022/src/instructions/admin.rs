@@ -4,7 +4,10 @@ use crate::{
         MAX_WITHDRAW_PER_TX, MAX_WITHDRAW_PER_DAY, SECONDS_PER_DAY,
     },
     errors::OracleError,
-    events::TreasuryWithdrawn,
+    events::{
+        TreasuryWithdrawn, PublisherUpdated, PolicyUpdated,
+        ProtocolPaused, AdminTransferred,
+    },
     state::{ProtocolState, WithdrawTracker},
     token_transfer::transfer_checked_with_remaining,
 };
@@ -29,7 +32,17 @@ pub struct UpdatePublisher<'info> {
 
 pub fn update_publisher(ctx: Context<UpdatePublisher>, new_publisher: Pubkey) -> Result<()> {
     let state = &mut ctx.accounts.protocol_state;
+    let old_publisher = state.publisher;
     state.publisher = new_publisher;
+
+    emit!(PublisherUpdated {
+        admin: ctx.accounts.admin.key(),
+        old_publisher,
+        new_publisher,
+        mint: state.mint,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
     Ok(())
 }
 
@@ -53,7 +66,17 @@ pub fn update_publisher_open(
     new_publisher: Pubkey,
 ) -> Result<()> {
     let state = &mut ctx.accounts.protocol_state;
+    let old_publisher = state.publisher;
     state.publisher = new_publisher;
+
+    emit!(PublisherUpdated {
+        admin: ctx.accounts.admin.key(),
+        old_publisher,
+        new_publisher,
+        mint: state.mint,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
     Ok(())
 }
 
@@ -75,6 +98,14 @@ pub struct SetPolicy<'info> {
 pub fn set_policy(ctx: Context<SetPolicy>, require_receipt: bool) -> Result<()> {
     let state = &mut ctx.accounts.protocol_state;
     state.require_receipt = require_receipt;
+
+    emit!(PolicyUpdated {
+        admin: ctx.accounts.admin.key(),
+        require_receipt,
+        mint: state.mint,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
     Ok(())
 }
 
@@ -96,6 +127,14 @@ pub struct SetPolicyOpen<'info> {
 pub fn set_policy_open(ctx: Context<SetPolicyOpen>, require_receipt: bool) -> Result<()> {
     let state = &mut ctx.accounts.protocol_state;
     state.require_receipt = require_receipt;
+
+    emit!(PolicyUpdated {
+        admin: ctx.accounts.admin.key(),
+        require_receipt,
+        mint: state.mint,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
     Ok(())
 }
 
@@ -117,6 +156,14 @@ pub struct SetPaused<'info> {
 pub fn set_paused(ctx: Context<SetPaused>, paused: bool) -> Result<()> {
     let state = &mut ctx.accounts.protocol_state;
     state.paused = paused;
+
+    emit!(ProtocolPaused {
+        admin: ctx.accounts.admin.key(),
+        paused,
+        mint: state.mint,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
     Ok(())
 }
 
@@ -138,6 +185,14 @@ pub struct SetPausedOpen<'info> {
 pub fn set_paused_open(ctx: Context<SetPausedOpen>, paused: bool) -> Result<()> {
     let state = &mut ctx.accounts.protocol_state;
     state.paused = paused;
+
+    emit!(ProtocolPaused {
+        admin: ctx.accounts.admin.key(),
+        paused,
+        mint: state.mint,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
     Ok(())
 }
 
@@ -160,7 +215,16 @@ pub struct UpdateAdminOpen<'info> {
 pub fn update_admin_open(ctx: Context<UpdateAdminOpen>, new_admin: Pubkey) -> Result<()> {
     require!(new_admin != Pubkey::default(), OracleError::InvalidPubkey);
     let state = &mut ctx.accounts.protocol_state;
+    let old_admin = state.admin;
     state.admin = new_admin;
+
+    emit!(AdminTransferred {
+        old_admin,
+        new_admin,
+        mint: state.mint,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
     Ok(())
 }
 
@@ -182,20 +246,26 @@ pub struct UpdateAdmin<'info> {
 pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
     require!(new_admin != Pubkey::default(), OracleError::InvalidPubkey);
     let state = &mut ctx.accounts.protocol_state;
+    let old_admin = state.admin;
     state.admin = new_admin;
+
+    emit!(AdminTransferred {
+        old_admin,
+        new_admin,
+        mint: state.mint,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
     Ok(())
 }
 
 // =============================================================================
-// TREASURY WITHDRAW (ADMIN ONLY)
+// TREASURY WITHDRAW
 // =============================================================================
 
-/// Admin-only treasury withdrawal with rate limits.
-/// Security controls:
+/// Admin treasury withdrawal with rate limits.
 /// - Per-transaction limit: 50M CCM
 /// - Per-day limit: 100M CCM
-/// - Events emitted for audit trail
-/// - Only protocol admin can call
 #[derive(Accounts)]
 pub struct AdminWithdraw<'info> {
     #[account(mut)]

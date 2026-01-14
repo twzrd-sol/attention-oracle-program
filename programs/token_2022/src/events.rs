@@ -61,7 +61,6 @@ pub struct InvisibleStaked {
 }
 
 /// Emitted when admin withdraws from treasury.
-/// Critical audit event - monitor this off-chain.
 #[event]
 pub struct TreasuryWithdrawn {
     pub admin: Pubkey,
@@ -69,5 +68,77 @@ pub struct TreasuryWithdrawn {
     pub amount: u64,
     pub withdrawn_today: u64,
     pub total_withdrawn: u64,
+    pub timestamp: i64,
+}
+
+// =============================================================================
+// ADMIN OPERATION EVENTS
+// Emitting events for state changes enables off-chain indexing and observability.
+// =============================================================================
+
+/// Emitted when the allowlisted publisher is updated.
+#[event]
+pub struct PublisherUpdated {
+    pub admin: Pubkey,
+    pub old_publisher: Pubkey,
+    pub new_publisher: Pubkey,
+    pub mint: Pubkey,
+    pub timestamp: i64,
+}
+
+/// Emitted when receipt requirement policy changes.
+#[event]
+pub struct PolicyUpdated {
+    pub admin: Pubkey,
+    pub require_receipt: bool,
+    pub mint: Pubkey,
+    pub timestamp: i64,
+}
+
+/// Emitted when protocol is paused or unpaused.
+#[event]
+pub struct ProtocolPaused {
+    pub admin: Pubkey,
+    pub paused: bool,
+    pub mint: Pubkey,
+    pub timestamp: i64,
+}
+
+/// Emitted when admin authority is transferred.
+#[event]
+pub struct AdminTransferred {
+    pub old_admin: Pubkey,
+    pub new_admin: Pubkey,
+    pub mint: Pubkey,
+    pub timestamp: i64,
+}
+
+/// Emitted when channel creator fee is updated.
+#[event]
+pub struct CreatorFeeUpdated {
+    pub admin: Pubkey,
+    pub channel_config: Pubkey,
+    pub old_fee_bps: u16,
+    pub new_fee_bps: u16,
+    pub timestamp: i64,
+}
+
+/// Emitted when admin manually sets root sequence.
+#[event]
+pub struct RootSeqRecovered {
+    pub admin: Pubkey,
+    pub channel_config: Pubkey,
+    pub old_seq: u64,
+    pub new_seq: u64,
+    pub timestamp: i64,
+}
+
+/// Emitted when a passport account is closed and rent returned.
+#[event]
+pub struct PassportAccountClosed {
+    pub user_hash: [u8; 32],
+    pub owner: Pubkey,
+    pub rent_returned_to: Pubkey,
+    pub lamports_returned: u64,
     pub timestamp: i64,
 }
