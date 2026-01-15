@@ -71,6 +71,23 @@ See [docs/TREASURY.md](/docs/TREASURY.md) for full details.
 
 ## Audit Status
 
-- [ ] Formal audit pending
-- [x] Internal review complete
+- [ ] Formal third-party audit pending
+- [x] Internal security review complete (Jan 2026)
 - [x] Automated testing via CI
+
+### Internal Review Summary
+
+A comprehensive internal review was completed covering:
+
+| Area | Status |
+|------|--------|
+| Access Control | ✅ Admin/publisher separation verified |
+| PDA Derivation | ✅ Seeds deterministic, bumps canonical |
+| Merkle Proofs | ✅ Domain separation, sorted siblings |
+| Transfer Hook | ✅ Caller validation via instruction sysvar |
+| Token Handling | ✅ Fee-aware balance diff pattern |
+| Arithmetic | ✅ All operations use checked math |
+
+**Findings:** No critical or high-severity vulnerabilities identified.
+
+**Full report:** [docs/SECURITY_AUDIT.md](/docs/SECURITY_AUDIT.md)
