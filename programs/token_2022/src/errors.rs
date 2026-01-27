@@ -22,17 +22,11 @@ pub enum OracleError {
     // =========================================================================
     // CLAIMS & PROOFS
     // =========================================================================
-    #[msg("Already claimed")]
-    AlreadyClaimed,
-
     #[msg("Invalid merkle proof")]
     InvalidProof,
 
     #[msg("Invalid proof length")]
     InvalidProofLength,
-
-    #[msg("Invalid root for channel epoch")]
-    InvalidRoot,
 
     #[msg("Invalid root sequence (must be strictly increasing)")]
     InvalidRootSeq,
@@ -55,24 +49,6 @@ pub enum OracleError {
     #[msg("Requested epoch slot is not available")]
     SlotMismatch,
 
-    #[msg("Invalid epoch")]
-    InvalidEpoch,
-
-    #[msg("Invalid epoch state PDA")]
-    InvalidEpochState,
-
-    #[msg("Epoch closed")]
-    EpochClosed,
-
-    #[msg("Epoch already initialized")]
-    EpochAlreadyInitialized,
-
-    #[msg("Epoch not fully claimed")]
-    EpochNotFullyClaimed,
-
-    #[msg("Epoch must be strictly increasing for this slot")]
-    EpochNotIncreasing,
-
     // =========================================================================
     // FEES & ECONOMICS
     // =========================================================================
@@ -81,9 +57,6 @@ pub enum OracleError {
 
     #[msg("Invalid fee split - must sum to 100")]
     InvalidFeeSplit,
-
-    #[msg("Fee too high - maximum 10%")]
-    FeeTooHigh,
 
     #[msg("Creator fee share too high")]
     CreatorFeeTooHigh,
@@ -109,21 +82,9 @@ pub enum OracleError {
     #[msg("Insufficient treasury balance")]
     InsufficientTreasuryBalance,
 
-    #[msg("Invalid amount")]
-    InvalidAmount,
-
-    #[msg("Withdrawal exceeds per-transaction limit (50M CCM)")]
-    ExceedsWithdrawLimit,
-
-    #[msg("Withdrawal exceeds daily limit (100M CCM)")]
-    DailyLimitExceeded,
-
     // =========================================================================
     // STAKING
     // =========================================================================
-    #[msg("Stake pool not initialized")]
-    StakePoolNotInitialized,
-
     #[msg("Insufficient stake balance")]
     InsufficientStake,
 
@@ -140,11 +101,38 @@ pub enum OracleError {
     NoPendingRewards,
 
     // =========================================================================
+    // CHANNEL STAKING
+    // =========================================================================
+    #[msg("Channel stake pool not initialized")]
+    ChannelStakePoolNotInitialized,
+
+    #[msg("Channel stake pool already exists")]
+    ChannelStakePoolExists,
+
+    #[msg("Cannot close non-empty stake pool")]
+    StakePoolNotEmpty,
+
+    #[msg("Position already has NFT minted")]
+    NftAlreadyMinted,
+
+    #[msg("Position does not have NFT")]
+    NftNotMinted,
+
+    #[msg("NFT holder mismatch")]
+    NftHolderMismatch,
+
+    #[msg("Lock period not expired")]
+    LockNotExpired,
+
+    #[msg("Cannot reduce lock period")]
+    LockReductionNotAllowed,
+
+    #[msg("Subject mismatch between stake pool and channel config")]
+    SubjectMismatch,
+
+    // =========================================================================
     // IDENTITY / PASSPORT
     // =========================================================================
-    #[msg("Invalid subject key")]
-    InvalidStreamer,
-
     #[msg("Invalid user hash")]
     InvalidUserHash,
 
@@ -160,20 +148,8 @@ pub enum OracleError {
     #[msg("Invalid input length")]
     InvalidInputLength,
 
-    #[msg("Invalid index")]
-    InvalidIndex,
-
     #[msg("Math overflow")]
     MathOverflow,
-
-    #[msg("Account already at or above target size")]
-    AccountTooLarge,
-
-    #[msg("Batch already pushed")]
-    AlreadyPushed,
-
-    #[msg("Channel meta not initialized")]
-    ChannelMetaNotInitialized,
 
     #[msg("Invalid channel name (must be 1-64 ASCII characters)")]
     InvalidChannelName,

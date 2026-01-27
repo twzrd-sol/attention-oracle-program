@@ -46,7 +46,7 @@ pub struct HarvestFees<'info> {
     )]
     pub fee_config: Account<'info, FeeConfig>,
 
-    /// CCM Token-2022 mint
+    /// Token-2022 mint
     #[account(mut)]
     pub mint: InterfaceAccount<'info, Mint>,
 
@@ -83,6 +83,30 @@ pub fn harvest_and_distribute_fees<'info>(
         ctx.remaining_accounts.len() <= 30,
         OracleError::InvalidInputLength
     );
+
+    // SECURITY: Validate source accounts before CPI
+    // Ensures all accounts are Token-2022 token accounts for the correct mint
+    // This prevents cross-mint attacks and garbage account injection
+    for source_info in ctx.remaining_accounts.iter() {
+        // Check ownership - must be Token-2022 program
+        require!(
+            source_info.owner == &ctx.accounts.token_program.key(),
+            OracleError::InvalidTokenProgram
+        );
+
+        // Parse as token account to validate mint (lightweight check)
+        // Token-2022 ATA layout: mint pubkey is at bytes [0..32]
+        let data = source_info.try_borrow_data()?;
+        require!(data.len() >= 32, OracleError::InvalidTokenProgram);
+
+        // Extract mint from account data and verify it matches
+        let account_mint = Pubkey::new_from_array(
+            data[0..32]
+                .try_into()
+                .map_err(|_| OracleError::InvalidTokenProgram)?,
+        );
+        require_keys_eq!(account_mint, mint_key, OracleError::InvalidMint);
+    }
 
     // Record treasury balance before harvest
     let treasury_before = ctx.accounts.treasury.amount;
@@ -132,7 +156,7 @@ pub fn harvest_and_distribute_fees<'info>(
     });
 
     msg!(
-        "Harvest complete: {} sources, {} CCM withdrawn to treasury",
+        "Harvest complete: {} sources, {} tokens withdrawn to treasury",
         ctx.remaining_accounts.len(),
         withheld_amount
     );

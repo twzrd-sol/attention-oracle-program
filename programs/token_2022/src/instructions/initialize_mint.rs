@@ -7,6 +7,10 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_2022::spl_token_2022;
 use anchor_spl::token_interface::Mint as SplMint;
 
+/// Maximum allowed max_fee to prevent unbounded fee configuration
+/// Set to 10^16 (10 quadrillion base units) - reasonable upper bound for any token
+const MAX_FEE_UPPER_BOUND: u64 = 10_000_000_000_000_000;
+
 #[derive(Accounts)]
 pub struct InitializeMint<'info> {
     #[account(
@@ -47,6 +51,12 @@ pub struct InitializeMint<'info> {
 pub fn handler(ctx: Context<InitializeMint>, fee_basis_points: u16, max_fee: u64) -> Result<()> {
     require!(
         fee_basis_points as u16 <= crate::constants::MAX_FEE_BASIS_POINTS,
+        OracleError::InvalidFeeBps
+    );
+
+    // SECURITY: Validate max_fee is bounded to prevent unbounded fee configuration
+    require!(
+        max_fee > 0 && max_fee <= MAX_FEE_UPPER_BOUND,
         OracleError::InvalidFeeBps
     );
 
@@ -123,6 +133,12 @@ pub fn handler_open(
 ) -> Result<()> {
     require!(
         fee_basis_points as u16 <= crate::constants::MAX_FEE_BASIS_POINTS,
+        OracleError::InvalidFeeBps
+    );
+
+    // SECURITY: Validate max_fee is bounded (same as handler)
+    require!(
+        max_fee > 0 && max_fee <= MAX_FEE_UPPER_BOUND,
         OracleError::InvalidFeeBps
     );
 

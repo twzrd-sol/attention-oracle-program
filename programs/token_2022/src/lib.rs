@@ -188,6 +188,46 @@ pub mod token_2022 {
         instructions::admin::update_admin(ctx, new_admin)
     }
 
+    // -------------------------------------------------------------------------
+    // Channel Staking
+    // -------------------------------------------------------------------------
+
+    /// Initialize a stake pool for a channel.
+    pub fn initialize_channel_stake_pool(
+        ctx: Context<InitializeChannelStakePool>,
+        channel: String,
+    ) -> Result<()> {
+        instructions::channel_staking::initialize_channel_stake_pool(ctx, channel)
+    }
+
+    /// Stake tokens on a channel.
+    pub fn stake_channel(
+        ctx: Context<StakeChannel>,
+        channel: String,
+        amount: u64,
+        lock_slots: u64,
+    ) -> Result<()> {
+        instructions::channel_staking::stake_channel(ctx, channel, amount, lock_slots)
+    }
+
+    /// Unstake tokens from a channel (after lock expires).
+    pub fn unstake_channel(
+        ctx: Context<UnstakeChannel>,
+        channel: String,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::channel_staking::unstake_channel(ctx, channel, amount)
+    }
+
+    /// Extend lock period for additional boost.
+    pub fn extend_lock(
+        ctx: Context<ExtendLock>,
+        channel: String,
+        additional_slots: u64,
+    ) -> Result<()> {
+        instructions::channel_staking::extend_lock(ctx, channel, additional_slots)
+    }
+
     // admin_withdraw removed - treasury locked to claims only
     // See: https://solscan.io/tx/L53wKdRPTYKCwR1DJJQjFr34SYsCzjqcyNgXP7BbZAV7Yasz7bDwqP2no6ozm7tLVMawUcADGhZPXRNe4wQajeh
 }

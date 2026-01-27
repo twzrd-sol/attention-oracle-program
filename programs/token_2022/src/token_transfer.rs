@@ -21,6 +21,18 @@ pub fn transfer_checked_with_remaining<'info>(
         OracleError::InvalidTokenProgram
     );
 
+    // SECURITY: Validate remaining accounts before CPI
+    // Only allow accounts owned by Token-2022 program or system/sysvar accounts
+    // This prevents CPI injection attacks via malicious extension programs
+    for account in remaining_accounts.iter() {
+        let is_valid_owner =
+            account.owner == &spl_token_2022::ID ||
+            account.owner == &anchor_lang::solana_program::system_program::ID ||
+            account.owner == &anchor_lang::solana_program::sysvar::ID;
+
+        require!(is_valid_owner, OracleError::InvalidTokenProgram);
+    }
+
     let mut ix = spl_token_2022::instruction::transfer_checked(
         token_program.key,
         from.key,
