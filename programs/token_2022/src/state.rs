@@ -1,7 +1,6 @@
 //! On-chain state definitions for the Attention Oracle Protocol.
 
 use crate::constants::CUMULATIVE_ROOT_HISTORY;
-use crate::errors::OracleError;
 use anchor_lang::prelude::*;
 
 // =============================================================================
@@ -45,26 +44,6 @@ pub struct FeeConfig {
 
 impl FeeConfig {
     pub const LEN: usize = 8 + 2 + 8 + 8 + 2 + 2 + (4 * 6) + 1;
-}
-
-/// Fee distribution split
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct FeeSplit {
-    pub lp_allocation: u8,
-    pub treasury_allocation: u8,
-    pub burn_allocation: u8,
-}
-
-impl FeeSplit {
-    pub const LEN: usize = 1 + 1 + 1;
-
-    pub fn validate(&self) -> Result<()> {
-        require!(
-            self.lp_allocation + self.treasury_allocation + self.burn_allocation == 100,
-            OracleError::InvalidFeeSplit
-        );
-        Ok(())
-    }
 }
 
 // =============================================================================
@@ -150,7 +129,132 @@ impl ClaimStateV2 {
 }
 
 // =============================================================================
-// TREASURY WITHDRAW TRACKING
+// CHANNEL STAKING
+// =============================================================================
+
+/// Stake pool for a specific channel (subject).
+/// Holds aggregate stake data and configuration.
+/// Seeds: ["channel_stake_pool", mint, subject_id]
+#[account]
+pub struct ChannelStakePool {
+    pub version: u8,
+    pub bump: u8,
+    /// Token-2022 mint
+    pub mint: Pubkey,
+    /// Channel subject_id (derived from channel name)
+    pub subject: Pubkey,
+    /// Admin authority (from ProtocolState)
+    pub authority: Pubkey,
+    /// Raw total tokens staked in this pool
+    pub total_staked: u64,
+    /// Sum of all weighted stakes (for boost tracking)
+    pub total_weighted_stake: u64,
+    /// Number of active stakers
+    pub staker_count: u32,
+    /// Minimum stake amount (default: MIN_STAKE_AMOUNT)
+    pub min_stake_amount: u64,
+    /// Maximum lock period in slots (default: MAX_LOCK_SLOTS)
+    pub max_lock_slots: u64,
+    /// Pool creation timestamp
+    pub created_at: i64,
+    /// Last state change timestamp
+    pub last_update: i64,
+    /// Reserved for future expansion
+    pub _reserved: [u8; 64],
+}
+
+impl ChannelStakePool {
+    pub const LEN: usize = 8      // discriminator
+        + 1 + 1                    // version, bump
+        + 32 + 32 + 32             // mint, subject, authority
+        + 8 + 8                    // total_staked, total_weighted_stake
+        + 4                        // staker_count
+        + 8 + 8                    // min_stake_amount, max_lock_slots
+        + 8 + 8                    // created_at, last_update
+        + 64;                      // reserved
+}
+
+/// User's stake position on a specific channel.
+/// Tracks staked amount, lock period, and optional NFT representation.
+/// Seeds: ["user_channel_stake", user, mint, subject_id]
+#[account]
+pub struct UserChannelStake {
+    pub version: u8,
+    pub bump: u8,
+    /// Staker wallet
+    pub user: Pubkey,
+    /// Token-2022 mint
+    pub mint: Pubkey,
+    /// Channel subject_id
+    pub subject: Pubkey,
+    /// Parent ChannelStakePool PDA
+    pub pool: Pubkey,
+    /// Raw tokens staked
+    pub staked_amount: u64,
+    /// Slot when lock expires (0 = no lock)
+    pub lock_end_slot: u64,
+    /// Cached: staked_amount * boost_multiplier / BOOST_PRECISION
+    pub weighted_stake: u64,
+    /// If stake is represented as NFT position
+    pub nft_mint: Option<Pubkey>,
+    /// First stake timestamp
+    pub staked_at: i64,
+    /// Last stake/unstake timestamp
+    pub last_action: i64,
+    /// Reserved for future expansion
+    pub _reserved: [u8; 32],
+}
+
+impl UserChannelStake {
+    pub const LEN: usize = 8      // discriminator
+        + 1 + 1                    // version, bump
+        + 32 + 32 + 32 + 32        // user, mint, subject, pool
+        + 8 + 8 + 8                // staked_amount, lock_end_slot, weighted_stake
+        + 1 + 32                   // Option<Pubkey> nft_mint
+        + 8 + 8                    // staked_at, last_action
+        + 32;                      // reserved
+}
+
+/// NFT position representing a transferable stake.
+/// Whoever holds the NFT can claim rewards and unstake.
+/// Seeds: ["stake_position_nft", nft_mint]
+#[account]
+pub struct StakePositionNFT {
+    pub version: u8,
+    pub bump: u8,
+    /// The NFT mint address
+    pub nft_mint: Pubkey,
+    /// ChannelStakePool this position belongs to
+    pub channel_pool: Pubkey,
+    /// Channel subject_id
+    pub subject: Pubkey,
+    /// Token mint
+    pub token_mint: Pubkey,
+    /// Tokens locked in this position
+    pub staked_amount: u64,
+    /// Lock expiry slot
+    pub lock_end_slot: u64,
+    /// Slot when position was created
+    pub minted_slot: u64,
+    /// Boost bps at time of minting
+    pub boost_at_mint: u64,
+    /// keccak256(channel_name) for display lookup
+    pub channel_name_hash: [u8; 32],
+    /// Reserved for future expansion
+    pub _reserved: [u8; 64],
+}
+
+impl StakePositionNFT {
+    pub const LEN: usize = 8      // discriminator
+        + 1 + 1                    // version, bump
+        + 32 + 32 + 32 + 32        // nft_mint, channel_pool, subject, token_mint
+        + 8 + 8 + 8 + 8            // amounts and slots
+        + 32                       // channel_name_hash
+        + 64;                      // reserved
+}
+
+// =============================================================================
+// TREASURY WITHDRAW TRACKING (LEGACY)
 // =============================================================================
 
 /// Tracks daily withdrawal limits for treasury admin withdrawals.
