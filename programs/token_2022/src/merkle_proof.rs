@@ -13,15 +13,13 @@ fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
     arr
 }
 
-pub fn compute_leaf(claimer: &Pubkey, index: u32, amount: u64, id: &str) -> [u8; 32] {
-    // NOTE: Off-chain must mirror this exact hashing scheme.
-    let idx = index.to_le_bytes();
-    let amt = amount.to_le_bytes();
-    let id_bytes = id.as_bytes();
-    keccak_hashv(&[claimer.as_ref(), &idx, &amt, id_bytes])
-}
-
 pub fn verify_proof(proof: &[[u8; 32]], mut hash: [u8; 32], root: [u8; 32]) -> bool {
+    // SECURITY: Bounds check to prevent DoS via unbounded proof length
+    // Maximum proof depth: 32 levels (2^32 leaves, ~4 billion - more than enough)
+    if proof.len() > 32 {
+        return false;
+    }
+
     for sibling in proof.iter() {
         let (a, b) = if hash <= *sibling {
             (hash, *sibling)

@@ -12,6 +12,8 @@ bytecode is tagged (or mainnet is upgraded to a verifiable build of a tagged rel
 |--------|-----------|--------------------|--------------------------|-------------|
 | token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `395779276` (`2026-01-25T06:14:40Z`) | `34d097682eadf09986cebdc25579c9c3aa30125f605cb7e0aa5751787bb5d4db` | Verified |
 
+Update this table whenever a new deployment occurs.
+
 ## Path 1: Solana Verify CLI (Recommended)
 
 ### 1) Fetch on-chain hash

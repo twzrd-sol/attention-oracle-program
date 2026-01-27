@@ -9,24 +9,18 @@ use anchor_lang::prelude::*;
 pub const PROTOCOL_SEED: &[u8] = b"protocol";
 pub const CHANNEL_CONFIG_V2_SEED: &[u8] = b"channel_cfg_v2";
 pub const CLAIM_STATE_V2_SEED: &[u8] = b"claim_state_v2";
+
+// Channel staking PDAs
+pub const CHANNEL_STAKE_POOL_SEED: &[u8] = b"channel_stake_pool";
+pub const USER_CHANNEL_STAKE_SEED: &[u8] = b"user_channel_stake";
+pub const CHANNEL_STAKE_VAULT_SEED: &[u8] = b"channel_stake_vault";
+pub const STAKE_POSITION_NFT_SEED: &[u8] = b"stake_position_nft";
+
+// Legacy seeds (kept for backwards compatibility / account decoding)
 pub const PASSPORT_SEED: &[u8] = b"passport_owner";
 pub const STAKE_POOL_SEED: &[u8] = b"stake_pool";
 pub const USER_STAKE_SEED: &[u8] = b"user_stake";
 pub const STAKE_VAULT_SEED: &[u8] = b"stake_vault";
-pub const WITHDRAW_TRACKER_SEED: &[u8] = b"withdraw_tracker";
-
-// =============================================================================
-// TREASURY WITHDRAW LIMITS
-// =============================================================================
-
-/// Maximum single withdrawal (50M CCM with 9 decimals)
-pub const MAX_WITHDRAW_PER_TX: u64 = 50_000_000 * 1_000_000_000;
-
-/// Maximum daily withdrawal (100M CCM with 9 decimals)
-pub const MAX_WITHDRAW_PER_DAY: u64 = 100_000_000 * 1_000_000_000;
-
-/// Seconds in a day (for daily limit reset)
-pub const SECONDS_PER_DAY: i64 = 86_400;
 
 // =============================================================================
 // CUMULATIVE V2 CLAIMS
@@ -48,17 +42,11 @@ pub const DRIP_THRESHOLD: u64 = 1_000_000 * 1_000_000_000; // 1M CCM
 /// Maximum transfer fee basis points
 pub const MAX_FEE_BASIS_POINTS: u16 = 1000; // 10% max
 
-/// Maximum creator fee (50% of claim delta)
-pub const MAX_CREATOR_FEE_BPS: u16 = 5000;
-
 /// Treasury fee (applied to transfers)
 pub const TREASURY_FEE_BASIS_POINTS: u16 = 5; // 0.05%
 
 /// Creator fee (applied to transfers)
 pub const CREATOR_FEE_BASIS_POINTS: u16 = 5; // 0.05%
-
-/// Harvest split to treasury
-pub const HARVEST_SPLIT_BPS_TREASURY: u16 = 5000; // 50%
 
 // =============================================================================
 // STAKING
@@ -101,27 +89,6 @@ pub fn calculate_boost_bps(lock_end_slot: u64, current_slot: u64) -> u64 {
         180..=364 => 25_000,  // 2.5x   - 180-364 days
         _ => 30_000,          // 3.0x   - 365+ days
     }
-}
-
-// =============================================================================
-// PASSPORT / IDENTITY
-// =============================================================================
-
-pub const MAX_TIER: u8 = 6;
-pub const MIN_TIER_SILVER: u8 = 2;
-pub const MIN_TIER_GOLD: u8 = 4;
-
-pub const BASE_SCORE_PER_EPOCH: u64 = 100;
-pub const BONUS_MULTIPLIER_MESSAGES: u64 = 10;
-pub const BONUS_MULTIPLIER_SUBS: u64 = 50;
-pub const BONUS_MULTIPLIER_BITS: u64 = 1;
-
-/// Default tier multipliers for fee calculation
-pub const TIER_MULTIPLIERS: [u32; 6] = [0, 2000, 4000, 6000, 8000, 10000];
-
-/// Derive passport PDA from user hash
-pub fn passport_pda(program_id: &Pubkey, user_hash: &[u8; 32]) -> Pubkey {
-    Pubkey::find_program_address(&[PASSPORT_SEED, user_hash], program_id).0
 }
 
 // =============================================================================
