@@ -1,0 +1,6 @@
+[toolchain]
+channel = "1.91.1"
+components = ["rustfmt", "clippy"]
+## Note: SBF target is managed by Agave's cargo build-sbf; no explicit
+## rustup target is required here. Removing the legacy bpfel target avoids
+## rustup component warnings and speeds up setup.

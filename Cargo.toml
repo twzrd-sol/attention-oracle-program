@@ -1,0 +1,12 @@
+[workspace]
+members = [
+  "programs/token_2022",
+]
+resolver = "2"
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
