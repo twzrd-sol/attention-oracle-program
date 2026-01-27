@@ -1,0 +1,8 @@
+[toolchain]
+channel = "1.91.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+
+# Note: Solana SBF builds use the platform-specific toolchain provided by
+# Agave's `cargo build-sbf`, which may differ from this Rust version.
+# This file ensures consistent formatting/linting across contributors.

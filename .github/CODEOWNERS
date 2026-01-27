@@ -1,0 +1,6 @@
+# NOTE: Do not include personal handles in CODEOWNERS.
+# Replace with an org team when ready (e.g., @twzrd-sol/admins).
+
+* @twzrd-sol/admins
+programs/** @twzrd-sol/admins
+scripts/** @twzrd-sol/admins

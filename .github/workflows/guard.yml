@@ -1,0 +1,114 @@
+name: Repo Scope Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to validate (manual run)"
+        required: true
+
+jobs:
+  guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fail on forbidden paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Compute changed files in this PR (base..head)
+          BASE_SHA='${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA='${{ github.sha }}'
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "null" ]; then
+            echo "No pull_request base SHA; falling back to HEAD-only check"
+            CHANGED_FILES=$(git ls-files)
+          else
+            # Use merge-base to be robust even if the base branch was deleted post-merge
+            MB=$(git merge-base "$HEAD_SHA" "$BASE_SHA" 2>/dev/null || echo "")
+            if [ -n "$MB" ]; then
+              CHANGED_FILES=$(git diff --name-only "$MB"..."$HEAD_SHA" || true)
+            else
+              # Fallback: compare against the immediate parent of HEAD
+              CHANGED_FILES=$(git diff --name-only "${HEAD_SHA}^"..."$HEAD_SHA" || git ls-files)
+            fi
+          fi
+
+          # 1) Allow only certain subtrees under programs/ and oracles/ for CHANGED files
+          ALLOWED="^(programs/(token_2022|attention_oracle_program)|oracles/x402-switchboard)(/|$)"
+          FORBIDDEN_DIRS=$(echo "$CHANGED_FILES" | grep -E '^(programs|oracles)/' | grep -Ev "$ALLOWED" || true)
+          if [ -n "$FORBIDDEN_DIRS" ]; then
+            echo "❌ Forbidden paths detected (only token_2022, attention_oracle_program, x402-switchboard allowed):"
+            echo "$FORBIDDEN_DIRS"
+            exit 1
+          fi
+          # 2) Forbid vendored/build/keys directories in CHANGED files
+          if echo "$CHANGED_FILES" | grep -E '(^|/)(node_modules|dist|logs|keys)(/|$)' | grep -q .; then
+            echo "❌ Forbidden vendored/build/keys paths detected"
+            exit 1
+          fi
+          # 3) Forbid .env files in CHANGED files (allow .env.example)
+          if echo "$CHANGED_FILES" | grep -E '(^|/)\.env($|/)' | grep -q .; then
+            echo "❌ Forbidden .env path detected"
+            exit 1
+          fi
+          # 4) Forbid database artifacts (*.db) in CHANGED files
+          if echo "$CHANGED_FILES" | grep -E '\.db($|/|\.)' | grep -q .; then
+            echo "❌ Forbidden database artifact detected"
+            exit 1
+          fi
+          echo "✅ Guard passed: scope is clean"
+
+  guard_manual:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect changed files via GitHub API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR_NUM='${{ github.event.inputs.pr_number }}'
+          REPO_FULL="$GITHUB_REPOSITORY" # owner/repo
+          API_ROOT="https://api.github.com/repos/$REPO_FULL/pulls/$PR_NUM/files?per_page=100"
+          CHANGED_FILES=""
+          URL="$API_ROOT"
+          while [ -n "$URL" ]; do
+            RESP=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$URL")
+            PAGE_FILES=$(echo "$RESP" | jq -r '.[].filename')
+            CHANGED_FILES=$(printf "%s\n%s" "$CHANGED_FILES" "$PAGE_FILES")
+            # Parse simple pagination via Link header (GitHub sets it; but curl above loses headers). Fallback: single page.
+            URL="" # best-effort; sufficient for <=100 files
+          done
+          CHANGED_FILES=$(echo "$CHANGED_FILES" | sed '/^$/d' | sort -u)
+          echo "Changed files:\n$CHANGED_FILES"
+
+          # 1) Allow only certain subtrees under programs/ and oracles/
+          ALLOWED='^(programs/(token_2022|attention_oracle_program)|oracles/x402-switchboard)(/|$)'
+          FORBIDDEN_DIRS=$(echo "$CHANGED_FILES" | grep -E '^(programs|oracles)/' | grep -Ev "$ALLOWED" || true)
+          if [ -n "$FORBIDDEN_DIRS" ]; then
+            echo "❌ Forbidden paths detected (only token_2022, attention_oracle_program, x402-switchboard allowed):"
+            echo "$FORBIDDEN_DIRS"
+            exit 1
+          fi
+          # 2) Forbid vendored/build/keys directories in CHANGED files
+          if echo "$CHANGED_FILES" | grep -E '(^|/)(node_modules|dist|logs|keys)(/|$)' | grep -q .; then
+            echo "❌ Forbidden vendored/build/keys paths detected"
+            exit 1
+          fi
+          # 3) Forbid .env files in CHANGED files (allow .env.example)
+          if echo "$CHANGED_FILES" | grep -E '(^|/)\.env($|/)' | grep -q .; then
+            echo "❌ Forbidden .env path detected"
+            exit 1
+          fi
+          # 4) Forbid database artifacts (*.db) in CHANGED files
+          if echo "$CHANGED_FILES" | grep -E '\.db($|/|\.)' | grep -q .; then
+            echo "❌ Forbidden database artifact detected"
+            exit 1
+          fi
+          echo "✅ Guard (manual) passed: scope is clean for PR #$PR_NUM"

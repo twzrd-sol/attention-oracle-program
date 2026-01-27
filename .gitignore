@@ -1,0 +1,154 @@
+# Dependencies
+node_modules/
+*/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Disallow Markdown files in the public repo
+*.md
+# Except required security/verification docs
+!SECURITY.md
+!VERIFY.md
+!PRIVACY.md
+!COMPLIANCE.md
+!README.md
+!DEPLOYMENTS.md
+!INTEGRATION.md
+!docs/LIVE_STATUS.md
+!docs/TREASURY.md
+!docs/SECURITY_AUDIT.md
+!docs/specs/transfer-fee-capture.md
+
+# Next.js output
+.next/
+out/
+build/
+dist/
+
+# Private app subtrees (kept out of public scope)
+apps/*
+apps/twzrd-aggregator-rs/
+portal-v3/
+x402-api-server/
+private_twzrd/
+workers/
+
+# Environment files (never commit secrets)
+.env
+.env.*.local
+.env*
+**/.env*
+!.env.example
+!**/.env.example
+
+# Editors/OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Rust / Anchor
+target/
+**/*.rs.bk
+
+# Local clean build artifacts
+target-clean/
+.anchor/
+test-ledger/
+
+# Local dev/test artifacts
+assets/
+local/
+.tmp/
+
+# Logs
+logs/
+*.log
+
+# Keys (critical: never commit secrets)
+*.pem
+*.p12
+*.pfx
+*.asc
+*.gpg
+*.der
+*.key
+*.jks
+.keys/
+keys/
+.config/
+.ssh/
+*-keypair.json
+*id.json
+*wallet.json
+*.keystore
+*.jwk
+*.json
+!package*.json
+!tsconfig.json
+!components.json
+!vercel.json
+!lighthouserc.json
+
+# Secrets / Env
+.secretsallow
+
+# Databases
+*.db
+*.sqlite
+
+# Repo hygiene (binary/internal artifacts)
+backups/
+claim-ui-export/
+verify-snapshot/
+submission_clean_*.zip
+gateway/
+infra/
+db/
+tmp_channels.txt
+.cache/
+
+# Local scratchpad scripts (do not commit)
+scripts/init_taste_channel.ts
+scripts/parse_correct.ts
+
+# Internal deployment docs (keep private)
+DEPLOYMENT_STATUS.md
+**/DEPLOYMENT_STATUS.md
+
+# Internal protocol specs (IP/strategy)
+docs/protocol/
+
+# Private apps – never commit
+apps/twzrd-aggregator/
+apps/portal-*/
+apps/claim-ui/
+apps/worker-v2/
+apps/ctw-*/
+apps/_deprecated-*/
+apps/_archive/
+
+# Public repo scope note: do not ignore scripts used for ops
+!scripts/guard-deploy.sh
+!scripts/enable-git-hooks.sh
+!scripts/dev-doctor.sh
+schema_dump*.sql
+
+.claude/
+GILL_MIGRATION_DIRECTIVE.md
+
+# Financial models (private)
+*.xlsx
+Solana-DeFi-JTO-Model*.xlsx
+Solana-DeFi-Ecosystem-MET*.xlsx
+
+# Valuation model builders (founder IP)
+scripts/build-*-model.py
+scripts/*-valuation*.py
+scripts/*-analysis*.py
+.vercel

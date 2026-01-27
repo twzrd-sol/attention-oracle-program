@@ -1,0 +1,14 @@
+# Cargo audit configuration
+# These vulnerabilities are in transitive dependencies from the Solana SDK
+# and cannot be fixed until Anchor updates to Solana 3.x compatibility.
+
+[advisories]
+# curve25519-dalek timing variability - deep transitive via solana-signature
+# Waiting on: litesvm -> solana-* -> ed25519-dalek -> curve25519-dalek
+# Risk: Low for our use case (test-only dependency, not deployed on-chain)
+ignore = [
+    "RUSTSEC-2024-0344",  # curve25519-dalek timing variability
+    "RUSTSEC-2022-0093",  # ed25519-dalek double public key oracle attack
+]
+
+# Note: RUSTSEC-2021-0145 (atty) is already a warning, not blocking
