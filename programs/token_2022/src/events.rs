@@ -151,3 +151,29 @@ pub struct ChannelClosed {
     pub lamports_returned: u64,
     pub timestamp: i64,
 }
+
+// =============================================================================
+// CHANNEL STAKING EVENTS (V1.2.0)
+// =============================================================================
+
+/// Emitted when a user stakes tokens on a channel and receives a soulbound NFT receipt.
+#[event]
+pub struct ChannelStaked {
+    pub user: Pubkey,
+    pub channel: Pubkey,
+    pub amount: u64,
+    pub nft_mint: Pubkey,
+    pub lock_duration: u64,
+    pub boost_bps: u64,
+    pub timestamp: i64,
+}
+
+/// Emitted when a user unstakes tokens by burning their soulbound NFT receipt.
+#[event]
+pub struct ChannelUnstaked {
+    pub user: Pubkey,
+    pub channel: Pubkey,
+    pub amount: u64,
+    pub nft_mint: Pubkey,
+    pub timestamp: i64,
+}
