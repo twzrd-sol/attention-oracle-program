@@ -16,12 +16,6 @@ pub const USER_CHANNEL_STAKE_SEED: &[u8] = b"user_channel_stake";
 pub const CHANNEL_STAKE_VAULT_SEED: &[u8] = b"channel_stake_vault";
 pub const STAKE_POSITION_NFT_SEED: &[u8] = b"stake_position_nft";
 
-// Legacy seeds (kept for backwards compatibility / account decoding)
-pub const PASSPORT_SEED: &[u8] = b"passport_owner";
-pub const STAKE_POOL_SEED: &[u8] = b"stake_pool";
-pub const USER_STAKE_SEED: &[u8] = b"user_stake";
-pub const STAKE_VAULT_SEED: &[u8] = b"stake_vault";
-
 // =============================================================================
 // CUMULATIVE V2 CLAIMS
 // =============================================================================
@@ -57,9 +51,6 @@ pub const MIN_STAKE_AMOUNT: u64 = 1_000_000_000;
 
 /// Maximum lock duration (~30 days at 400ms slots)
 pub const MAX_LOCK_SLOTS: u64 = 432_000 * 30;
-
-/// Precision multiplier for MasterChef reward math
-pub const REWARD_PRECISION: u128 = 1_000_000_000_000; // 1e12
 
 // =============================================================================
 // STAKING BOOST
