@@ -177,3 +177,16 @@ pub struct ChannelUnstaked {
     pub nft_mint: Pubkey,
     pub timestamp: i64,
 }
+
+/// Emitted when a user emergency unstakes before lock expiry with penalty.
+#[event]
+pub struct ChannelEmergencyUnstaked {
+    pub user: Pubkey,
+    pub channel: Pubkey,
+    pub staked_amount: u64,
+    pub penalty_amount: u64,
+    pub returned_amount: u64,
+    pub nft_mint: Pubkey,
+    pub remaining_lock_slots: u64,
+    pub timestamp: i64,
+}
