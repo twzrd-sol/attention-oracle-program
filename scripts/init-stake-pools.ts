@@ -27,8 +27,8 @@ const CHANNELS: Record<string, string> = {
 };
 
 async function main() {
-  // Load relayer wallet (protocol admin)
-  const relayerPath = process.env.HOME + "/.config/solana/relayer.json";
+  // Load admin wallet (protocol admin = id.json)
+  const relayerPath = process.env.HOME + "/.config/solana/id.json";
   const secretKey = JSON.parse(readFileSync(relayerPath, "utf-8"));
   const admin = Keypair.fromSecretKey(Uint8Array.from(secretKey));
 
