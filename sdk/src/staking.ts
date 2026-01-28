@@ -382,6 +382,29 @@ export function getUnstakeChannelAccounts(params: UnstakeChannelParams) {
   };
 }
 
+/**
+ * Get all accounts needed for emergency_unstake_channel instruction.
+ * Same as regular unstake, allows early exit with 20% penalty.
+ */
+export function getEmergencyUnstakeChannelAccounts(params: UnstakeChannelParams) {
+  // Emergency unstake uses same accounts as regular unstake
+  return getUnstakeChannelAccounts(params);
+}
+
+/**
+ * Calculate emergency unstake penalty and returned amount.
+ * @param stakedAmount - Original staked amount
+ * @returns { penalty, returnAmount } - 20% penalty, 80% returned
+ */
+export function calculateEmergencyUnstakePenalty(stakedAmount: bigint): {
+  penalty: bigint;
+  returnAmount: bigint;
+} {
+  const penalty = (stakedAmount * 20n) / 100n;
+  const returnAmount = stakedAmount - penalty;
+  return { penalty, returnAmount };
+}
+
 // =============================================================================
 // EVENT PARSING
 // =============================================================================
@@ -404,12 +427,26 @@ export interface ChannelUnstakedEvent {
   timestamp: bigint;
 }
 
+export interface ChannelEmergencyUnstakedEvent {
+  user: PublicKey;
+  channel: PublicKey;
+  stakedAmount: bigint;
+  penaltyAmount: bigint;
+  returnedAmount: bigint;
+  nftMint: PublicKey;
+  remainingLockSlots: bigint;
+  timestamp: bigint;
+}
+
 // Event discriminators (first 8 bytes of sha256("event:EventName"))
 const CHANNEL_STAKED_DISCRIMINATOR = Buffer.from([
   175, 97, 90, 63, 76, 199, 203, 0,
 ]);
 const CHANNEL_UNSTAKED_DISCRIMINATOR = Buffer.from([
   227, 238, 141, 136, 146, 34, 74, 204,
+]);
+const CHANNEL_EMERGENCY_UNSTAKED_DISCRIMINATOR = Buffer.from([
+  130, 174, 184, 149, 211, 66, 126, 79,
 ]);
 
 /**
@@ -447,6 +484,28 @@ export function parseChannelUnstakedEvent(
     amount: data.readBigUInt64LE(offset + 64),
     nftMint: new PublicKey(data.slice(offset + 72, offset + 104)),
     timestamp: data.readBigInt64LE(offset + 104),
+  };
+}
+
+/**
+ * Parse ChannelEmergencyUnstaked event from transaction logs.
+ */
+export function parseChannelEmergencyUnstakedEvent(
+  data: Buffer
+): ChannelEmergencyUnstakedEvent | null {
+  if (!data.slice(0, 8).equals(CHANNEL_EMERGENCY_UNSTAKED_DISCRIMINATOR))
+    return null;
+
+  const offset = 8;
+  return {
+    user: new PublicKey(data.slice(offset, offset + 32)),
+    channel: new PublicKey(data.slice(offset + 32, offset + 64)),
+    stakedAmount: data.readBigUInt64LE(offset + 64),
+    penaltyAmount: data.readBigUInt64LE(offset + 72),
+    returnedAmount: data.readBigUInt64LE(offset + 80),
+    nftMint: new PublicKey(data.slice(offset + 88, offset + 120)),
+    remainingLockSlots: data.readBigUInt64LE(offset + 120),
+    timestamp: data.readBigInt64LE(offset + 128),
   };
 }
 

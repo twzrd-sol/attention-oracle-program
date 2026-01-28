@@ -211,6 +211,11 @@ pub mod token_2022 {
         instructions::staking::unstake_channel(ctx)
     }
 
+    /// Emergency unstake before lock expiry with 20% penalty (burned).
+    pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Result<()> {
+        instructions::staking::emergency_unstake_channel(ctx)
+    }
+
     // admin_withdraw removed - treasury locked to claims only
     // See: https://solscan.io/tx/L53wKdRPTYKCwR1DJJQjFr34SYsCzjqcyNgXP7BbZAV7Yasz7bDwqP2no6ozm7tLVMawUcADGhZPXRNe4wQajeh
 }
