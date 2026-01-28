@@ -1,0 +1,41 @@
+{
+  "name": "@attention-oracle/sdk",
+  "version": "1.2.0",
+  "description": "TypeScript SDK for the Attention Oracle Protocol",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.0",
+    "@solana/spl-token": "^0.4.0",
+    "@solana/web3.js": "^1.95.0",
+    "js-sha3": "^0.9.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "@coral-xyz/anchor": ">=0.29.0",
+    "@solana/web3.js": ">=1.90.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/twzrd-sol/attention-oracle-program"
+  },
+  "keywords": [
+    "solana",
+    "anchor",
+    "token-2022",
+    "staking",
+    "nft"
+  ]
+}
