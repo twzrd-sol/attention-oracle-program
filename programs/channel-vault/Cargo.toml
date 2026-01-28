@@ -1,0 +1,25 @@
+[package]
+name = "channel-vault"
+version = "0.1.0"
+description = "Liquid staking wrapper for Attention Oracle channel stakes"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "channel_vault"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+anchor-spl = { version = "0.32.1", features = ["token_2022"] }
+
+# Oracle CPI dependency (sibling in same workspace)
+attention-oracle-token-2022 = { path = "../token_2022", features = ["cpi"] }

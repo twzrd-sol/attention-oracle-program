@@ -4,11 +4,17 @@
 resolution = true
 skip-lint = false
 
+[programs.localnet]
+token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+channel_vault = "5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ"
+
 [programs.devnet]
 token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+channel_vault = "5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ"
 
 [programs.mainnet]
 token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+channel_vault = "5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ"
 
 [registry]
 url = "https://api.apr.dev"
