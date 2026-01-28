@@ -211,6 +211,16 @@ pub mod token_2022 {
         instructions::staking::unstake_channel(ctx)
     }
 
+    /// Claim accumulated staking rewards.
+    pub fn claim_channel_rewards(ctx: Context<ClaimChannelRewards>) -> Result<()> {
+        instructions::staking::claim_channel_rewards(ctx)
+    }
+
+    /// Set the reward rate for a channel stake pool (admin only).
+    pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()> {
+        instructions::staking::set_reward_rate(ctx, new_rate)
+    }
+
     /// Emergency unstake before lock expiry with 20% penalty (burned).
     pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Result<()> {
         instructions::staking::emergency_unstake_channel(ctx)

@@ -120,11 +120,19 @@ pub struct ChannelStakePool {
     pub total_weighted: u64,
     /// Number of active stake positions
     pub staker_count: u64,
+
+    // Reward infrastructure (MasterChef-style)
+    /// Accumulated rewards per weighted share (scaled by 1e12)
+    pub acc_reward_per_share: u128,
+    /// Last slot when rewards were calculated
+    pub last_reward_slot: u64,
+    /// Rewards distributed per slot (admin-configurable)
+    pub reward_per_slot: u64,
 }
 
 impl ChannelStakePool {
-    // 8 + 1 + 32 + 32 + 32 + 8 + 8 + 8 = 129
-    pub const LEN: usize = 129;
+    // 8 + 1 + 32 + 32 + 32 + 8 + 8 + 8 + 16 + 8 + 8 = 161
+    pub const LEN: usize = 161;
 }
 
 /// User's stake position on a channel.
@@ -147,11 +155,17 @@ pub struct UserChannelStake {
     pub multiplier_bps: u64,
     /// Token-2022 Mint for the soulbound receipt NFT
     pub nft_mint: Pubkey,
+
+    // Reward tracking
+    /// User's reward debt (prevents double-claiming)
+    pub reward_debt: u128,
+    /// Accumulated pending rewards (claimable)
+    pub pending_rewards: u64,
 }
 
 impl UserChannelStake {
-    // 8 + 1 + 32 + 32 + 8 + 8 + 8 + 8 + 32 = 137
-    pub const LEN: usize = 137;
+    // 8 + 1 + 32 + 32 + 8 + 8 + 8 + 8 + 32 + 16 + 8 = 161
+    pub const LEN: usize = 161;
 }
 
 // =============================================================================

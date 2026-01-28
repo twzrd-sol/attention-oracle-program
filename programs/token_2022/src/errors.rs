@@ -124,6 +124,9 @@ pub enum OracleError {
     #[msg("Lock period not expired")]
     LockNotExpired,
 
+    #[msg("Lock has expired, use standard unstake to avoid penalty")]
+    LockExpiredUseStandardUnstake,
+
     #[msg("Cannot reduce lock period")]
     LockReductionNotAllowed,
 
@@ -150,6 +153,9 @@ pub enum OracleError {
 
     #[msg("Math overflow")]
     MathOverflow,
+
+    #[msg("No rewards available to claim")]
+    NoRewardsToClaim,
 
     #[msg("Invalid channel name (must be 1-64 ASCII characters)")]
     InvalidChannelName,
