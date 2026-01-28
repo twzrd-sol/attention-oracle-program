@@ -14,6 +14,12 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_2022::spl_token_2022;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
+/// Token-2022 program ID for CPI validation
+const TOKEN_2022_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
+    0x06, 0xdd, 0xf6, 0xe1, 0xd7, 0x65, 0xa1, 0x93, 0xd9, 0xcb, 0xe1, 0x46, 0xce, 0xeb, 0x79, 0xac,
+    0x1c, 0xb4, 0x85, 0xed, 0x5f, 0x5b, 0x37, 0x91, 0x3a, 0x8c, 0xf5, 0x85, 0x7e, 0xff, 0x00, 0xa9,
+]);
+
 // =============================================================================
 // INITIALIZE CHANNEL STAKE POOL
 // =============================================================================
@@ -32,7 +38,10 @@ pub struct InitializeChannelStakePool<'info> {
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    /// Channel config must exist
+    /// Channel config must exist and be for the same mint
+    #[account(
+        constraint = channel_config.mint == protocol_state.mint @ OracleError::InvalidMint,
+    )]
     pub channel_config: Account<'info, ChannelConfigV2>,
 
     /// Token mint
@@ -62,6 +71,10 @@ pub struct InitializeChannelStakePool<'info> {
     )]
     pub stake_vault: InterfaceAccount<'info, TokenAccount>,
 
+    /// Token-2022 program (must be the official Token-2022 program)
+    #[account(
+        constraint = token_program.key() == TOKEN_2022_PROGRAM_ID @ OracleError::InvalidTokenProgram,
+    )]
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
@@ -113,24 +126,27 @@ pub struct StakeChannel<'info> {
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    /// Channel config
-    pub channel_config: Account<'info, ChannelConfigV2>,
+    /// Channel config (must match protocol mint) - boxed to reduce stack usage
+    #[account(
+        constraint = channel_config.mint == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
 
     /// Token mint
     #[account(
         constraint = mint.key() == protocol_state.mint @ OracleError::InvalidMint,
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
 
-    /// Stake pool
+    /// Stake pool - boxed to reduce stack usage
     #[account(
         mut,
         seeds = [CHANNEL_STAKE_POOL_SEED, mint.key().as_ref(), channel_config.subject.as_ref()],
         bump = stake_pool.bump,
     )]
-    pub stake_pool: Account<'info, ChannelStakePool>,
+    pub stake_pool: Box<Account<'info, ChannelStakePool>>,
 
-    /// User's stake position (init if needed)
+    /// User's stake position (init if needed) - boxed to reduce stack usage
     #[account(
         init_if_needed,
         payer = user,
@@ -138,7 +154,7 @@ pub struct StakeChannel<'info> {
         seeds = [USER_CHANNEL_STAKE_SEED, user.key().as_ref(), mint.key().as_ref(), channel_config.subject.as_ref()],
         bump,
     )]
-    pub user_stake: Account<'info, UserChannelStake>,
+    pub user_stake: Box<Account<'info, UserChannelStake>>,
 
     /// User's token account
     #[account(
@@ -146,7 +162,7 @@ pub struct StakeChannel<'info> {
         constraint = user_token_account.owner == user.key() @ OracleError::Unauthorized,
         constraint = user_token_account.mint == mint.key() @ OracleError::InvalidMint,
     )]
-    pub user_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub user_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// Stake vault
     #[account(
@@ -154,8 +170,12 @@ pub struct StakeChannel<'info> {
         seeds = [CHANNEL_STAKE_VAULT_SEED, mint.key().as_ref(), channel_config.subject.as_ref()],
         bump,
     )]
-    pub stake_vault: InterfaceAccount<'info, TokenAccount>,
+    pub stake_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    /// Token-2022 program (must be the official Token-2022 program)
+    #[account(
+        constraint = token_program.key() == TOKEN_2022_PROGRAM_ID @ OracleError::InvalidTokenProgram,
+    )]
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
@@ -303,31 +323,37 @@ pub struct UnstakeChannel<'info> {
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    /// Channel config
-    pub channel_config: Account<'info, ChannelConfigV2>,
+    /// Channel config (must match protocol mint) - boxed to reduce stack usage
+    #[account(
+        constraint = channel_config.mint == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
 
     /// Token mint
     #[account(
         constraint = mint.key() == protocol_state.mint @ OracleError::InvalidMint,
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
 
-    /// Stake pool
+    /// Stake pool - boxed to reduce stack usage
     #[account(
         mut,
         seeds = [CHANNEL_STAKE_POOL_SEED, mint.key().as_ref(), channel_config.subject.as_ref()],
         bump = stake_pool.bump,
     )]
-    pub stake_pool: Account<'info, ChannelStakePool>,
+    pub stake_pool: Box<Account<'info, ChannelStakePool>>,
 
-    /// User's stake position
+    /// User's stake position - boxed to reduce stack usage
+    /// Authority check:
+    /// - If NFT is minted: ONLY NFT holder can unstake (original staker loses access)
+    /// - If no NFT: original staker can unstake
     #[account(
         mut,
         seeds = [USER_CHANNEL_STAKE_SEED, user_stake.user.as_ref(), mint.key().as_ref(), channel_config.subject.as_ref()],
         bump = user_stake.bump,
-        constraint = user_stake.user == user.key() || is_nft_holder(&user_stake, &user.key(), &nft_token_account) @ OracleError::Unauthorized,
+        constraint = check_unstake_authority(&user_stake, &user.key(), &nft_token_account, &token_program.key()) @ OracleError::Unauthorized,
     )]
-    pub user_stake: Account<'info, UserChannelStake>,
+    pub user_stake: Box<Account<'info, UserChannelStake>>,
 
     /// User's token account (receives unstaked tokens)
     #[account(
@@ -335,7 +361,7 @@ pub struct UnstakeChannel<'info> {
         constraint = user_token_account.owner == user.key() @ OracleError::Unauthorized,
         constraint = user_token_account.mint == mint.key() @ OracleError::InvalidMint,
     )]
-    pub user_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub user_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// Stake vault
     #[account(
@@ -343,40 +369,66 @@ pub struct UnstakeChannel<'info> {
         seeds = [CHANNEL_STAKE_VAULT_SEED, mint.key().as_ref(), channel_config.subject.as_ref()],
         bump,
     )]
-    pub stake_vault: InterfaceAccount<'info, TokenAccount>,
+    pub stake_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// Optional: NFT token account if position has NFT
-    /// CHECK: Validated in constraint
+    /// Optional: NFT token account if position has NFT (must be owned by token program)
+    /// CHECK: Validated in check_unstake_authority with owner verification
     pub nft_token_account: Option<AccountInfo<'info>>,
 
+    /// Token-2022 program (must be the official Token-2022 program)
+    #[account(
+        constraint = token_program.key() == TOKEN_2022_PROGRAM_ID @ OracleError::InvalidTokenProgram,
+    )]
     pub token_program: Interface<'info, TokenInterface>,
 }
 
-/// Check if caller holds the NFT for this position
-fn is_nft_holder(
+/// Check if caller is authorized to unstake this position.
+///
+/// Authority logic:
+/// - If NFT is minted: ONLY the NFT holder can unstake (original staker loses access)
+/// - If no NFT: only the original staker can unstake
+///
+/// Security: Verifies the NFT token account is owned by the token program
+/// to prevent spoofed accounts from bypassing ownership checks.
+fn check_unstake_authority(
     user_stake: &UserChannelStake,
     caller: &Pubkey,
     nft_account: &Option<AccountInfo>,
+    token_program_id: &Pubkey,
 ) -> bool {
-    match (&user_stake.nft_mint, nft_account) {
-        (Some(nft_mint), Some(nft_acc)) => {
-            // Parse token account and verify ownership
-            if let Ok(data) = nft_acc.try_borrow_data() {
-                if data.len() >= 72 {
-                    // Token account layout: mint (32) + owner (32) + amount (8)
-                    let account_mint = Pubkey::try_from(&data[0..32]).ok();
-                    let account_owner = Pubkey::try_from(&data[32..64]).ok();
-                    let amount = u64::from_le_bytes(data[64..72].try_into().unwrap_or([0; 8]));
+    match &user_stake.nft_mint {
+        Some(nft_mint) => {
+            // NFT exists - ONLY NFT holder can unstake (original staker loses access)
+            match nft_account {
+                Some(nft_acc) => {
+                    // CRITICAL: Verify account is owned by the token program
+                    // This prevents crafted accounts from bypassing ownership checks
+                    if nft_acc.owner != token_program_id {
+                        return false;
+                    }
 
-                    return account_mint == Some(*nft_mint)
-                        && account_owner == Some(*caller)
-                        && amount >= 1;
+                    // Parse token account and verify ownership
+                    if let Ok(data) = nft_acc.try_borrow_data() {
+                        if data.len() >= 72 {
+                            // Token account layout: mint (32) + owner (32) + amount (8)
+                            let account_mint = Pubkey::try_from(&data[0..32]).ok();
+                            let account_owner = Pubkey::try_from(&data[32..64]).ok();
+                            let amount = u64::from_le_bytes(data[64..72].try_into().unwrap_or([0; 8]));
+
+                            return account_mint == Some(*nft_mint)
+                                && account_owner == Some(*caller)
+                                && amount >= 1;
+                        }
+                    }
+                    false
                 }
+                None => false, // NFT exists but not provided - reject
             }
-            false
         }
-        (None, _) => false, // No NFT on position
-        (Some(_), None) => false, // NFT exists but not provided
+        None => {
+            // No NFT - only original staker can unstake
+            user_stake.user == *caller
+        }
     }
 }
 
@@ -517,7 +569,10 @@ pub struct ExtendLock<'info> {
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
-    /// Channel config
+    /// Channel config (must match protocol mint)
+    #[account(
+        constraint = channel_config.mint == protocol_state.mint @ OracleError::InvalidMint,
+    )]
     pub channel_config: Account<'info, ChannelConfigV2>,
 
     /// Token mint
@@ -535,12 +590,14 @@ pub struct ExtendLock<'info> {
     pub stake_pool: Account<'info, ChannelStakePool>,
 
     /// User's stake position
+    /// Note: If NFT is minted, use extend_lock in stake_nft module instead
     #[account(
         mut,
         seeds = [USER_CHANNEL_STAKE_SEED, user.key().as_ref(), mint.key().as_ref(), channel_config.subject.as_ref()],
         bump = user_stake.bump,
         constraint = user_stake.user == user.key() @ OracleError::Unauthorized,
         constraint = user_stake.staked_amount > 0 @ OracleError::InsufficientStake,
+        constraint = user_stake.nft_mint.is_none() @ OracleError::NftAlreadyMinted,
     )]
     pub user_stake: Account<'info, UserChannelStake>,
 }

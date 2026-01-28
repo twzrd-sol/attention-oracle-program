@@ -228,6 +228,27 @@ pub mod token_2022 {
         instructions::channel_staking::extend_lock(ctx, channel, additional_slots)
     }
 
+    // -------------------------------------------------------------------------
+    // NFT Stake Positions
+    // -------------------------------------------------------------------------
+
+    /// Mint a transferable NFT representing a stake position.
+    pub fn mint_stake_position_nft(
+        ctx: Context<MintStakePositionNft>,
+        channel: String,
+    ) -> Result<()> {
+        instructions::stake_nft::mint_stake_position_nft(ctx, channel)
+    }
+
+    /// Unstake tokens using NFT ownership (NFT holder can unstake).
+    pub fn unstake_with_nft(
+        ctx: Context<UnstakeWithNft>,
+        channel: String,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::stake_nft::unstake_with_nft(ctx, channel, amount)
+    }
+
     // admin_withdraw removed - treasury locked to claims only
     // See: https://solscan.io/tx/L53wKdRPTYKCwR1DJJQjFr34SYsCzjqcyNgXP7BbZAV7Yasz7bDwqP2no6ozm7tLVMawUcADGhZPXRNe4wQajeh
 }

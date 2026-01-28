@@ -6,6 +6,7 @@ pub mod channel_staking;
 pub mod cumulative;
 pub mod governance;
 pub mod initialize_mint;
+pub mod stake_nft;
 
 // Re-exports
 pub use admin::*;
@@ -14,3 +15,4 @@ pub use channel_staking::*;
 pub use cumulative::*;
 pub use governance::*;
 pub use initialize_mint::*;
+pub use stake_nft::*;
