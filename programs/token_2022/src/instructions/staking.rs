@@ -8,7 +8,7 @@ use crate::constants::{
     MAX_LOCK_SLOTS, MIN_STAKE_AMOUNT, PROTOCOL_SEED, STAKE_NFT_MINT_SEED, STAKE_VAULT_SEED,
 };
 use crate::errors::OracleError;
-use crate::events::{ChannelStaked, ChannelUnstaked};
+use crate::events::{ChannelStaked, ChannelUnstaked, ChannelEmergencyUnstaked};
 use crate::state::{ChannelConfigV2, ChannelStakePool, ProtocolState, UserChannelStake};
 use anchor_lang::prelude::*;
 use anchor_spl::{
@@ -589,6 +589,230 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
         "Unstaked {} tokens, user={}",
         amount,
         ctx.accounts.user.key()
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// EMERGENCY UNSTAKE (Early Exit with Penalty)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct EmergencyUnstakeChannel<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    /// Channel config
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
+
+    /// Token mint (CCM)
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+
+    /// Stake pool
+    #[account(
+        mut,
+        seeds = [CHANNEL_STAKE_POOL_SEED, channel_config.key().as_ref()],
+        bump = stake_pool.bump,
+        constraint = stake_pool.mint == mint.key() @ OracleError::InvalidMint,
+    )]
+    pub stake_pool: Box<Account<'info, ChannelStakePool>>,
+
+    /// User's stake position
+    #[account(
+        mut,
+        close = user,
+        seeds = [CHANNEL_USER_STAKE_SEED, channel_config.key().as_ref(), user.key().as_ref()],
+        bump = user_stake.bump,
+        constraint = user_stake.user == user.key() @ OracleError::Unauthorized,
+    )]
+    pub user_stake: Box<Account<'info, UserChannelStake>>,
+
+    /// Vault holding staked tokens
+    #[account(
+        mut,
+        address = stake_pool.vault,
+    )]
+    pub vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// User's token account (receives returned tokens)
+    #[account(
+        mut,
+        constraint = user_token_account.owner == user.key() @ OracleError::Unauthorized,
+        constraint = user_token_account.mint == mint.key() @ OracleError::InvalidMint,
+    )]
+    pub user_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// NFT mint to burn
+    #[account(
+        mut,
+        address = user_stake.nft_mint,
+    )]
+    pub nft_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    /// User's NFT token account
+    #[account(
+        mut,
+        associated_token::mint = nft_mint,
+        associated_token::authority = user,
+        constraint = nft_ata.amount == 1 @ OracleError::NftHolderMismatch,
+    )]
+    pub nft_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        constraint = token_program.key() == TOKEN_2022_PROGRAM_ID @ OracleError::InvalidTokenProgram,
+    )]
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Result<()> {
+    let clock = Clock::get()?;
+    let current_slot = clock.slot;
+
+    // Capture values before mutable borrows
+    let amount = ctx.accounts.user_stake.amount;
+    let multiplier_bps = ctx.accounts.user_stake.multiplier_bps;
+    let lock_end_slot = ctx.accounts.user_stake.lock_end_slot;
+
+    let weighted_amount = (amount as u128)
+        .checked_mul(multiplier_bps as u128)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(BOOST_PRECISION as u128)
+        .ok_or(OracleError::MathOverflow)? as u64;
+
+    let mint_key = ctx.accounts.mint.key();
+    let decimals = ctx.accounts.mint.decimals;
+    let channel_key = ctx.accounts.channel_config.key();
+    let pool_bump = ctx.accounts.stake_pool.bump;
+    let pool_key = ctx.accounts.stake_pool.key();
+
+    // Calculate penalty (20% flat rate for early exit)
+    let penalty = amount
+        .checked_mul(20)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(100)
+        .ok_or(OracleError::MathOverflow)?;
+
+    let return_amount = amount
+        .checked_sub(penalty)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // Calculate remaining lock slots for event
+    let remaining_lock_slots = if lock_end_slot > current_slot {
+        lock_end_slot - current_slot
+    } else {
+        0
+    };
+
+    // Pool signer seeds
+    let seeds: &[&[u8]] = &[
+        CHANNEL_STAKE_POOL_SEED,
+        channel_key.as_ref(),
+        &[pool_bump],
+    ];
+    let signer_seeds = &[seeds];
+
+    // 1. Burn the receipt NFT
+    let burn_ix = spl_token_2022::instruction::burn(
+        &ctx.accounts.token_program.key(),
+        &ctx.accounts.nft_ata.key(),
+        &ctx.accounts.nft_mint.key(),
+        &ctx.accounts.user.key(),
+        &[],
+        1,
+    )?;
+
+    anchor_lang::solana_program::program::invoke(
+        &burn_ix,
+        &[
+            ctx.accounts.nft_ata.to_account_info(),
+            ctx.accounts.nft_mint.to_account_info(),
+            ctx.accounts.user.to_account_info(),
+            ctx.accounts.token_program.to_account_info(),
+        ],
+    )?;
+
+    // 2. Return tokens (minus penalty) to user
+    if return_amount > 0 {
+        let transfer_ix = spl_token_2022::instruction::transfer_checked(
+            &ctx.accounts.token_program.key(),
+            &ctx.accounts.vault.key(),
+            &mint_key,
+            &ctx.accounts.user_token_account.key(),
+            &pool_key,
+            &[],
+            return_amount,
+            decimals,
+        )?;
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &transfer_ix,
+            &[
+                ctx.accounts.vault.to_account_info(),
+                ctx.accounts.mint.to_account_info(),
+                ctx.accounts.user_token_account.to_account_info(),
+                ctx.accounts.stake_pool.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+            signer_seeds,
+        )?;
+    }
+
+    // 3. Burn penalty (deflationary - reduces total CCM supply)
+    if penalty > 0 {
+        let burn_penalty_ix = spl_token_2022::instruction::burn(
+            &ctx.accounts.token_program.key(),
+            &ctx.accounts.vault.key(),
+            &mint_key,
+            &pool_key,
+            &[],
+            penalty,
+        )?;
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &burn_penalty_ix,
+            &[
+                ctx.accounts.vault.to_account_info(),
+                ctx.accounts.mint.to_account_info(),
+                ctx.accounts.stake_pool.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+            signer_seeds,
+        )?;
+    }
+
+    // 4. Update pool totals (use checked_sub for safety)
+    let pool = &mut ctx.accounts.stake_pool;
+    pool.total_staked = pool
+        .total_staked
+        .checked_sub(amount)
+        .ok_or(OracleError::MathOverflow)?;
+    pool.total_weighted = pool
+        .total_weighted
+        .checked_sub(weighted_amount)
+        .ok_or(OracleError::MathOverflow)?;
+    pool.staker_count = pool
+        .staker_count
+        .checked_sub(1)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // 5. Emit event
+    emit!(ChannelEmergencyUnstaked {
+        user: ctx.accounts.user.key(),
+        channel: channel_key,
+        staked_amount: amount,
+        penalty_amount: penalty,
+        returned_amount: return_amount,
+        nft_mint: ctx.accounts.nft_mint.key(),
+        remaining_lock_slots,
+        timestamp: clock.unix_timestamp,
+    });
+
+    msg!(
+        "Emergency unstake: {} returned, {} penalty burned, {} slots early",
+        return_amount,
+        penalty,
+        remaining_lock_slots
     );
 
     Ok(())
