@@ -190,3 +190,22 @@ pub struct ChannelEmergencyUnstaked {
     pub remaining_lock_slots: u64,
     pub timestamp: i64,
 }
+
+/// Emitted when a user claims accumulated staking rewards.
+#[event]
+pub struct ChannelRewardsClaimed {
+    pub user: Pubkey,
+    pub channel: Pubkey,
+    pub amount: u64,
+    pub timestamp: i64,
+}
+
+/// Emitted when admin updates the reward rate for a channel stake pool.
+#[event]
+pub struct RewardRateUpdated {
+    pub channel: Pubkey,
+    pub old_rate: u64,
+    pub new_rate: u64,
+    pub admin: Pubkey,
+    pub timestamp: i64,
+}

@@ -5,7 +5,8 @@
 
 use crate::constants::{
     calculate_boost_bps, BOOST_PRECISION, CHANNEL_STAKE_POOL_SEED, CHANNEL_USER_STAKE_SEED,
-    MAX_LOCK_SLOTS, MIN_STAKE_AMOUNT, PROTOCOL_SEED, STAKE_NFT_MINT_SEED, STAKE_VAULT_SEED,
+    MAX_LOCK_SLOTS, MIN_STAKE_AMOUNT, PROTOCOL_SEED, REWARD_PRECISION, STAKE_NFT_MINT_SEED,
+    STAKE_VAULT_SEED,
 };
 use crate::errors::OracleError;
 use crate::events::{ChannelStaked, ChannelUnstaked, ChannelEmergencyUnstaked};
@@ -22,6 +23,93 @@ const TOKEN_2022_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
     0x06, 0xdd, 0xf6, 0xe1, 0xee, 0x75, 0x8f, 0xde, 0x18, 0x42, 0x5d, 0xbc, 0xe4, 0x6c, 0xcd, 0xda,
     0xb6, 0x1a, 0xfc, 0x4d, 0x83, 0xb9, 0x0d, 0x27, 0xfe, 0xbd, 0xf9, 0x28, 0xd8, 0xa1, 0x8b, 0xfc,
 ]);
+
+// =============================================================================
+// REWARD HELPERS (MasterChef-style accumulator)
+// =============================================================================
+
+/// Update pool's accumulated rewards per share.
+/// Call this before any stake/unstake/claim action.
+pub fn update_pool_rewards(pool: &mut ChannelStakePool, current_slot: u64) -> Result<()> {
+    // Skip if no time elapsed or no stakers
+    if current_slot <= pool.last_reward_slot || pool.total_weighted == 0 {
+        pool.last_reward_slot = current_slot;
+        return Ok(());
+    }
+
+    // Calculate rewards accrued since last update
+    let slots_elapsed = current_slot
+        .checked_sub(pool.last_reward_slot)
+        .ok_or(OracleError::MathOverflow)?;
+
+    let rewards_accrued = (pool.reward_per_slot as u128)
+        .checked_mul(slots_elapsed as u128)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // Update accumulator: acc += (rewards * PRECISION) / total_weighted
+    let reward_per_share_increase = rewards_accrued
+        .checked_mul(REWARD_PRECISION)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(pool.total_weighted as u128)
+        .ok_or(OracleError::MathOverflow)?;
+
+    pool.acc_reward_per_share = pool
+        .acc_reward_per_share
+        .checked_add(reward_per_share_increase)
+        .ok_or(OracleError::MathOverflow)?;
+
+    pool.last_reward_slot = current_slot;
+
+    Ok(())
+}
+
+/// Calculate user's pending rewards (claimable amount).
+pub fn calculate_pending_rewards(
+    user_stake: &UserChannelStake,
+    pool: &ChannelStakePool,
+) -> Result<u64> {
+    // User's weighted stake
+    let weighted_stake = (user_stake.amount as u128)
+        .checked_mul(user_stake.multiplier_bps as u128)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(BOOST_PRECISION as u128)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // Accumulated rewards = (weighted_stake * acc_reward_per_share) / PRECISION
+    let accumulated = weighted_stake
+        .checked_mul(pool.acc_reward_per_share)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(REWARD_PRECISION)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // Pending = accumulated - reward_debt + already_pending
+    let pending = accumulated
+        .checked_sub(user_stake.reward_debt)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_add(user_stake.pending_rewards as u128)
+        .ok_or(OracleError::MathOverflow)?;
+
+    Ok(pending as u64)
+}
+
+/// Calculate new reward debt for user after stake change.
+pub fn calculate_reward_debt(
+    amount: u64,
+    multiplier_bps: u64,
+    acc_reward_per_share: u128,
+) -> Result<u128> {
+    let weighted_stake = (amount as u128)
+        .checked_mul(multiplier_bps as u128)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(BOOST_PRECISION as u128)
+        .ok_or(OracleError::MathOverflow)?;
+
+    Ok(weighted_stake
+        .checked_mul(acc_reward_per_share)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(REWARD_PRECISION)
+        .ok_or(OracleError::MathOverflow)?)
+}
 
 // =============================================================================
 // INITIALIZE STAKE POOL
@@ -81,7 +169,9 @@ pub struct InitializeStakePool<'info> {
 }
 
 pub fn initialize_stake_pool(ctx: Context<InitializeStakePool>) -> Result<()> {
+    let clock = Clock::get()?;
     let pool = &mut ctx.accounts.stake_pool;
+
     pool.bump = ctx.bumps.stake_pool;
     pool.channel = ctx.accounts.channel_config.key();
     pool.mint = ctx.accounts.mint.key();
@@ -89,6 +179,11 @@ pub fn initialize_stake_pool(ctx: Context<InitializeStakePool>) -> Result<()> {
     pool.total_staked = 0;
     pool.total_weighted = 0;
     pool.staker_count = 0;
+
+    // Initialize reward fields
+    pool.acc_reward_per_share = 0;
+    pool.last_reward_slot = clock.slot;
+    pool.reward_per_slot = 0; // Admin sets this later
 
     msg!(
         "Initialized stake pool for channel: {}, vault: {}",
@@ -378,19 +473,14 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
         signer_seeds,
     )?;
 
-    // 8. Initialize user stake
-    let user_stake = &mut ctx.accounts.user_stake;
-    user_stake.bump = ctx.bumps.user_stake;
-    user_stake.user = user_key;
-    user_stake.channel = channel_key;
-    user_stake.amount = amount;
-    user_stake.start_slot = current_slot;
-    user_stake.lock_end_slot = lock_end_slot;
-    user_stake.multiplier_bps = multiplier_bps;
-    user_stake.nft_mint = nft_mint_key;
+    // 8. Update pool rewards BEFORE changing totals
+    let pool = &mut ctx.accounts.stake_pool;
+    update_pool_rewards(pool, current_slot)?;
+
+    // Capture acc_reward_per_share for user's reward_debt
+    let current_acc = pool.acc_reward_per_share;
 
     // 9. Update pool totals
-    let pool = &mut ctx.accounts.stake_pool;
     pool.total_staked = pool
         .total_staked
         .checked_add(amount)
@@ -404,7 +494,22 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
         .checked_add(1)
         .ok_or(OracleError::MathOverflow)?;
 
-    // 10. Emit event
+    // 10. Initialize user stake with reward fields
+    let user_stake = &mut ctx.accounts.user_stake;
+    user_stake.bump = ctx.bumps.user_stake;
+    user_stake.user = user_key;
+    user_stake.channel = channel_key;
+    user_stake.amount = amount;
+    user_stake.start_slot = current_slot;
+    user_stake.lock_end_slot = lock_end_slot;
+    user_stake.multiplier_bps = multiplier_bps;
+    user_stake.nft_mint = nft_mint_key;
+
+    // Set reward debt so user doesn't claim rewards from before their stake
+    user_stake.reward_debt = calculate_reward_debt(amount, multiplier_bps, current_acc)?;
+    user_stake.pending_rewards = 0;
+
+    // 11. Emit event
     emit!(ChannelStaked {
         user: user_key,
         channel: channel_key,
@@ -511,7 +616,20 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
         );
     }
 
-    // Capture values before mutable borrows
+    // 2. Update pool rewards and calculate pending (scoped borrow)
+    let (pending, pool_bump) = {
+        let pool = &mut ctx.accounts.stake_pool;
+        update_pool_rewards(pool, current_slot)?;
+        let pending = calculate_pending_rewards(&ctx.accounts.user_stake, pool)?;
+        (pending, pool.bump)
+    };
+
+    // Log pending rewards (user should claim before unstaking)
+    if pending > 0 {
+        msg!("User has {} pending rewards - claim before unstaking to receive them", pending);
+    }
+
+    // 3. Capture values before mutable borrows
     let amount = ctx.accounts.user_stake.amount;
     let multiplier_bps = ctx.accounts.user_stake.multiplier_bps;
     let weighted_amount = (amount as u128)
@@ -523,10 +641,9 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
     let mint_key = ctx.accounts.mint.key();
     let decimals = ctx.accounts.mint.decimals;
     let channel_key = ctx.accounts.channel_config.key();
-    let pool_bump = ctx.accounts.stake_pool.bump;
     let pool_key = ctx.accounts.stake_pool.key();
 
-    // 2. Burn the receipt NFT
+    // 4. Burn the receipt NFT
     let burn_ix = spl_token_2022::instruction::burn(
         &ctx.accounts.token_program.key(),
         &ctx.accounts.nft_ata.key(),
@@ -546,7 +663,7 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
         ],
     )?;
 
-    // 3. Transfer tokens from vault back to user
+    // 5. Transfer tokens from vault back to user
     let seeds: &[&[u8]] = &[
         CHANNEL_STAKE_POOL_SEED,
         channel_key.as_ref(),
@@ -577,22 +694,24 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
         signer_seeds,
     )?;
 
-    // 4. Update pool totals
-    let pool = &mut ctx.accounts.stake_pool;
-    pool.total_staked = pool
-        .total_staked
-        .checked_sub(amount)
-        .ok_or(OracleError::MathOverflow)?;
-    pool.total_weighted = pool
-        .total_weighted
-        .checked_sub(weighted_amount)
-        .ok_or(OracleError::MathOverflow)?;
-    pool.staker_count = pool
-        .staker_count
-        .checked_sub(1)
-        .ok_or(OracleError::MathOverflow)?;
+    // 6. Update pool totals
+    {
+        let pool = &mut ctx.accounts.stake_pool;
+        pool.total_staked = pool
+            .total_staked
+            .checked_sub(amount)
+            .ok_or(OracleError::MathOverflow)?;
+        pool.total_weighted = pool
+            .total_weighted
+            .checked_sub(weighted_amount)
+            .ok_or(OracleError::MathOverflow)?;
+        pool.staker_count = pool
+            .staker_count
+            .checked_sub(1)
+            .ok_or(OracleError::MathOverflow)?;
+    }
 
-    // 5. Emit event
+    // 7. Emit event
     emit!(ChannelUnstaked {
         user: ctx.accounts.user.key(),
         channel: channel_key,
@@ -605,6 +724,188 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
         "Unstaked {} tokens, user={}",
         amount,
         ctx.accounts.user.key()
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// CLAIM CHANNEL REWARDS
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct ClaimChannelRewards<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    /// Channel config
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
+
+    /// Token mint (CCM)
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+
+    /// Stake pool (holds rewards)
+    #[account(
+        mut,
+        seeds = [CHANNEL_STAKE_POOL_SEED, channel_config.key().as_ref()],
+        bump = stake_pool.bump,
+        constraint = stake_pool.mint == mint.key() @ OracleError::InvalidMint,
+    )]
+    pub stake_pool: Box<Account<'info, ChannelStakePool>>,
+
+    /// User's stake position
+    #[account(
+        mut,
+        seeds = [CHANNEL_USER_STAKE_SEED, channel_config.key().as_ref(), user.key().as_ref()],
+        bump = user_stake.bump,
+        constraint = user_stake.user == user.key() @ OracleError::Unauthorized,
+    )]
+    pub user_stake: Box<Account<'info, UserChannelStake>>,
+
+    /// Vault holding staked tokens (also holds rewards for distribution)
+    #[account(
+        mut,
+        address = stake_pool.vault,
+    )]
+    pub vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// User's token account (receives rewards)
+    #[account(
+        mut,
+        constraint = user_token_account.owner == user.key() @ OracleError::Unauthorized,
+        constraint = user_token_account.mint == mint.key() @ OracleError::InvalidMint,
+    )]
+    pub user_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        constraint = token_program.key() == TOKEN_2022_PROGRAM_ID @ OracleError::InvalidTokenProgram,
+    )]
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn claim_channel_rewards(ctx: Context<ClaimChannelRewards>) -> Result<()> {
+    use crate::events::ChannelRewardsClaimed;
+
+    let clock = Clock::get()?;
+    let current_slot = clock.slot;
+
+    // 1. Update pool rewards
+    let pool = &mut ctx.accounts.stake_pool;
+    update_pool_rewards(pool, current_slot)?;
+
+    // 2. Calculate pending rewards
+    let pending = calculate_pending_rewards(&ctx.accounts.user_stake, pool)?;
+
+    require!(pending > 0, OracleError::NoRewardsToClaim);
+
+    // Capture values for CPI
+    let channel_key = ctx.accounts.channel_config.key();
+    let pool_bump = pool.bump;
+    let mint_key = ctx.accounts.mint.key();
+    let decimals = ctx.accounts.mint.decimals;
+    let pool_key = ctx.accounts.stake_pool.key();
+
+    // 3. Transfer rewards from vault to user
+    let seeds: &[&[u8]] = &[
+        CHANNEL_STAKE_POOL_SEED,
+        channel_key.as_ref(),
+        &[pool_bump],
+    ];
+    let signer_seeds = &[seeds];
+
+    let transfer_ix = spl_token_2022::instruction::transfer_checked(
+        &ctx.accounts.token_program.key(),
+        &ctx.accounts.vault.key(),
+        &mint_key,
+        &ctx.accounts.user_token_account.key(),
+        &pool_key,
+        &[],
+        pending,
+        decimals,
+    )?;
+
+    anchor_lang::solana_program::program::invoke_signed(
+        &transfer_ix,
+        &[
+            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.mint.to_account_info(),
+            ctx.accounts.user_token_account.to_account_info(),
+            ctx.accounts.stake_pool.to_account_info(),
+            ctx.accounts.token_program.to_account_info(),
+        ],
+        signer_seeds,
+    )?;
+
+    // 4. Update user's reward debt (reset to current accumulator value)
+    let user_stake = &mut ctx.accounts.user_stake;
+    user_stake.reward_debt = calculate_reward_debt(
+        user_stake.amount,
+        user_stake.multiplier_bps,
+        ctx.accounts.stake_pool.acc_reward_per_share,
+    )?;
+    user_stake.pending_rewards = 0;
+
+    // 5. Emit event
+    emit!(ChannelRewardsClaimed {
+        user: ctx.accounts.user.key(),
+        channel: channel_key,
+        amount: pending,
+        timestamp: clock.unix_timestamp,
+    });
+
+    msg!("Claimed {} reward tokens", pending);
+
+    Ok(())
+}
+
+// =============================================================================
+// SET REWARD RATE (Admin only)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct SetRewardRate<'info> {
+    #[account(
+        constraint = admin.key() == crate::constants::ADMIN_AUTHORITY @ OracleError::Unauthorized,
+    )]
+    pub admin: Signer<'info>,
+
+    /// Channel config
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
+
+    /// Stake pool to update
+    #[account(
+        mut,
+        seeds = [CHANNEL_STAKE_POOL_SEED, channel_config.key().as_ref()],
+        bump = stake_pool.bump,
+    )]
+    pub stake_pool: Box<Account<'info, ChannelStakePool>>,
+}
+
+pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()> {
+    use crate::events::RewardRateUpdated;
+
+    let clock = Clock::get()?;
+    let pool = &mut ctx.accounts.stake_pool;
+
+    // Update pool rewards before changing rate
+    update_pool_rewards(pool, clock.slot)?;
+
+    let old_rate = pool.reward_per_slot;
+    pool.reward_per_slot = new_rate;
+
+    emit!(RewardRateUpdated {
+        channel: ctx.accounts.channel_config.key(),
+        old_rate,
+        new_rate,
+        admin: ctx.accounts.admin.key(),
+        timestamp: clock.unix_timestamp,
+    });
+
+    msg!(
+        "Updated reward rate for channel {}: {} -> {} per slot",
+        ctx.accounts.channel_config.key(),
+        old_rate,
+        new_rate
     );
 
     Ok(())
@@ -782,15 +1083,19 @@ pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Resul
         )?;
     }
 
-    // 3. Burn penalty (deflationary - reduces total CCM supply)
-    if penalty > 0 {
+    // 3. Split penalty 50/50: burn half (deflationary), keep half for rewards
+    let burn_amount = penalty / 2;
+    let reward_amount = penalty - burn_amount; // Avoid rounding errors
+
+    // 3a. Burn half of penalty (deflationary)
+    if burn_amount > 0 {
         let burn_penalty_ix = spl_token_2022::instruction::burn(
             &ctx.accounts.token_program.key(),
             &ctx.accounts.vault.key(),
             &mint_key,
             &pool_key,
             &[],
-            penalty,
+            burn_amount,
         )?;
 
         anchor_lang::solana_program::program::invoke_signed(
@@ -804,6 +1109,14 @@ pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Resul
             signer_seeds,
         )?;
     }
+
+    // 3b. The other half (reward_amount) stays in vault for reward distribution
+    // Note: total_staked is reduced by full amount, so reward_amount becomes "free" for rewards
+    msg!(
+        "Penalty split: {} burned, {} added to reward pool",
+        burn_amount,
+        reward_amount
+    );
 
     // 4. Update pool totals (use checked_sub for safety)
     let pool = &mut ctx.accounts.stake_pool;
@@ -833,9 +1146,11 @@ pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Resul
     });
 
     msg!(
-        "Emergency unstake: {} returned, {} penalty burned, {} slots early",
+        "Emergency unstake: {} returned, {} penalty ({} burned, {} to rewards), {} slots early",
         return_amount,
         penalty,
+        burn_amount,
+        reward_amount,
         remaining_lock_slots
     );
 
