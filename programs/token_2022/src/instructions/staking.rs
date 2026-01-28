@@ -17,10 +17,10 @@ use anchor_spl::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-/// Token-2022 program ID for CPI validation
+/// Token-2022 program ID for CPI validation (TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb)
 const TOKEN_2022_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
-    0x06, 0xdd, 0xf6, 0xe1, 0xd7, 0x65, 0xa1, 0x93, 0xd9, 0xcb, 0xe1, 0x46, 0xce, 0xeb, 0x79, 0xac,
-    0x1c, 0xb4, 0x85, 0xed, 0x5f, 0x5b, 0x37, 0x91, 0x3a, 0x8c, 0xf5, 0x85, 0x7e, 0xff, 0x00, 0xa9,
+    0x06, 0xdd, 0xf6, 0xe1, 0xee, 0x75, 0x8f, 0xde, 0x18, 0x42, 0x5d, 0xbc, 0xe4, 0x6c, 0xcd, 0xda,
+    0xb6, 0x1a, 0xfc, 0x4d, 0x83, 0xb9, 0x0d, 0x27, 0xfe, 0xbd, 0xf9, 0x28, 0xd8, 0xa1, 0x8b, 0xfc,
 ]);
 
 // =============================================================================
@@ -482,6 +482,7 @@ pub struct UnstakeChannel<'info> {
         mut,
         associated_token::mint = nft_mint,
         associated_token::authority = user,
+        associated_token::token_program = token_program,
         constraint = nft_ata.amount == 1 @ OracleError::NftHolderMismatch,
     )]
     pub nft_ata: Box<InterfaceAccount<'info, TokenAccount>>,
@@ -490,6 +491,7 @@ pub struct UnstakeChannel<'info> {
         constraint = token_program.key() == TOKEN_2022_PROGRAM_ID @ OracleError::InvalidTokenProgram,
     )]
     pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
 pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
@@ -572,9 +574,18 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
 
     // 4. Update pool totals
     let pool = &mut ctx.accounts.stake_pool;
-    pool.total_staked = pool.total_staked.saturating_sub(amount);
-    pool.total_weighted = pool.total_weighted.saturating_sub(weighted_amount);
-    pool.staker_count = pool.staker_count.saturating_sub(1);
+    pool.total_staked = pool
+        .total_staked
+        .checked_sub(amount)
+        .ok_or(OracleError::MathOverflow)?;
+    pool.total_weighted = pool
+        .total_weighted
+        .checked_sub(weighted_amount)
+        .ok_or(OracleError::MathOverflow)?;
+    pool.staker_count = pool
+        .staker_count
+        .checked_sub(1)
+        .ok_or(OracleError::MathOverflow)?;
 
     // 5. Emit event
     emit!(ChannelUnstaked {
@@ -655,6 +666,7 @@ pub struct EmergencyUnstakeChannel<'info> {
         mut,
         associated_token::mint = nft_mint,
         associated_token::authority = user,
+        associated_token::token_program = token_program,
         constraint = nft_ata.amount == 1 @ OracleError::NftHolderMismatch,
     )]
     pub nft_ata: Box<InterfaceAccount<'info, TokenAccount>>,
@@ -663,11 +675,18 @@ pub struct EmergencyUnstakeChannel<'info> {
         constraint = token_program.key() == TOKEN_2022_PROGRAM_ID @ OracleError::InvalidTokenProgram,
     )]
     pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
 pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Result<()> {
     let clock = Clock::get()?;
     let current_slot = clock.slot;
+
+    // Prevent accidental penalties when lock already expired or no lock exists.
+    require!(
+        ctx.accounts.user_stake.lock_end_slot > current_slot,
+        OracleError::LockExpiredUseStandardUnstake
+    );
 
     // Capture values before mutable borrows
     let amount = ctx.accounts.user_stake.amount;
