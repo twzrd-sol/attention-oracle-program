@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "programs/token_2022",
+  "programs/channel-vault",
 ]
 resolver = "2"
 
