@@ -105,8 +105,12 @@ pub fn initialize_stake_pool(ctx: Context<InitializeStakePool>) -> Result<()> {
 
 #[derive(Accounts)]
 pub struct StakeChannel<'info> {
-    #[account(mut)]
+    /// The user/staker (can be a PDA for vault integrations)
     pub user: Signer<'info>,
+
+    /// Rent payer (separate to allow PDA users)
+    #[account(mut)]
+    pub payer: Signer<'info>,
 
     /// Protocol state (for pause check)
     #[account(
@@ -139,7 +143,7 @@ pub struct StakeChannel<'info> {
     /// User's stake position
     #[account(
         init,
-        payer = user,
+        payer = payer,
         space = UserChannelStake::LEN,
         seeds = [CHANNEL_USER_STAKE_SEED, channel_config.key().as_ref(), user.key().as_ref()],
         bump
@@ -214,6 +218,7 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     let pool_bump = ctx.accounts.stake_pool.bump;
     let pool_key = ctx.accounts.stake_pool.key();
     let user_key = ctx.accounts.user.key();
+    let payer_key = ctx.accounts.payer.key();
     let nft_mint_key = ctx.accounts.nft_mint.key();
 
     // Pool signer seeds
@@ -263,17 +268,17 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     ];
     let nft_mint_signer = &[nft_mint_seeds];
 
-    // Create the mint account
+    // Create the mint account (payer funds rent, nft_mint is the new account)
     anchor_lang::solana_program::program::invoke_signed(
         &anchor_lang::solana_program::system_instruction::create_account(
-            &user_key,
+            &payer_key,
             &nft_mint_key,
             rent_lamports,
             space as u64,
             &ctx.accounts.token_program.key(),
         ),
         &[
-            ctx.accounts.user.to_account_info(),
+            ctx.accounts.payer.to_account_info(),
             ctx.accounts.nft_mint.to_account_info(),
             ctx.accounts.system_program.to_account_info(),
         ],
@@ -311,9 +316,9 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
         ],
     )?;
 
-    // 5. Create associated token account for NFT
+    // 5. Create associated token account for NFT (payer funds, user owns the ATA)
     let create_ata_ix = anchor_spl::associated_token::spl_associated_token_account::instruction::create_associated_token_account(
-        &user_key,
+        &payer_key,
         &user_key,
         &nft_mint_key,
         &ctx.accounts.token_program.key(),
@@ -322,7 +327,7 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     anchor_lang::solana_program::program::invoke(
         &create_ata_ix,
         &[
-            ctx.accounts.user.to_account_info(),
+            ctx.accounts.payer.to_account_info(),
             ctx.accounts.nft_ata.to_account_info(),
             ctx.accounts.user.to_account_info(),
             ctx.accounts.nft_mint.to_account_info(),

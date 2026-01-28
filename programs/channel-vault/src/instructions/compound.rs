@@ -198,6 +198,7 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
 
         let stake_accounts = StakeChannel {
             user: ctx.accounts.vault.to_account_info(),
+            payer: ctx.accounts.payer.to_account_info(),
             protocol_state: ctx.accounts.oracle_protocol.to_account_info(),
             channel_config: ctx.accounts.oracle_channel_config.to_account_info(),
             mint: ctx.accounts.ccm_mint.to_account_info(),
