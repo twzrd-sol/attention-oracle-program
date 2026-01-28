@@ -189,64 +189,26 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
-    // Channel Staking
+    // Channel Staking (Token-2022 Soulbound Receipts)
     // -------------------------------------------------------------------------
 
     /// Initialize a stake pool for a channel.
-    pub fn initialize_channel_stake_pool(
-        ctx: Context<InitializeChannelStakePool>,
-        channel: String,
-    ) -> Result<()> {
-        instructions::channel_staking::initialize_channel_stake_pool(ctx, channel)
+    pub fn initialize_stake_pool(ctx: Context<InitializeStakePool>) -> Result<()> {
+        instructions::staking::initialize_stake_pool(ctx)
     }
 
-    /// Stake tokens on a channel.
+    /// Stake tokens on a channel and receive a soulbound receipt NFT.
     pub fn stake_channel(
         ctx: Context<StakeChannel>,
-        channel: String,
         amount: u64,
-        lock_slots: u64,
+        lock_duration: u64,
     ) -> Result<()> {
-        instructions::channel_staking::stake_channel(ctx, channel, amount, lock_slots)
+        instructions::staking::stake_channel(ctx, amount, lock_duration)
     }
 
-    /// Unstake tokens from a channel (after lock expires).
-    pub fn unstake_channel(
-        ctx: Context<UnstakeChannel>,
-        channel: String,
-        amount: u64,
-    ) -> Result<()> {
-        instructions::channel_staking::unstake_channel(ctx, channel, amount)
-    }
-
-    /// Extend lock period for additional boost.
-    pub fn extend_lock(
-        ctx: Context<ExtendLock>,
-        channel: String,
-        additional_slots: u64,
-    ) -> Result<()> {
-        instructions::channel_staking::extend_lock(ctx, channel, additional_slots)
-    }
-
-    // -------------------------------------------------------------------------
-    // NFT Stake Positions
-    // -------------------------------------------------------------------------
-
-    /// Mint a transferable NFT representing a stake position.
-    pub fn mint_stake_position_nft(
-        ctx: Context<MintStakePositionNft>,
-        channel: String,
-    ) -> Result<()> {
-        instructions::stake_nft::mint_stake_position_nft(ctx, channel)
-    }
-
-    /// Unstake tokens using NFT ownership (NFT holder can unstake).
-    pub fn unstake_with_nft(
-        ctx: Context<UnstakeWithNft>,
-        channel: String,
-        amount: u64,
-    ) -> Result<()> {
-        instructions::stake_nft::unstake_with_nft(ctx, channel, amount)
+    /// Unstake tokens by burning the receipt NFT.
+    pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
+        instructions::staking::unstake_channel(ctx)
     }
 
     // admin_withdraw removed - treasury locked to claims only

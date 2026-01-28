@@ -10,11 +10,11 @@ pub const PROTOCOL_SEED: &[u8] = b"protocol";
 pub const CHANNEL_CONFIG_V2_SEED: &[u8] = b"channel_cfg_v2";
 pub const CLAIM_STATE_V2_SEED: &[u8] = b"claim_state_v2";
 
-// Channel staking PDAs
-pub const CHANNEL_STAKE_POOL_SEED: &[u8] = b"channel_stake_pool";
-pub const USER_CHANNEL_STAKE_SEED: &[u8] = b"user_channel_stake";
-pub const CHANNEL_STAKE_VAULT_SEED: &[u8] = b"channel_stake_vault";
-pub const STAKE_POSITION_NFT_SEED: &[u8] = b"stake_position_nft";
+// Channel staking PDAs (Token-2022 with NonTransferable extension)
+pub const CHANNEL_STAKE_POOL_SEED: &[u8] = b"channel_pool";
+pub const CHANNEL_USER_STAKE_SEED: &[u8] = b"channel_user";
+pub const STAKE_NFT_MINT_SEED: &[u8] = b"stake_nft";
+pub const STAKE_VAULT_SEED: &[u8] = b"stake_vault";
 
 // =============================================================================
 // CUMULATIVE V2 CLAIMS
@@ -49,8 +49,8 @@ pub const CREATOR_FEE_BASIS_POINTS: u16 = 5; // 0.05%
 /// Minimum stake amount (1 CCM with 9 decimals)
 pub const MIN_STAKE_AMOUNT: u64 = 1_000_000_000;
 
-/// Maximum lock duration (~30 days at 400ms slots)
-pub const MAX_LOCK_SLOTS: u64 = 432_000 * 30;
+/// Maximum lock duration (~365 days at 400ms slots)
+pub const MAX_LOCK_SLOTS: u64 = 432_000 * 365;
 
 // =============================================================================
 // STAKING BOOST
@@ -62,15 +62,10 @@ pub const BOOST_PRECISION: u64 = 10_000;
 /// Slots per day (approximate at 400ms slot time)
 pub const SLOTS_PER_DAY: u64 = 216_000;
 
-/// Calculate boost basis points based on remaining lock duration.
+/// Calculate boost basis points based on lock duration.
 /// Returns multiplier in basis points (10000 = 1.0x, 30000 = 3.0x)
-pub fn calculate_boost_bps(lock_end_slot: u64, current_slot: u64) -> u64 {
-    if lock_end_slot <= current_slot {
-        return BOOST_PRECISION; // 1.0x - no lock or expired
-    }
-
-    let remaining_slots = lock_end_slot - current_slot;
-    let days = remaining_slots / SLOTS_PER_DAY;
+pub fn calculate_boost_bps(lock_duration: u64) -> u64 {
+    let days = lock_duration / SLOTS_PER_DAY;
 
     match days {
         0..=6 => 10_000,      // 1.0x   - less than 7 days
