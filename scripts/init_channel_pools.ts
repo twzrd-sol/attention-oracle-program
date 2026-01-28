@@ -114,18 +114,9 @@ function toSOL(lamports: number): string {
 async function main() {
   const { rpcUrl, keypairPath } = getEnv();
 
-  console.log("\n🔗 Connecting to RPC...");
-  const connection = new Connection(rpcUrl, "confirmed");
+  console.log("\n🔗 Initializing...");
 
-  // Load keypair
-  const keypairJson = JSON.parse(fs.readFileSync(keypairPath, "utf-8"));
-  const payer = Keypair.fromSecretKey(Uint8Array.from(keypairJson));
-  const wallet = new Wallet(payer);
-  const provider = new AnchorProvider(connection, wallet, {
-    commitment: "confirmed",
-  });
-
-  // Load IDL
+  // 1. Load IDL FIRST (before any async operations)
   const idlPath = path.join(__dirname, "../target/idl/token_2022.json");
   if (!fs.existsSync(idlPath)) {
     console.error(
@@ -135,21 +126,86 @@ async function main() {
     );
     process.exit(1);
   }
-
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf-8"));
+  console.log("✓ IDL loaded");
+
+  // 2. Load keypair with error handling
+  let keypairJson: number[];
+  try {
+    keypairJson = JSON.parse(fs.readFileSync(keypairPath, "utf-8"));
+  } catch (e) {
+    console.error(`❌ Failed to parse keypair file: ${(e as Error).message}`);
+    console.error(`   Expected JSON array format: [64, 255, 0, ...]`);
+    process.exit(1);
+  }
+
+  if (!Array.isArray(keypairJson) || keypairJson.length !== 64) {
+    console.error(`❌ Invalid keypair format. Expected 64-byte array, got ${keypairJson.length} bytes`);
+    process.exit(1);
+  }
+
+  const payer = Keypair.fromSecretKey(Uint8Array.from(keypairJson));
+  console.log(`✓ Keypair loaded: ${payer.publicKey.toBase58()}`);
+
+  // 3. Connect and check RPC
+  console.log("\n🔗 Connecting to RPC...");
+  const connection = new Connection(rpcUrl, "confirmed");
+  const wallet = new Wallet(payer);
+  const provider = new AnchorProvider(connection, wallet, {
+    commitment: "confirmed",
+  });
   const program = new Program(idl, PROGRAM_ID, provider);
 
-  // Get payer balance
+  // 4. Verify protocol state exists and payer is authorized
+  console.log("🔐 Verifying protocol state...");
+  const [protocolState] = PublicKey.findProgramAddressSync(
+    [SEEDS.PROTOCOL, CCM_MINT.toBuffer()],
+    PROGRAM_ID
+  );
+
+  let protocolStateData;
+  try {
+    protocolStateData = await program.account.protocolState.fetch(
+      protocolState
+    );
+  } catch (e) {
+    console.error(`❌ Protocol state not initialized at ${protocolState.toBase58()}`);
+    console.error(`   Run init_protocol first`);
+    process.exit(1);
+  }
+
+  // Check payer authorization
+  const payerStr = payer.publicKey.toBase58();
+  const adminStr = (protocolStateData.admin as PublicKey).toBase58();
+  const publisherStr = (protocolStateData.publisher as PublicKey).toBase58();
+
+  if (payerStr !== adminStr && payerStr !== publisherStr) {
+    console.error(`❌ Payer is not authorized to initialize pools`);
+    console.error(`   Payer: ${payerStr}`);
+    console.error(`   Admin: ${adminStr}`);
+    console.error(`   Publisher: ${publisherStr}`);
+    process.exit(1);
+  }
+  console.log(
+    `✓ Payer authorized (${payerStr === adminStr ? "admin" : "publisher"})`
+  );
+
+  // 5. Check balance
   const balance = await connection.getBalance(payer.publicKey);
-  console.log(`✓ Connected to ${rpcUrl}`);
-  console.log(`✓ Payer: ${payer.publicKey.toBase58()}`);
+  const estimatedCostPerPool = 0.015 * 10 ** 9; // 0.015 SOL per pool
+  const requiredBalance =
+    CHANNELS_TO_INIT.length * estimatedCostPerPool + 1 * 10 ** 9; // +1 SOL buffer
+
   console.log(`✓ Balance: ${toSOL(balance)} SOL`);
   console.log(`✓ Program: ${PROGRAM_ID.toBase58()}`);
   console.log(`✓ Mint: ${CCM_MINT.toBase58()}`);
 
-  if (balance < 5_000_000) {
+  if (balance < requiredBalance) {
     console.error(
-      "❌ Insufficient SOL balance (need ~0.005 SOL per pool + fees)"
+      `❌ Insufficient SOL balance for ${CHANNELS_TO_INIT.length} pool(s)`
+    );
+    console.error(
+      `   Required: ~${toSOL(requiredBalance)} SOL, Have: ${toSOL(balance)} SOL`
     );
     process.exit(1);
   }
@@ -215,26 +271,46 @@ async function main() {
         PROGRAM_ID
       );
 
+      // Check for vault collision (corrupted state)
+      const vaultAccount = await connection.getAccountInfo(vault);
+      if (vaultAccount) {
+        console.error(
+          `❌ Vault already exists but pool does not (corrupted state?)`
+        );
+        console.error(`   Vault: ${vault.toBase58()}`);
+        console.error(`   Pool: ${stakePool.toBase58()}`);
+        failureCount++;
+        continue;
+      }
+
       console.log(`Vault: ${vault.toBase58()}`);
 
       // 4. Build transaction
       console.log("\n⏳ Building transaction...");
-      const tx = await program.methods
-        .initializeStakePool()
-        .accounts({
-          payer: payer.publicKey,
-          protocolState: PublicKey.findProgramAddressSync(
-            [SEEDS.PROTOCOL, CCM_MINT.toBuffer()],
-            PROGRAM_ID
-          )[0],
-          channelConfig: channelConfig,
-          stakePool: stakePool,
-          mint: CCM_MINT,
-          vault: vault,
-          tokenProgram: TOKEN_2022_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-        })
-        .transaction();
+      let tx;
+      try {
+        tx = await program.methods
+          .initializeStakePool()
+          .accounts({
+            payer: payer.publicKey,
+            protocolState: PublicKey.findProgramAddressSync(
+              [SEEDS.PROTOCOL, CCM_MINT.toBuffer()],
+              PROGRAM_ID
+            )[0],
+            channelConfig: channelConfig,
+            stakePool: stakePool,
+            mint: CCM_MINT,
+            vault: vault,
+            tokenProgram: TOKEN_2022_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .transaction();
+      } catch (buildErr) {
+        console.error(`❌ Failed to build transaction:`);
+        console.error(`   ${(buildErr as Error).message}`);
+        failureCount++;
+        continue;
+      }
 
       // Add compute budget
       tx.add(
@@ -245,23 +321,33 @@ async function main() {
 
       // 5. Send and confirm
       console.log("📤 Sending transaction...");
-      const sig = await sendAndConfirmTransaction(connection, tx, [payer], {
-        commitment: "confirmed",
-      });
+      try {
+        const sig = await sendAndConfirmTransaction(connection, tx, [payer], {
+          commitment: "confirmed",
+        });
 
-      console.log(`✅ Success!`);
-      console.log(`   Tx: https://solscan.io/tx/${sig}`);
-      successCount++;
-    } catch (error) {
-      console.error(`❌ Failed:`);
-      if (error instanceof Error) {
-        console.error(`   ${error.message}`);
-        if (error.stack) {
-          const lines = error.stack.split("\n");
-          console.error(`   ${lines[1]}`); // Show first stack line
+        console.log(`✅ Success!`);
+        console.log(`   Tx: https://solscan.io/tx/${sig}`);
+        successCount++;
+      } catch (txErr) {
+        const errMsg = (txErr as Error).message;
+        console.error(`❌ Transaction failed:`);
+
+        // Provide specific error guidance
+        if (errMsg.includes("Unauthorized")) {
+          console.error(
+            `   Payer is not authorized (admin or publisher only)`
+          );
+        } else if (errMsg.includes("account already in use")) {
+          console.error(`   Account collision detected (corrupted state?)`);
+        } else if (errMsg.includes("insufficient funds")) {
+          console.error(`   Insufficient SOL balance`);
+        } else {
+          console.error(`   ${errMsg}`);
         }
+
+        failureCount++;
       }
-      failureCount++;
     }
   }
 
