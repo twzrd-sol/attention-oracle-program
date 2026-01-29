@@ -51,9 +51,10 @@ pub struct HarvestFees<'info> {
     pub mint: InterfaceAccount<'info, Mint>,
 
     /// Treasury token account (receives harvested fees)
+    /// Owner must match protocol_state.treasury (the fee destination owner)
     #[account(
         mut,
-        constraint = treasury.owner == protocol_state.key() @ OracleError::Unauthorized,
+        constraint = treasury.owner == protocol_state.treasury @ OracleError::Unauthorized,
         constraint = treasury.mint == mint.key() @ OracleError::InvalidMint,
     )]
     pub treasury: InterfaceAccount<'info, TokenAccount>,

@@ -128,11 +128,15 @@ pub struct ChannelStakePool {
     pub last_reward_slot: u64,
     /// Rewards distributed per slot (admin-configurable)
     pub reward_per_slot: u64,
+
+    // Emergency shutdown (v1.3.0)
+    /// If true, pool is shut down: no new stakes, all locks waived for penalty-free exit
+    pub is_shutdown: bool,
 }
 
 impl ChannelStakePool {
-    // 8 + 1 + 32 + 32 + 32 + 8 + 8 + 8 + 16 + 8 + 8 = 161
-    pub const LEN: usize = 161;
+    // 8 + 1 + 32 + 32 + 32 + 8 + 8 + 8 + 16 + 8 + 8 + 1 = 162
+    pub const LEN: usize = 162;
 }
 
 /// User's stake position on a channel.

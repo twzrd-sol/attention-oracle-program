@@ -209,3 +209,14 @@ pub struct RewardRateUpdated {
     pub admin: Pubkey,
     pub timestamp: i64,
 }
+
+/// Emitted when admin shuts down a pool for emergency penalty-free exits.
+#[event]
+pub struct PoolShutdown {
+    pub channel: Pubkey,
+    pub admin: Pubkey,
+    pub reason: String,
+    pub staker_count: u64,
+    pub total_staked: u64,
+    pub timestamp: i64,
+}
