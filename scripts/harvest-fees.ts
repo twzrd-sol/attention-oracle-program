@@ -98,7 +98,18 @@ async function main() {
     AO_PROGRAM_ID,
   );
 
-  const treasuryAta = deriveAta(mint, protocolState, TOKEN_2022_PROGRAM_ID);
+  // Read protocol state to get treasury owner
+  const protocolInfo = await connection.getAccountInfo(protocolState);
+  if (!protocolInfo) throw new Error('Protocol state not found');
+
+  // ProtocolState layout: 8 disc + 1 is_initialized + 1 version + 32 admin + 32 publisher + 32 treasury + ...
+  // Treasury is at offset 74 (8 + 1 + 1 + 32 + 32)
+  const treasuryOwner = new PublicKey(protocolInfo.data.slice(74, 106));
+
+  // Derive treasury ATA from the treasury OWNER (not protocol PDA)
+  const treasuryAta = deriveAta(mint, treasuryOwner, TOKEN_2022_PROGRAM_ID);
+
+  console.log(`Treasury Owner: ${treasuryOwner.toBase58()}`);
 
   console.log('\n=== Harvest Withheld Fees ===');
   console.log(`RPC:           ${rpcUrl}`);
