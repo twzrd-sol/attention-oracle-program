@@ -20,7 +20,7 @@ use crate::state::{ChannelVault, VaultOraclePosition};
 // Import Oracle types and CPI
 use token_2022::{
     self,
-    cpi::accounts::{StakeChannel, UnstakeChannel},
+    cpi::accounts::{ClaimChannelRewards, StakeChannel, UnstakeChannel},
     ChannelConfigV2, ChannelStakePool, ProtocolState, UserChannelStake,
     CHANNEL_STAKE_POOL_SEED, CHANNEL_USER_STAKE_SEED, PROTOCOL_SEED, STAKE_NFT_MINT_SEED, STAKE_VAULT_SEED,
 };
@@ -152,6 +152,9 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
     // Start with stakeable pending (reserve stays in buffer for withdrawals)
     let mut amount_to_stake = stakeable_pending;
 
+    // Track rewards claimed for event
+    let mut rewards_claimed: u64 = 0;
+
     // If there's an active position, we need to check if lock expired
     if position.is_active {
         // Check lock status
@@ -161,7 +164,46 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
             return Err(VaultError::OracleStakeLocked.into());
         }
 
-        // Lock expired - unstake first
+        // Claim any pending rewards BEFORE unstaking
+        // This transfers rewards from Oracle vault to our CCM buffer
+        msg!("Claiming pending rewards before unstake...");
+
+        // Get buffer balance before claim
+        let buffer_before = ctx.accounts.vault_ccm_buffer.amount;
+
+        let claim_accounts = ClaimChannelRewards {
+            user: ctx.accounts.vault.to_account_info(),
+            channel_config: ctx.accounts.oracle_channel_config.to_account_info(),
+            mint: ctx.accounts.ccm_mint.to_account_info(),
+            stake_pool: ctx.accounts.oracle_stake_pool.to_account_info(),
+            user_stake: ctx.accounts.oracle_user_stake.to_account_info(),
+            vault: ctx.accounts.oracle_vault.to_account_info(),
+            user_token_account: ctx.accounts.vault_ccm_buffer.to_account_info(),
+            token_program: ctx.accounts.token_2022_program.to_account_info(),
+        };
+
+        let claim_ctx = CpiContext::new_with_signer(
+            ctx.accounts.oracle_program.to_account_info(),
+            claim_accounts,
+            signer_seeds,
+        );
+
+        // Try to claim - if no rewards, this will fail with NoRewardsToClaim which is ok
+        match token_2022::cpi::claim_channel_rewards(claim_ctx) {
+            Ok(_) => {
+                // Reload buffer to get new balance
+                ctx.accounts.vault_ccm_buffer.reload()?;
+                let buffer_after = ctx.accounts.vault_ccm_buffer.amount;
+                rewards_claimed = buffer_after.saturating_sub(buffer_before);
+                msg!("Claimed {} CCM in rewards", rewards_claimed);
+            }
+            Err(e) => {
+                // NoRewardsToClaim (error code 6010) is expected if no rewards accrued
+                msg!("No rewards to claim: {:?}", e);
+            }
+        }
+
+        // Lock expired - unstake
         msg!("Unstaking {} CCM from Oracle", position.stake_amount);
 
         let unstake_accounts = UnstakeChannel {
@@ -186,9 +228,11 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
 
         token_2022::cpi::unstake_channel(unstake_ctx)?;
 
-        // Add unstaked amount to what we'll re-stake
+        // Add unstaked amount + claimed rewards to what we'll re-stake
         amount_to_stake = amount_to_stake
             .checked_add(position.stake_amount)
+            .ok_or(VaultError::MathOverflow)?
+            .checked_add(rewards_claimed)
             .ok_or(VaultError::MathOverflow)?;
     }
 
@@ -246,8 +290,9 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
 
     emit!(Compounded {
         vault: vault.key(),
-        pending_staked: stakeable_pending, // Only what we actually staked
+        pending_staked: stakeable_pending,
         total_staked: vault.total_staked,
+        rewards_claimed,
         compound_count: vault.compound_count,
         caller: ctx.accounts.payer.key(),
         timestamp: clock.unix_timestamp,

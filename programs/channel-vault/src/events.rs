@@ -33,6 +33,8 @@ pub struct Compounded {
     pub pending_staked: u64,
     /// Total CCM now staked in Oracle
     pub total_staked: u64,
+    /// Rewards claimed and restaked
+    pub rewards_claimed: u64,
     /// Compound count
     pub compound_count: u64,
     /// Caller who triggered compound
