@@ -65,6 +65,15 @@ pub const SLOTS_PER_DAY: u64 = 216_000;
 /// Precision for reward accumulator (1e12)
 pub const REWARD_PRECISION: u128 = 1_000_000_000_000;
 
+/// Slots per year (approximate at 400ms slot time)
+pub const SLOTS_PER_YEAR: u64 = 78_840_000;
+
+/// Maximum APR in basis points (15% = 1500 bps)
+pub const MAX_APR_BPS: u64 = 1500;
+
+/// Basis points denominator
+pub const BPS_DENOMINATOR: u64 = 10_000;
+
 /// Calculate boost basis points based on lock duration.
 /// Returns multiplier in basis points (10000 = 1.0x, 30000 = 3.0x)
 pub fn calculate_boost_bps(lock_duration: u64) -> u64 {

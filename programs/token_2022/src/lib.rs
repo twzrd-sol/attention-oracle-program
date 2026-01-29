@@ -188,6 +188,11 @@ pub mod token_2022 {
         instructions::admin::update_admin(ctx, new_admin)
     }
 
+    /// Set the treasury wallet (fee destination owner).
+    pub fn set_treasury(ctx: Context<SetTreasury>, new_treasury: Pubkey) -> Result<()> {
+        instructions::admin::set_treasury(ctx, new_treasury)
+    }
+
     // -------------------------------------------------------------------------
     // Channel Staking (Token-2022 Soulbound Receipts)
     // -------------------------------------------------------------------------
@@ -221,9 +226,25 @@ pub mod token_2022 {
         instructions::staking::set_reward_rate(ctx, new_rate)
     }
 
+    /// Migrate existing stake pool accounts to add reward fields (admin only).
+    pub fn migrate_stake_pool(ctx: Context<MigrateStakePool>) -> Result<()> {
+        instructions::staking::migrate_stake_pool(ctx)
+    }
+
+    /// Migrate existing user stake accounts to add reward fields (admin only).
+    pub fn migrate_user_stake(ctx: Context<MigrateUserStake>) -> Result<()> {
+        instructions::staking::migrate_user_stake(ctx)
+    }
+
     /// Emergency unstake before lock expiry with 20% penalty (burned).
     pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Result<()> {
         instructions::staking::emergency_unstake_channel(ctx)
+    }
+
+    /// Admin: Shut down a pool for emergency penalty-free exits.
+    /// Stops reward accrual and waives all lock periods.
+    pub fn admin_shutdown_pool(ctx: Context<AdminShutdownPool>, reason: String) -> Result<()> {
+        instructions::staking::admin_shutdown_pool(ctx, reason)
     }
 
     // admin_withdraw removed - treasury locked to claims only

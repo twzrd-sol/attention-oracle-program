@@ -159,4 +159,10 @@ pub enum OracleError {
 
     #[msg("Invalid channel name (must be 1-64 ASCII characters)")]
     InvalidChannelName,
+
+    #[msg("Reward rate exceeds maximum APR cap (15%)")]
+    RewardRateExceedsMaxApr,
+
+    #[msg("Pool is shutdown - no new stakes accepted")]
+    PoolIsShutdown,
 }

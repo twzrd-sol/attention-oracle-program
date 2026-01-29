@@ -184,6 +184,7 @@ pub fn initialize_stake_pool(ctx: Context<InitializeStakePool>) -> Result<()> {
     pool.acc_reward_per_share = 0;
     pool.last_reward_slot = clock.slot;
     pool.reward_per_slot = 0; // Admin sets this later
+    pool.is_shutdown = false;
 
     msg!(
         "Initialized stake pool for channel: {}, vault: {}",
@@ -285,6 +286,9 @@ pub struct StakeChannel<'info> {
 
 pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64) -> Result<()> {
     use spl_token_2022::extension::ExtensionType;
+
+    // Block new stakes if pool is shutdown
+    require!(!ctx.accounts.stake_pool.is_shutdown, OracleError::PoolIsShutdown);
 
     require!(amount >= MIN_STAKE_AMOUNT, OracleError::StakeBelowMinimum);
     require!(lock_duration <= MAX_LOCK_SLOTS, OracleError::LockPeriodTooLong);
@@ -608,8 +612,8 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
     let clock = Clock::get()?;
     let current_slot = clock.slot;
 
-    // 1. Check lock period
-    if ctx.accounts.user_stake.lock_end_slot > 0 {
+    // 1. Check lock period (waived if pool is shutdown for penalty-free exit)
+    if !ctx.accounts.stake_pool.is_shutdown && ctx.accounts.user_stake.lock_end_slot > 0 {
         require!(
             current_slot >= ctx.accounts.user_stake.lock_end_slot,
             OracleError::LockNotExpired
@@ -865,6 +869,7 @@ pub fn claim_channel_rewards(ctx: Context<ClaimChannelRewards>) -> Result<()> {
 #[derive(Accounts)]
 pub struct SetRewardRate<'info> {
     #[account(
+        mut,
         constraint = admin.key() == crate::constants::ADMIN_AUTHORITY @ OracleError::Unauthorized,
     )]
     pub admin: Signer<'info>,
@@ -872,16 +877,22 @@ pub struct SetRewardRate<'info> {
     /// Channel config
     pub channel_config: Box<Account<'info, ChannelConfigV2>>,
 
-    /// Stake pool to update
+    /// Stake pool to update (realloc to new size if needed)
     #[account(
         mut,
         seeds = [CHANNEL_STAKE_POOL_SEED, channel_config.key().as_ref()],
-        bump = stake_pool.bump,
+        bump,
+        realloc = ChannelStakePool::LEN,
+        realloc::payer = admin,
+        realloc::zero = false,
     )]
     pub stake_pool: Box<Account<'info, ChannelStakePool>>,
+
+    pub system_program: Program<'info, System>,
 }
 
 pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()> {
+    use crate::constants::{BPS_DENOMINATOR, MAX_APR_BPS, SLOTS_PER_YEAR};
     use crate::events::RewardRateUpdated;
 
     let clock = Clock::get()?;
@@ -889,6 +900,32 @@ pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()>
 
     // Update pool rewards before changing rate
     update_pool_rewards(pool, clock.slot)?;
+
+    // Enforce APR cap based on current TVL
+    // max_rate = (MAX_APR_BPS * total_weighted) / (BPS_DENOMINATOR * SLOTS_PER_YEAR)
+    // Note: Division order matters to avoid overflow
+    if pool.total_weighted > 0 {
+        let max_rate = (pool.total_weighted as u128)
+            .checked_mul(MAX_APR_BPS as u128)
+            .ok_or(OracleError::MathOverflow)?
+            .checked_div(BPS_DENOMINATOR as u128)
+            .ok_or(OracleError::MathOverflow)?
+            .checked_div(SLOTS_PER_YEAR as u128)
+            .ok_or(OracleError::MathOverflow)? as u64;
+
+        require!(
+            new_rate <= max_rate,
+            OracleError::RewardRateExceedsMaxApr
+        );
+
+        msg!(
+            "Rate cap check: new_rate={}, max_rate={} ({}% APR on {} weighted)",
+            new_rate,
+            max_rate,
+            MAX_APR_BPS / 100,
+            pool.total_weighted
+        );
+    }
 
     let old_rate = pool.reward_per_slot;
     pool.reward_per_slot = new_rate;
@@ -906,6 +943,221 @@ pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()>
         ctx.accounts.channel_config.key(),
         old_rate,
         new_rate
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// MIGRATE USER STAKE (One-time migration for existing accounts)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct MigrateUserStake<'info> {
+    #[account(
+        mut,
+        constraint = admin.key() == crate::constants::ADMIN_AUTHORITY @ OracleError::Unauthorized,
+    )]
+    pub admin: Signer<'info>,
+
+    /// Channel config
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
+
+    /// The user whose stake to migrate
+    /// CHECK: Just used for PDA derivation
+    pub user: UncheckedAccount<'info>,
+
+    /// User stake to migrate (as UncheckedAccount to avoid deserialization before resize)
+    /// CHECK: We validate ownership and seeds manually
+    #[account(
+        mut,
+        seeds = [CHANNEL_USER_STAKE_SEED, channel_config.key().as_ref(), user.key().as_ref()],
+        bump,
+    )]
+    pub user_stake: UncheckedAccount<'info>,
+
+    /// Stake pool for getting current accumulator
+    #[account(
+        seeds = [CHANNEL_STAKE_POOL_SEED, channel_config.key().as_ref()],
+        bump = stake_pool.bump,
+    )]
+    pub stake_pool: Box<Account<'info, ChannelStakePool>>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn migrate_user_stake(ctx: Context<MigrateUserStake>) -> Result<()> {
+    let user_stake_info = ctx.accounts.user_stake.to_account_info();
+    let current_len = user_stake_info.data_len();
+    let target_len = UserChannelStake::LEN;
+
+    // Check if already migrated
+    if current_len >= target_len {
+        msg!("User stake already at target size ({} >= {})", current_len, target_len);
+        return Ok(());
+    }
+
+    msg!("Migrating user stake from {} to {} bytes", current_len, target_len);
+
+    // Read existing data before resize
+    let data = user_stake_info.try_borrow_data()?;
+    // Parse amount and multiplier_bps from old layout
+    // 8 disc + 1 bump + 32 user + 32 channel = 73
+    let amount = u64::from_le_bytes(data[73..81].try_into().unwrap());
+    let multiplier_bps = u64::from_le_bytes(data[97..105].try_into().unwrap());
+    drop(data);
+
+    // Calculate additional rent needed
+    let rent = Rent::get()?;
+    let current_lamports = user_stake_info.lamports();
+    let required_lamports = rent.minimum_balance(target_len);
+    let lamports_diff = required_lamports.saturating_sub(current_lamports);
+
+    // Transfer additional rent from admin if needed
+    if lamports_diff > 0 {
+        let transfer_ix = anchor_lang::solana_program::system_instruction::transfer(
+            &ctx.accounts.admin.key(),
+            &user_stake_info.key(),
+            lamports_diff,
+        );
+        anchor_lang::solana_program::program::invoke(
+            &transfer_ix,
+            &[
+                ctx.accounts.admin.to_account_info(),
+                user_stake_info.clone(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+        )?;
+    }
+
+    // Realloc the account
+    user_stake_info.realloc(target_len, false)?;
+
+    // Calculate reward_debt based on current accumulator
+    // This prevents the user from claiming rewards from before migration
+    let pool = &ctx.accounts.stake_pool;
+    let weighted_stake = (amount as u128)
+        .checked_mul(multiplier_bps as u128)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(BOOST_PRECISION as u128)
+        .ok_or(OracleError::MathOverflow)?;
+
+    let reward_debt = weighted_stake
+        .checked_mul(pool.acc_reward_per_share)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(REWARD_PRECISION)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // Write new fields
+    let mut data = user_stake_info.try_borrow_mut_data()?;
+
+    // reward_debt: u128 (16 bytes) at offset 137
+    let debt_bytes: [u8; 16] = reward_debt.to_le_bytes();
+    data[137..153].copy_from_slice(&debt_bytes);
+
+    // pending_rewards: u64 (8 bytes) at offset 153
+    let pending_bytes: [u8; 8] = 0u64.to_le_bytes();
+    data[153..161].copy_from_slice(&pending_bytes);
+
+    msg!(
+        "Migrated user stake {} to {} bytes, reward_debt={}",
+        user_stake_info.key(),
+        target_len,
+        reward_debt
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// MIGRATE STAKE POOL (One-time migration for existing accounts)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct MigrateStakePool<'info> {
+    #[account(
+        mut,
+        constraint = admin.key() == crate::constants::ADMIN_AUTHORITY @ OracleError::Unauthorized,
+    )]
+    pub admin: Signer<'info>,
+
+    /// Channel config
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
+
+    /// Stake pool to migrate (as UncheckedAccount to avoid deserialization before resize)
+    /// CHECK: We validate ownership and seeds manually
+    #[account(
+        mut,
+        seeds = [CHANNEL_STAKE_POOL_SEED, channel_config.key().as_ref()],
+        bump,
+    )]
+    pub stake_pool: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn migrate_stake_pool(ctx: Context<MigrateStakePool>) -> Result<()> {
+    let stake_pool_info = ctx.accounts.stake_pool.to_account_info();
+    let current_len = stake_pool_info.data_len();
+    let target_len = ChannelStakePool::LEN;
+
+    // Check if already migrated
+    if current_len >= target_len {
+        msg!("Stake pool already at target size ({} >= {})", current_len, target_len);
+        return Ok(());
+    }
+
+    msg!("Migrating stake pool from {} to {} bytes", current_len, target_len);
+
+    // Calculate additional rent needed
+    let rent = Rent::get()?;
+    let current_lamports = stake_pool_info.lamports();
+    let required_lamports = rent.minimum_balance(target_len);
+    let lamports_diff = required_lamports.saturating_sub(current_lamports);
+
+    // Transfer additional rent from admin if needed
+    if lamports_diff > 0 {
+        let transfer_ix = anchor_lang::solana_program::system_instruction::transfer(
+            &ctx.accounts.admin.key(),
+            &stake_pool_info.key(),
+            lamports_diff,
+        );
+        anchor_lang::solana_program::program::invoke(
+            &transfer_ix,
+            &[
+                ctx.accounts.admin.to_account_info(),
+                stake_pool_info.clone(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+        )?;
+    }
+
+    // Realloc the account
+    stake_pool_info.realloc(target_len, false)?;
+
+    // Only initialize NEW fields beyond the old length.
+    // 129→161: reward fields (acc_reward_per_share, last_reward_slot, reward_per_slot)
+    // 161→162: is_shutdown (bool)
+    let clock = Clock::get()?;
+    let mut data = stake_pool_info.try_borrow_mut_data()?;
+
+    if current_len <= 129 {
+        // First migration: 129→162, initialize all reward fields + is_shutdown
+        data[129..145].copy_from_slice(&0u128.to_le_bytes());
+        data[145..153].copy_from_slice(&clock.slot.to_le_bytes());
+        data[153..161].copy_from_slice(&0u64.to_le_bytes());
+        data[161] = 0; // is_shutdown = false
+    } else if current_len <= 161 {
+        // Second migration: 161→162, only initialize is_shutdown
+        // DO NOT overwrite existing reward fields
+        data[161] = 0; // is_shutdown = false
+    }
+
+    msg!(
+        "Migrated stake pool {} from {} to {} bytes",
+        stake_pool_info.key(),
+        current_len,
+        target_len
     );
 
     Ok(())
@@ -1152,6 +1404,70 @@ pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Resul
         burn_amount,
         reward_amount,
         remaining_lock_slots
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// ADMIN SHUTDOWN POOL (Emergency Penalty-Free Exit)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct AdminShutdownPool<'info> {
+    #[account(
+        mut,
+        constraint = admin.key() == crate::constants::ADMIN_AUTHORITY @ OracleError::Unauthorized,
+    )]
+    pub admin: Signer<'info>,
+
+    /// Channel config
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
+
+    /// Stake pool to shutdown (realloc to new size if needed)
+    #[account(
+        mut,
+        seeds = [CHANNEL_STAKE_POOL_SEED, channel_config.key().as_ref()],
+        bump,
+        realloc = ChannelStakePool::LEN,
+        realloc::payer = admin,
+        realloc::zero = false,
+    )]
+    pub stake_pool: Box<Account<'info, ChannelStakePool>>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn admin_shutdown_pool(ctx: Context<AdminShutdownPool>, reason: String) -> Result<()> {
+    use crate::events::PoolShutdown;
+
+    let clock = Clock::get()?;
+    let pool = &mut ctx.accounts.stake_pool;
+
+    // Finalize any pending rewards before shutdown
+    update_pool_rewards(pool, clock.slot)?;
+
+    // Stop reward accrual
+    let old_rate = pool.reward_per_slot;
+    pool.reward_per_slot = 0;
+    pool.is_shutdown = true;
+
+    emit!(PoolShutdown {
+        channel: ctx.accounts.channel_config.key(),
+        admin: ctx.accounts.admin.key(),
+        reason: reason.clone(),
+        staker_count: pool.staker_count,
+        total_staked: pool.total_staked,
+        timestamp: clock.unix_timestamp,
+    });
+
+    msg!(
+        "Pool shutdown: channel={}, stakers={}, total_staked={}, reward_rate {} -> 0, reason={}",
+        ctx.accounts.channel_config.key(),
+        pool.staker_count,
+        pool.total_staked,
+        old_rate,
+        reason
     );
 
     Ok(())
