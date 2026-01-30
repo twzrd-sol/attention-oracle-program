@@ -84,4 +84,10 @@ pub enum VaultError {
 
     #[msg("Invalid metadata account PDA")]
     InvalidMetadataAccount,
+
+    #[msg("Invalid pubkey (cannot be default/system)")]
+    InvalidPubkey,
+
+    #[msg("String too long for metadata field")]
+    MetadataFieldTooLong,
 }

@@ -56,6 +56,11 @@ pub fn resume(ctx: Context<AdminAction>) -> Result<()> {
 
 /// Update admin authority.
 pub fn update_admin(ctx: Context<AdminAction>, new_admin: Pubkey) -> Result<()> {
+    require!(
+        new_admin != Pubkey::default(),
+        VaultError::InvalidPubkey
+    );
+
     let vault = &mut ctx.accounts.vault;
     let old_admin = vault.admin;
     vault.admin = new_admin;

@@ -75,12 +75,21 @@ fn serialize_data_v2(name: &str, symbol: &str, uri: &str) -> Vec<u8> {
     buf
 }
 
+/// Metaplex field limits
+const MAX_NAME_LEN: usize = 32;
+const MAX_SYMBOL_LEN: usize = 10;
+const MAX_URI_LEN: usize = 200;
+
 pub fn handler(
     ctx: Context<SetVlofiMetadata>,
     name: String,
     symbol: String,
     uri: String,
 ) -> Result<()> {
+    require!(name.len() <= MAX_NAME_LEN, VaultError::MetadataFieldTooLong);
+    require!(symbol.len() <= MAX_SYMBOL_LEN, VaultError::MetadataFieldTooLong);
+    require!(uri.len() <= MAX_URI_LEN, VaultError::MetadataFieldTooLong);
+
     let vault = &ctx.accounts.vault;
     let metadata_program_key = ctx.accounts.metadata_program.key();
 
