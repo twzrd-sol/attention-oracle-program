@@ -20,6 +20,7 @@
 
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
+import BN from "bn.js";
 import {
   PublicKey,
   Keypair,
@@ -47,7 +48,7 @@ const METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt
 const CHANNEL_NAME = "wzrd";
 const LOCK_DURATION_SLOTS = 54_000; // 6 hours
 const WITHDRAW_QUEUE_SLOTS = 9_000; // 1 hour
-const MIN_DEPOSIT = new anchor.BN(1_000_000_000); // 1 CCM
+const MIN_DEPOSIT = new BN(1_000_000_000); // 1 CCM
 
 // Oracle seeds
 const PROTOCOL_SEED = Buffer.from("protocol");
@@ -195,7 +196,7 @@ async function main() {
     const tx = await oracleProgram.methods
       .initializeChannelCumulative(
         CHANNEL_NAME,
-        new anchor.BN(0),
+        new BN(0),
         adminKeypair.publicKey,
         0
       )
@@ -240,7 +241,7 @@ async function main() {
   } else {
     console.log("[INIT] Creating vault (6h lock, 1h queue)...");
     const tx = await vaultProgram.methods
-      .initializeVault(MIN_DEPOSIT, new anchor.BN(LOCK_DURATION_SLOTS), new anchor.BN(WITHDRAW_QUEUE_SLOTS))
+      .initializeVault(MIN_DEPOSIT, new BN(LOCK_DURATION_SLOTS), new BN(WITHDRAW_QUEUE_SLOTS))
       .accounts({
         admin: adminKeypair.publicKey,
         oracleProtocol: protocolState,
