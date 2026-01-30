@@ -298,11 +298,6 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
 
     // Calculate boost multiplier based on lock duration
     let multiplier_bps = calculate_boost_bps(lock_duration);
-    let weighted_amount = (amount as u128)
-        .checked_mul(multiplier_bps as u128)
-        .ok_or(OracleError::MathOverflow)?
-        .checked_div(BOOST_PRECISION as u128)
-        .ok_or(OracleError::MathOverflow)? as u64;
 
     let lock_end_slot = if lock_duration > 0 {
         current_slot.checked_add(lock_duration).ok_or(OracleError::MathOverflow)?
@@ -328,6 +323,9 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     ];
     let signer_seeds = &[seeds];
 
+    // Capture vault balance before transfer to measure actual received
+    let vault_balance_before = ctx.accounts.vault.amount;
+
     // 1. Transfer tokens from user to vault
     let transfer_ix = spl_token_2022::instruction::transfer_checked(
         &ctx.accounts.token_program.key(),
@@ -350,6 +348,13 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
             ctx.accounts.token_program.to_account_info(),
         ],
     )?;
+
+    // Measure actual tokens received (net of Token-2022 transfer fees)
+    ctx.accounts.vault.reload()?;
+    let actual_received = ctx.accounts.vault.amount
+        .checked_sub(vault_balance_before)
+        .ok_or(OracleError::MathOverflow)?;
+    require!(actual_received > 0, OracleError::StakeBelowMinimum);
 
     // 2. Create NFT mint account with NonTransferable extension
     let extension_types = &[ExtensionType::NonTransferable];
@@ -484,10 +489,17 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     // Capture acc_reward_per_share for user's reward_debt
     let current_acc = pool.acc_reward_per_share;
 
-    // 9. Update pool totals
+    // Calculate weighted amount based on actual received (net of transfer fees)
+    let weighted_amount = (actual_received as u128)
+        .checked_mul(multiplier_bps as u128)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(BOOST_PRECISION as u128)
+        .ok_or(OracleError::MathOverflow)? as u64;
+
+    // 9. Update pool totals (using actual received, not requested amount)
     pool.total_staked = pool
         .total_staked
-        .checked_add(amount)
+        .checked_add(actual_received)
         .ok_or(OracleError::MathOverflow)?;
     pool.total_weighted = pool
         .total_weighted
@@ -503,21 +515,21 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     user_stake.bump = ctx.bumps.user_stake;
     user_stake.user = user_key;
     user_stake.channel = channel_key;
-    user_stake.amount = amount;
+    user_stake.amount = actual_received;
     user_stake.start_slot = current_slot;
     user_stake.lock_end_slot = lock_end_slot;
     user_stake.multiplier_bps = multiplier_bps;
     user_stake.nft_mint = nft_mint_key;
 
     // Set reward debt so user doesn't claim rewards from before their stake
-    user_stake.reward_debt = calculate_reward_debt(amount, multiplier_bps, current_acc)?;
+    user_stake.reward_debt = calculate_reward_debt(actual_received, multiplier_bps, current_acc)?;
     user_stake.pending_rewards = 0;
 
     // 11. Emit event
     emit!(ChannelStaked {
         user: user_key,
         channel: channel_key,
-        amount,
+        amount: actual_received,
         nft_mint: nft_mint_key,
         lock_duration,
         boost_bps: multiplier_bps,
@@ -525,7 +537,8 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     });
 
     msg!(
-        "Staked {} tokens, multiplier={}bps, lock_end={}, nft={}",
+        "Staked {} tokens (requested {}), multiplier={}bps, lock_end={}, nft={}",
+        actual_received,
         amount,
         multiplier_bps,
         lock_end_slot,
@@ -628,9 +641,23 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
         (pending, pool.bump)
     };
 
-    // Log pending rewards (user should claim before unstaking)
-    if pending > 0 {
-        msg!("User has {} pending rewards - claim before unstaking to receive them", pending);
+    // Block unstake if user has claimable pending rewards
+    // Users must call claim_channel_rewards first, or the pool must be shutdown
+    if pending > 0 && !ctx.accounts.stake_pool.is_shutdown {
+        // Only block if rewards are actually claimable (vault has sufficient excess)
+        let vault_balance = ctx.accounts.vault.amount;
+        let total_staked = ctx.accounts.stake_pool.total_staked;
+        let excess = vault_balance.saturating_sub(total_staked);
+        if excess >= pending {
+            msg!("User has {} pending rewards - call claim_channel_rewards first", pending);
+            return Err(OracleError::PendingRewardsOnUnstake.into());
+        }
+        // Rewards underfunded - allow unstake with forfeit to prevent deadlock
+        msg!(
+            "Rewards underfunded ({} available, {} pending) - allowing unstake with forfeit",
+            excess,
+            pending
+        );
     }
 
     // 3. Capture values before mutable borrows
@@ -801,6 +828,16 @@ pub fn claim_channel_rewards(ctx: Context<ClaimChannelRewards>) -> Result<()> {
     let pending = calculate_pending_rewards(&ctx.accounts.user_stake, pool)?;
 
     require!(pending > 0, OracleError::NoRewardsToClaim);
+
+    // INVARIANT: claims must not eat into principal (total_staked)
+    // excess = vault_balance - total_staked = available rewards
+    let vault_balance = ctx.accounts.vault.amount;
+    let total_staked = pool.total_staked;
+    let excess = vault_balance.saturating_sub(total_staked);
+    require!(
+        excess >= pending,
+        OracleError::ClaimExceedsAvailableRewards
+    );
 
     // Capture values for CPI
     let channel_key = ctx.accounts.channel_config.key();

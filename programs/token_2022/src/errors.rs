@@ -165,4 +165,10 @@ pub enum OracleError {
 
     #[msg("Pool is shutdown - no new stakes accepted")]
     PoolIsShutdown,
+
+    #[msg("Claim pending rewards before unstaking")]
+    PendingRewardsOnUnstake,
+
+    #[msg("Reward claim would exceed available rewards (principal protection)")]
+    ClaimExceedsAvailableRewards,
 }
