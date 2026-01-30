@@ -113,9 +113,41 @@ db/
 tmp_channels.txt
 .cache/
 
-# Local scratchpad scripts (do not commit)
+# Operational scripts (contain channel addresses, vault configs, APR schedules)
+# Keep scripts/config.ts and scripts/script-guard.ts in git (env-based, no hardcoded addresses)
+# Keep shell scripts in git (no sensitive data)
+scripts/init_channel_pools.ts
+scripts/init-stake-pools.ts
+scripts/init-trial-vaults.ts
+scripts/set-vlofi-metadata.ts
+scripts/fund-rewards.ts
+scripts/test-activation.ts
+scripts/test-compound.ts
+scripts/test-deposit.ts
+scripts/test-withdraw.ts
+scripts/harvest-fees.ts
+scripts/debug_account.ts
+scripts/set-treasury.ts
+scripts/check-stake-pool.ts
+scripts/check_ata.ts
+scripts/check_legacy_channels.ts
+scripts/check_protocol_admin.ts
+scripts/check_root.ts
+scripts/check_platform_oracle.ts
+scripts/audit_channels.ts
+scripts/audit_passports.ts
+scripts/audit_staking.ts
 scripts/init_taste_channel.ts
 scripts/parse_correct.ts
+
+# Archived vault setup scripts (one-time-use, contain addresses)
+scripts/archive/
+
+# Audit scripts with vault addresses
+scripts/audit/
+
+# Local config with channel addresses / APR schedules
+config/*.local.ts
 
 # Internal deployment docs (keep private)
 DEPLOYMENT_STATUS.md
