@@ -133,7 +133,7 @@ scripts/check_ata.ts
 scripts/check_legacy_channels.ts
 scripts/check_protocol_admin.ts
 scripts/check_root.ts
-scripts/check_platform_oracle.ts
+scripts/check_oracle_status.ts
 scripts/audit_channels.ts
 scripts/audit_passports.ts
 scripts/audit_staking.ts
