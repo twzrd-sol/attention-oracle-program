@@ -25,6 +25,31 @@ use token_2022::{
     CHANNEL_STAKE_POOL_SEED, PROTOCOL_SEED, STAKE_VAULT_SEED,
 };
 
+// Oracle error codes for expected CPI failures during compound.
+// Anchor custom error = 6000 + OracleError variant index.
+// Keep in sync with token_2022::errors::OracleError enum ordering.
+const ORACLE_NO_REWARDS_TO_CLAIM: u32 = 6041;
+const ORACLE_POOL_IS_SHUTDOWN: u32 = 6044;
+const ORACLE_CLAIM_EXCEEDS_AVAILABLE: u32 = 6046;
+
+/// Check if an Anchor CPI error is an expected Oracle claim failure
+/// that can be safely swallowed during compound.
+fn is_expected_claim_error(e: &anchor_lang::error::Error) -> bool {
+    use anchor_lang::solana_program::program_error::ProgramError;
+
+    let code = match e {
+        anchor_lang::error::Error::AnchorError(ae) => Some(ae.error_code_number),
+        anchor_lang::error::Error::ProgramError(pe) => match &pe.program_error {
+            ProgramError::Custom(c) => Some(*c),
+            _ => None,
+        },
+    };
+    matches!(
+        code,
+        Some(ORACLE_NO_REWARDS_TO_CLAIM | ORACLE_POOL_IS_SHUTDOWN | ORACLE_CLAIM_EXCEEDS_AVAILABLE)
+    )
+}
+
 #[derive(Accounts)]
 pub struct Compound<'info> {
     /// Anyone can call this (permissionless crank)
@@ -188,7 +213,7 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
             signer_seeds,
         );
 
-        // Try to claim - if no rewards, this will fail with NoRewardsToClaim which is ok
+        // Try to claim - only swallow expected Oracle errors; bubble real failures
         match token_2022::cpi::claim_channel_rewards(claim_ctx) {
             Ok(_) => {
                 // Reload buffer to get new balance
@@ -198,8 +223,12 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
                 msg!("Claimed {} CCM in rewards", rewards_claimed);
             }
             Err(e) => {
-                // NoRewardsToClaim (error code 6010) is expected if no rewards accrued
-                msg!("No rewards to claim: {:?}", e);
+                if is_expected_claim_error(&e) {
+                    msg!("No rewards to claim (expected), continuing");
+                } else {
+                    msg!("Claim CPI failed unexpectedly: {:?}", e);
+                    return Err(e);
+                }
             }
         }
 
