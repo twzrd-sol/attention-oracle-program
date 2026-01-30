@@ -27,6 +27,7 @@ pub struct CloseVault<'info> {
         bump = vault.bump,
         constraint = vault.admin == admin.key() @ VaultError::Unauthorized,
         constraint = vault.total_shares == 0 @ VaultError::VaultNotEmpty,
+        constraint = vault.total_staked == 0 @ VaultError::VaultNotEmpty,
         constraint = vault.pending_deposits == 0 @ VaultError::VaultNotEmpty,
         constraint = vault.pending_withdrawals == 0 @ VaultError::VaultNotEmpty,
         close = admin,

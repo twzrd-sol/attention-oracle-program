@@ -2,7 +2,7 @@ use anchor_lang::prelude::Pubkey;
 use crate::constants::CUMULATIVE_V2_DOMAIN;
 use sha3::{Digest, Keccak256};
 
-fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
+pub fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
     let mut hasher = Keccak256::new();
     for p in parts {
         hasher.update(p);

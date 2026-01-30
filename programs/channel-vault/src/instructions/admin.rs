@@ -88,6 +88,7 @@ pub struct SyncOraclePosition<'info> {
     pub admin: Signer<'info>,
 
     #[account(
+        mut,
         seeds = [VAULT_SEED, vault.channel_config.as_ref()],
         bump = vault.bump,
     )]
@@ -118,9 +119,14 @@ pub fn sync_oracle_position(ctx: Context<SyncOraclePosition>) -> Result<()> {
     position.stake_amount = stake.amount;
     position.lock_end_slot = stake.lock_end_slot;
     position.oracle_nft_mint = stake.nft_mint;
+    position.oracle_user_stake = ctx.accounts.oracle_user_stake.key();
+
+    // Correct vault.total_staked to match Oracle truth
+    let vault = &mut ctx.accounts.vault;
+    vault.total_staked = stake.amount;
 
     emit!(OraclePositionSynced {
-        vault: ctx.accounts.vault.key(),
+        vault: vault.key(),
         admin: ctx.accounts.admin.key(),
         is_active: position.is_active,
         stake_amount: position.stake_amount,
@@ -129,7 +135,7 @@ pub fn sync_oracle_position(ctx: Context<SyncOraclePosition>) -> Result<()> {
     });
 
     msg!(
-        "Oracle position synced: active={}, amount={}",
+        "Oracle position synced: active={}, amount={}, total_staked corrected",
         position.is_active,
         position.stake_amount
     );

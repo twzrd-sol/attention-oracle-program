@@ -230,6 +230,10 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
         // Lock expired - unstake
         msg!("Unstaking {} CCM from Oracle", position.stake_amount);
 
+        // Capture buffer balance before unstake (after any claim)
+        ctx.accounts.vault_ccm_buffer.reload()?;
+        let buffer_before_unstake = ctx.accounts.vault_ccm_buffer.amount;
+
         let unstake_accounts = UnstakeChannel {
             user: ctx.accounts.vault.to_account_info(),
             channel_config: ctx.accounts.oracle_channel_config.to_account_info(),
@@ -252,9 +256,20 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
 
         token_2022::cpi::unstake_channel(unstake_ctx)?;
 
-        // Add unstaked amount + claimed rewards to what we'll re-stake
+        // Measure actual received from Oracle (net of transfer fees)
+        // Using position.stake_amount here would cause phantom inflation:
+        // the Oracle holds less than what we recorded due to inbound transfer fee,
+        // so the return is smaller than position.stake_amount.
+        ctx.accounts.vault_ccm_buffer.reload()?;
+        let unstaked_received = ctx.accounts.vault_ccm_buffer.amount
+            .checked_sub(buffer_before_unstake)
+            .ok_or(VaultError::MathOverflow)?;
+
+        msg!("Unstaked {} CCM from Oracle (actual received)", unstaked_received);
+
+        // Add actual unstaked amount + claimed rewards to what we'll re-stake
         amount_to_stake = amount_to_stake
-            .checked_add(position.stake_amount)
+            .checked_add(unstaked_received)
             .ok_or(VaultError::MathOverflow)?
             .checked_add(rewards_claimed)
             .ok_or(VaultError::MathOverflow)?;
