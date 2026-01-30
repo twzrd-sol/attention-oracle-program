@@ -1,0 +1,27 @@
+# Security Policy for TWZRD Attention Oracle & ChannelVault
+# https://securitytxt.org/
+
+Contact: mailto:security@twzrd.com
+Expires: 2027-01-28T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://github.com/twzrd/attention-oracle-program/.well-known/security.txt
+
+# Programs
+# Attention Oracle: GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+# ChannelVault: 5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ
+
+# Scope
+# - Smart contract vulnerabilities in the Attention Oracle and ChannelVault programs
+# - Issues that could lead to loss of user funds
+# - Authentication/authorization bypass
+# - Merkle proof verification issues
+# - Share accounting / exchange rate manipulation
+
+# Out of Scope
+# - Frontend/UI issues (unless they lead to fund loss)
+# - Social engineering
+# - Denial of service (unless permanent)
+
+# Disclosure Policy
+# Please allow 90 days for remediation before public disclosure.
+# We commit to acknowledging receipt within 48 hours.

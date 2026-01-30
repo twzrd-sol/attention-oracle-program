@@ -117,4 +117,15 @@ pub mod channel_vault {
     pub fn close_vault(ctx: Context<CloseVault>) -> Result<()> {
         instructions::close::handler(ctx)
     }
+
+    /// Set vLOFI token metadata (name, symbol, URI) via Metaplex.
+    /// Creates metadata on first call, updates on subsequent calls.
+    pub fn set_vlofi_metadata(
+        ctx: Context<SetVlofiMetadata>,
+        name: String,
+        symbol: String,
+        uri: String,
+    ) -> Result<()> {
+        instructions::metadata::handler(ctx, name, symbol, uri)
+    }
 }

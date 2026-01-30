@@ -10,46 +10,10 @@
 
 ---
 
-## Trial Vaults (Active)
+## Vaults
 
-Min deposit: 10 CCM
-
-| Channel | Lock/Queue | Vault | vLOFI Mint | Channel Config |
-|---------|------------|-------|------------|----------------|
-| `lofi-vault-3h` | 27,000 slots (3h) | `7tjCgZcsK4sgV65wsNajUVRuGHQ7GZELWfTaWYbCBDTw` | `E9Kt33axpCy3ve2PCY9BSrbPhcR9wdDsWQECAahzw2dS` | `J3HAT4NbL6REyyNqbW1BDGF9BXXc3FYuQ1fr6NbCQaoW` |
-| `lofi-vault-6h` | 54,000 slots (6h) | `3BumiGZYw96eiyHEjy3wkjnrBTgcUspYmFHHptMpHof9` | `pZ5RyPEB9CS9SBjtidHARtQHqaqFT9qWKLLzohJSn4H` | `dJvatt5bga4ak64ghTLEtxs1jxfLX4TNoZuvfiDCcGy` |
-| `lofi-vault-9h` | 81,000 slots (9h) | `BnN5JfewvFZ93RFsduKyYbBc3NYvVc4xuYRDsMptEWu8` | `HUhqcKzaYabscWm31YsJYLn4kRxsNrKYgLmJu69fRdCp` | `2TWM1H1gHWrA6Ta6A9tH3E1TTTRbPpmSL2Xg7KdHwxCM` |
-| `lofi-vault-12h` | 108,000 slots (12h) | `8j7M2aQg7FdaN6dTW33km2zfJX5USVqQwSZ2WPA4kaPz` | `FWKim8StacRqPQ5Cq9QhMwbqHciCC4M1jj56B2FKq63p` | `GZL7vAo9vxdNbsmrreVueVd1Xm9oWmatkQauFcxhq8qP` |
-
----
-
-## Legacy Vaults (Deprecated)
-
-### attention:audio
-
-| Component | Address | Status |
-|-----------|---------|--------|
-| Channel Config | `4Vkv6AsPRnGXQBmDhGsHBrb4xbpLUQ6rhSwYAHkuJoC7` | Active |
-| Vault | `CD7hwmJpES9a86NE7nan8tXKWPfWY5yagEt7ESAqzK38` | Old struct |
-| vLOFI Mint | `dY2Y11ANxWw4TBbqjwd3gcGaQDEDEYbQr1xFqHJvu4n` | |
-| CCM Buffer | `5de4cYnt85HBxoRsQC6LJdyqzKWi6o8SvSSvre9632Jv` | |
-| Oracle Position | `BqCVT1XWFVVjJZYJMq6KPWYcXXnat9yzgnauUTnX9Q78` | |
-
-**Note:** This vault uses the old account layout (no `lock_duration_slots`/`withdraw_queue_slots`). May require migration or re-init.
-
-### spotify:oracle (Closed)
-
-The original `spotify:oracle` channel config has been closed on mainnet. Old PDAs are inert.
-
----
-
-## Related Addresses
-
-| Component | Address |
-|-----------|---------|
-| CCM Mint (Token-2022) | `Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM` |
-| Attention Oracle Program | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` |
-| Protocol State | `596VBoVvzASAhe38CcBSJnv1LdVFPu4EdB8gw1Ko2nx3` |
+Vault addresses are derived on-chain from channel configs via PDA seeds.
+See local ops config for vault inventory.
 
 ---
 
