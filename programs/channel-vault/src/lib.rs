@@ -62,8 +62,8 @@ pub mod channel_vault {
     }
 
     /// Complete withdrawal after queue period.
-    pub fn complete_withdraw(ctx: Context<CompleteWithdraw>) -> Result<()> {
-        instructions::redeem::complete_withdraw(ctx)
+    pub fn complete_withdraw(ctx: Context<CompleteWithdraw>, request_id: u64) -> Result<()> {
+        instructions::redeem::complete_withdraw(ctx, request_id)
     }
 
     /// Instant redemption - exit with 20% penalty, from buffer/reserve.

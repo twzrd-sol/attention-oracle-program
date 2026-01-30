@@ -45,6 +45,7 @@ pub struct RequestWithdraw<'info> {
         mut,
         seeds = [VAULT_SEED, vault.channel_config.as_ref()],
         bump = vault.bump,
+        constraint = !vault.paused @ VaultError::VaultPaused,
     )]
     pub vault: Box<Account<'info, ChannelVault>>,
 
@@ -290,7 +291,7 @@ pub struct CompleteWithdraw<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn complete_withdraw(ctx: Context<CompleteWithdraw>) -> Result<()> {
+pub fn complete_withdraw(ctx: Context<CompleteWithdraw>, _request_id: u64) -> Result<()> {
     let request = &ctx.accounts.withdraw_request;
     let clock = Clock::get()?;
 
@@ -600,9 +601,11 @@ pub fn instant_redeem(ctx: Context<InstantRedeem>, shares: u64, min_amount: u64)
             .ok_or(VaultError::MathOverflow)?;
     }
 
-    // Penalty stays in buffer - move into emergency reserve (up to cap).
-    // Reserve is included in NAV, so we must subtract the moved amount from pending_deposits.
-    let added_to_reserve = vault.add_to_reserve(penalty_amount)?;
+    // Move penalty to emergency reserve (up to cap).
+    // Only move what's backed by pending_deposits — the remainder is implicitly
+    // backed by total_staked and will flow to pending on the next compound.
+    let penalty_from_buffer = penalty_amount.min(vault.pending_deposits);
+    let added_to_reserve = vault.add_to_reserve(penalty_from_buffer)?;
     if added_to_reserve > 0 {
         vault.pending_deposits = vault
             .pending_deposits
