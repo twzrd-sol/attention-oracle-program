@@ -112,6 +112,12 @@ pub mod channel_vault {
         instructions::admin::update_admin(ctx, new_admin)
     }
 
+    /// Sync oracle position state from on-chain UserChannelStake.
+    /// Fixes drift between local VaultOraclePosition and Oracle state.
+    pub fn sync_oracle_position(ctx: Context<SyncOraclePosition>) -> Result<()> {
+        instructions::admin::sync_oracle_position(ctx)
+    }
+
     /// Close an empty vault and reclaim rent.
     /// Only callable when vault has no shares, deposits, or active positions.
     pub fn close_vault(ctx: Context<CloseVault>) -> Result<()> {

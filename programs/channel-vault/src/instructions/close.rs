@@ -9,7 +9,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
     close_account, CloseAccount, Mint as MintInterface, TokenAccount, TokenInterface,
 };
-use anchor_spl::token::{self, CloseAccount as TokenCloseAccount, Token};
+use anchor_spl::token::Token;
 
 use crate::constants::{TOKEN_2022_PROGRAM_ID, VAULT_CCM_BUFFER_SEED, VAULT_ORACLE_POSITION_SEED, VAULT_SEED, VLOFI_MINT_SEED};
 use crate::errors::VaultError;

@@ -13,7 +13,7 @@ use crate::events::VaultInitialized;
 use crate::state::{ChannelVault, VaultOraclePosition};
 
 // Import Oracle types for validation
-use token_2022::{ChannelConfigV2, ProtocolState, CHANNEL_CONFIG_V2_SEED, PROTOCOL_SEED};
+use token_2022::{ChannelConfigV2, ProtocolState, PROTOCOL_SEED};
 
 #[derive(Accounts)]
 pub struct InitializeVault<'info> {

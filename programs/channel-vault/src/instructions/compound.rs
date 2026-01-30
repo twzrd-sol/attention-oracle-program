@@ -21,8 +21,8 @@ use crate::state::{ChannelVault, VaultOraclePosition};
 use token_2022::{
     self,
     cpi::accounts::{ClaimChannelRewards, StakeChannel, UnstakeChannel},
-    ChannelConfigV2, ChannelStakePool, ProtocolState, UserChannelStake,
-    CHANNEL_STAKE_POOL_SEED, CHANNEL_USER_STAKE_SEED, PROTOCOL_SEED, STAKE_NFT_MINT_SEED, STAKE_VAULT_SEED,
+    ChannelConfigV2, ChannelStakePool, ProtocolState,
+    CHANNEL_STAKE_POOL_SEED, PROTOCOL_SEED, STAKE_VAULT_SEED,
 };
 
 #[derive(Accounts)]
