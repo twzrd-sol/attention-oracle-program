@@ -172,3 +172,55 @@ pub enum OracleError {
     #[msg("Reward claim would exceed available rewards (principal protection)")]
     ClaimExceedsAvailableRewards,
 }
+
+// =============================================================================
+// Exported error codes for cross-program CPI error matching.
+// Anchor custom errors = 6000 + variant index.
+// Validated by tests below — inserting new variants will break the test,
+// forcing an update here and in any consumer (e.g. channel-vault compound).
+// =============================================================================
+
+/// Anchor error code offset for `#[error_code]` enums.
+pub const ANCHOR_ERROR_OFFSET: u32 = 6000;
+
+/// `OracleError::NoRewardsToClaim` (variant index 41)
+pub const ORACLE_ERROR_NO_REWARDS_TO_CLAIM: u32 = ANCHOR_ERROR_OFFSET + 41;
+
+/// `OracleError::PoolIsShutdown` (variant index 44)
+pub const ORACLE_ERROR_POOL_IS_SHUTDOWN: u32 = ANCHOR_ERROR_OFFSET + 44;
+
+/// `OracleError::ClaimExceedsAvailableRewards` (variant index 46)
+pub const ORACLE_ERROR_CLAIM_EXCEEDS_AVAILABLE: u32 = ANCHOR_ERROR_OFFSET + 46;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Extract the Anchor error code number from an OracleError variant.
+    fn error_code(e: OracleError) -> u32 {
+        let err: anchor_lang::error::Error = e.into();
+        match err {
+            anchor_lang::error::Error::AnchorError(ae) => ae.error_code_number,
+            _ => panic!("expected AnchorError"),
+        }
+    }
+
+    #[test]
+    fn error_code_constants_match_enum() {
+        assert_eq!(
+            ORACLE_ERROR_NO_REWARDS_TO_CLAIM,
+            error_code(OracleError::NoRewardsToClaim),
+            "NoRewardsToClaim code drifted — update ORACLE_ERROR_NO_REWARDS_TO_CLAIM"
+        );
+        assert_eq!(
+            ORACLE_ERROR_POOL_IS_SHUTDOWN,
+            error_code(OracleError::PoolIsShutdown),
+            "PoolIsShutdown code drifted — update ORACLE_ERROR_POOL_IS_SHUTDOWN"
+        );
+        assert_eq!(
+            ORACLE_ERROR_CLAIM_EXCEEDS_AVAILABLE,
+            error_code(OracleError::ClaimExceedsAvailableRewards),
+            "ClaimExceedsAvailableRewards code drifted — update ORACLE_ERROR_CLAIM_EXCEEDS_AVAILABLE"
+        );
+    }
+}

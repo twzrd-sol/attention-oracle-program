@@ -1040,8 +1040,13 @@ pub fn migrate_user_stake(ctx: Context<MigrateUserStake>) -> Result<()> {
     let data = user_stake_info.try_borrow_data()?;
     // Parse amount and multiplier_bps from old layout
     // 8 disc + 1 bump + 32 user + 32 channel = 73
-    let amount = u64::from_le_bytes(data[73..81].try_into().unwrap());
-    let multiplier_bps = u64::from_le_bytes(data[97..105].try_into().unwrap());
+    require!(data.len() >= 105, OracleError::InvalidInputLength);
+    let amount = u64::from_le_bytes(
+        data[73..81].try_into().map_err(|_| OracleError::InvalidInputLength)?
+    );
+    let multiplier_bps = u64::from_le_bytes(
+        data[97..105].try_into().map_err(|_| OracleError::InvalidInputLength)?
+    );
     drop(data);
 
     // Calculate additional rent needed
@@ -1067,8 +1072,8 @@ pub fn migrate_user_stake(ctx: Context<MigrateUserStake>) -> Result<()> {
         )?;
     }
 
-    // Realloc the account
-    user_stake_info.realloc(target_len, false)?;
+    // Resize the account
+    user_stake_info.resize(target_len)?;
 
     // Calculate reward_debt based on current accumulator
     // This prevents the user from claiming rewards from before migration
@@ -1169,8 +1174,8 @@ pub fn migrate_stake_pool(ctx: Context<MigrateStakePool>) -> Result<()> {
         )?;
     }
 
-    // Realloc the account
-    stake_pool_info.realloc(target_len, false)?;
+    // Resize the account
+    stake_pool_info.resize(target_len)?;
 
     // Only initialize NEW fields beyond the old length.
     // 129→161: reward fields (acc_reward_per_share, last_reward_slot, reward_per_slot)
@@ -1407,8 +1412,10 @@ pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Resul
         reward_amount
     );
 
-    // 4. Update pool totals (use checked_sub for safety)
+    // 4. Update pool rewards BEFORE modifying totals (prevents accumulator skew)
     let pool = &mut ctx.accounts.stake_pool;
+    update_pool_rewards(pool, current_slot)?;
+
     pool.total_staked = pool
         .total_staked
         .checked_sub(amount)

@@ -17,20 +17,15 @@ use crate::errors::VaultError;
 use crate::events::Compounded;
 use crate::state::{ChannelVault, VaultOraclePosition};
 
-// Import Oracle types and CPI
+// Import Oracle types, CPI, and error codes
 use token_2022::{
     self,
     cpi::accounts::{ClaimChannelRewards, StakeChannel, UnstakeChannel},
     ChannelConfigV2, ChannelStakePool, ProtocolState,
     CHANNEL_STAKE_POOL_SEED, PROTOCOL_SEED, STAKE_VAULT_SEED,
+    ORACLE_ERROR_NO_REWARDS_TO_CLAIM, ORACLE_ERROR_POOL_IS_SHUTDOWN,
+    ORACLE_ERROR_CLAIM_EXCEEDS_AVAILABLE,
 };
-
-// Oracle error codes for expected CPI failures during compound.
-// Anchor custom error = 6000 + OracleError variant index.
-// Keep in sync with token_2022::errors::OracleError enum ordering.
-const ORACLE_NO_REWARDS_TO_CLAIM: u32 = 6041;
-const ORACLE_POOL_IS_SHUTDOWN: u32 = 6044;
-const ORACLE_CLAIM_EXCEEDS_AVAILABLE: u32 = 6046;
 
 /// Check if an Anchor CPI error is an expected Oracle claim failure
 /// that can be safely swallowed during compound.
@@ -46,7 +41,7 @@ fn is_expected_claim_error(e: &anchor_lang::error::Error) -> bool {
     };
     matches!(
         code,
-        Some(ORACLE_NO_REWARDS_TO_CLAIM | ORACLE_POOL_IS_SHUTDOWN | ORACLE_CLAIM_EXCEEDS_AVAILABLE)
+        Some(ORACLE_ERROR_NO_REWARDS_TO_CLAIM | ORACLE_ERROR_POOL_IS_SHUTDOWN | ORACLE_ERROR_CLAIM_EXCEEDS_AVAILABLE)
     )
 }
 

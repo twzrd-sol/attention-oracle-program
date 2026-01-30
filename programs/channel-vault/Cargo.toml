@@ -23,3 +23,6 @@ anchor-spl = { version = "0.32.1", features = ["token_2022"] }
 
 # Oracle CPI dependency (sibling in same workspace)
 attention-oracle-token-2022 = { path = "../token_2022", features = ["cpi"] }
+
+[dev-dependencies]
+anchor-lang = "0.32.1"
