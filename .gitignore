@@ -148,6 +148,7 @@ scripts/audit/
 
 # Local config with channel addresses / APR schedules
 config/*.local.ts
+scripts/*.local.ts
 
 # Internal deployment docs (keep private)
 DEPLOYMENT_STATUS.md

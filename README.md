@@ -42,6 +42,24 @@ anchor build
 ./verify.sh
 ```
 
+### Testing Safety (Important)
+
+`Anchor.toml` currently targets **mainnet**. Running `anchor test` will deploy by default.
+Use one of the following to avoid accidental mainnet deployments:
+
+```bash
+# Guarded runner (blocks mainnet unless explicitly allowed)
+./scripts/anchor-test-safe.sh
+
+# Safe: run tests without deploying
+anchor test --skip-deploy
+
+# Safe: run against localnet
+ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 anchor test
+```
+
+If you must run against mainnet (rare), set `ALLOW_MAINNET_ANCHOR_TEST=1` explicitly.
+
 ## Integration
 
 Developers integrating with the Attention Oracle (e.g., wallets, analytics dashboards) should refer to:

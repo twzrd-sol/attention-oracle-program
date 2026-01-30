@@ -78,4 +78,10 @@ pub enum VaultError {
 
     #[msg("Vault is insolvent - withdrawals exceed assets")]
     VaultInsolvent,
+
+    #[msg("Invalid metadata program")]
+    InvalidMetadataProgram,
+
+    #[msg("Invalid metadata account PDA")]
+    InvalidMetadataAccount,
 }

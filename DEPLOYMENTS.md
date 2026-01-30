@@ -6,8 +6,9 @@ This document records public program IDs, upgrade authority, and release policy 
 
 | Cluster | Program | Program ID | Program Data Account | Status |
 |---------|---------|------------|---------------------|--------|
-| mainnet-beta | token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `5GyaaVmzRr2r9KcUuzt9SxBVq9ubTT5m3pH9Lzy3Kh4L` | Active |
-| devnet       | token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | — | Active |
+| mainnet-beta | Attention Oracle (Token-2022) | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `5GyaaVmzRr2r9KcUuzt9SxBVq9ubTT5m3pH9Lzy3Kh4L` | Active |
+| mainnet-beta | Channel Vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | — | Active |
+| devnet       | Attention Oracle (Token-2022) | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | — | Active |
 
 Program IDs are sourced from `Anchor.toml`. Update this table when IDs change.
 
@@ -39,7 +40,8 @@ For a continuously updated snapshot (last deployed slot, hash, and verification)
 
 | Program | Upgrade Authority |
 |---------|-------------------|
-| token_2022 | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` |
+| Attention Oracle | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` |
+| Channel Vault | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` |
 
 To verify on-chain:
 ```bash

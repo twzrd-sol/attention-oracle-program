@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "anchor:test": "bash scripts/anchor-test-safe.sh",
     "generate-client": "node scripts/generate-client.mjs",
     "v3:config": "tsx scripts/config.ts --export",
     "v3:gen-env": "tsx scripts/generate-env.ts",
     "v3:init-protocol": "tsx scripts/initialize-protocol-v3.ts",
     "v3:init-stake-pool": "tsx scripts/initialize-stake-pool-v3.ts",
     "v3:admin-withdraw": "tsx scripts/admin-withdraw-v3.ts",
-    "v3:set-metadata": "tsx scripts/set-token-metadata-v3.ts"
+    "v3:set-metadata": "tsx scripts/set-token-metadata-v3.ts",
+    "test:activation": "tsx scripts/test-activation.ts"
   },
   "devDependencies": {
     "@codama/nodes": "^1.0.0",
@@ -23,13 +25,17 @@
     "@metaplex-foundation/umi-bundle-defaults": "^1.4.1",
     "@metaplex-foundation/umi-web3js-adapters": "^1.4.1",
     "@noble/hashes": "^1.3.3",
+    "@solana-program/token-2022": "^0.6.1",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@types/node": "^22.19.1",
     "bn.js": "^5.2.2",
+    "litesvm": "^0.5.0",
+    "solana-bankrun": "^0.4.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   },
   "dependencies": {
     "bs58": "^6.0.0",
