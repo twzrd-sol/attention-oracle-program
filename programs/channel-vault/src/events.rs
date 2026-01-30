@@ -129,3 +129,14 @@ pub struct VaultClosed {
     pub admin: Pubkey,
     pub timestamp: i64,
 }
+
+/// Emitted when admin syncs the oracle position state.
+#[event]
+pub struct OraclePositionSynced {
+    pub vault: Pubkey,
+    pub admin: Pubkey,
+    pub is_active: bool,
+    pub stake_amount: u64,
+    pub lock_end_slot: u64,
+    pub timestamp: i64,
+}
