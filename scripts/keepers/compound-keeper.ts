@@ -45,6 +45,7 @@ import {
 } from "./lib/vault-pda.js";
 import { createLogger } from "./lib/logger.js";
 import { runKeeperLoop } from "./lib/keeper-loop.js";
+import { DRY_RUN, simulateAndLog } from "./lib/dry-run.js";
 
 const INTERVAL_MS = Number(process.env.COMPOUND_INTERVAL_MS || 300_000);
 const log = createLogger("compound");
@@ -73,6 +74,7 @@ async function main() {
     cluster: env.cluster,
     channels: CHANNELS.length,
     intervalMs: INTERVAL_MS,
+    dryRun: DRY_RUN,
   });
 
   async function tick() {
@@ -146,7 +148,7 @@ async function main() {
 
         const accounts = deriveCompoundAccounts(channelConfig, CCM_V3_MINT);
 
-        const tx = await vaultProgram.methods
+        const builder = vaultProgram.methods
           .compound()
           .accounts({
             payer: payerKeypair.publicKey,
@@ -166,11 +168,18 @@ async function main() {
             associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
             rent: SYSVAR_RENT_PUBKEY,
-          })
-          .rpc({ commitment: "confirmed" });
+          });
 
-        log.info("Compounded successfully", { channel: ch.name, tx });
-        compounded++;
+        if (DRY_RUN) {
+          const sim = await simulateAndLog(
+            connection, builder, payerKeypair.publicKey, log, ch.name,
+          );
+          sim.success ? compounded++ : errors++;
+        } else {
+          const tx = await builder.rpc({ commitment: "confirmed" });
+          log.info("Compounded successfully", { channel: ch.name, tx });
+          compounded++;
+        }
       } catch (err: any) {
         // NothingToCompound / OracleStakeLocked are expected — log at debug
         const msg: string = err.message || "";
@@ -188,7 +197,10 @@ async function main() {
       }
     }
 
-    log.info("Tick complete", { compounded, skipped, errors, currentSlot });
+    log.info("Tick complete", {
+      compounded, skipped, errors, currentSlot,
+      mode: DRY_RUN ? "dry-run" : "live",
+    });
   }
 
   await runKeeperLoop(
