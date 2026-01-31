@@ -8,6 +8,7 @@
  *   );
  */
 
+import { writeFileSync } from "fs";
 import { createLogger } from "./logger.js";
 
 export interface KeeperConfig {
@@ -55,6 +56,16 @@ export async function runKeeperLoop(
     try {
       await tick();
       retries = 0;
+
+      // Write heartbeat for container health checks
+      const hbPath = process.env.HEALTHCHECK_FILE;
+      if (hbPath) {
+        try {
+          writeFileSync(hbPath, new Date().toISOString());
+        } catch {
+          log.warn("Failed to write heartbeat file", { path: hbPath });
+        }
+      }
     } catch (err: any) {
       retries++;
       const backoff = Math.min(

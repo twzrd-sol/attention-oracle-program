@@ -44,6 +44,7 @@ import {
 } from "./lib/vault-pda.js";
 import { createLogger } from "./lib/logger.js";
 import { runKeeperLoop } from "./lib/keeper-loop.js";
+import { DRY_RUN, simulateAndLog } from "./lib/dry-run.js";
 
 const INTERVAL_MS = Number(process.env.HARVEST_INTERVAL_MS || 3_600_000);
 const MAX_SOURCES_PER_TX = 30; // governance.rs cap
@@ -89,6 +90,7 @@ async function main() {
     treasuryOwner: treasuryOwner.toBase58(),
     treasuryAta: treasuryAta.toBase58(),
     intervalMs: INTERVAL_MS,
+    dryRun: DRY_RUN,
   });
 
   async function tick() {
@@ -146,7 +148,7 @@ async function main() {
 
     for (const batch of batches) {
       try {
-        const tx = await oracleProgram.methods
+        const builder = oracleProgram.methods
           .harvestFees()
           .accounts({
             authority: adminKeypair.publicKey,
@@ -162,17 +164,26 @@ async function main() {
               isSigner: false,
               isWritable: true,
             })),
-          )
-          .rpc({ commitment: "confirmed" });
+          );
 
-        log.info("Harvest batch sent", {
-          tx,
-          batchSize: batch.length,
-          batchIndex: txCount,
-          totalBatches: batches.length,
-        });
-        totalHarvested += batch.length;
-        txCount++;
+        if (DRY_RUN) {
+          const sim = await simulateAndLog(
+            connection, builder, adminKeypair.publicKey, log,
+            `harvest-batch-${txCount}`,
+          );
+          if (sim.success) totalHarvested += batch.length;
+          txCount++;
+        } else {
+          const tx = await builder.rpc({ commitment: "confirmed" });
+          log.info("Harvest batch sent", {
+            tx,
+            batchSize: batch.length,
+            batchIndex: txCount,
+            totalBatches: batches.length,
+          });
+          totalHarvested += batch.length;
+          txCount++;
+        }
 
         // Rate-limit between batches
         if (txCount < batches.length) {
@@ -192,6 +203,7 @@ async function main() {
       accountsHarvested: totalHarvested,
       transactionsSent: txCount,
       totalBatches: batches.length,
+      mode: DRY_RUN ? "dry-run" : "live",
     });
   }
 

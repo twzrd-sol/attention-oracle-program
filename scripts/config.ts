@@ -50,8 +50,10 @@ export const PROGRAM_ID = new PublicKey(
   optionalEnv("AO_PROGRAM_ID", "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop")
 );
 
-// Token Mint (required - no fallback)
-export const CCM_V3_MINT = new PublicKey(requireEnv("CCM_V3_MINT"));
+// Token Mint (mainnet default — overridden by .env.ccm-v3 for devnet)
+export const CCM_V3_MINT = new PublicKey(
+  optionalEnv("CCM_V3_MINT", "Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM")
+);
 export const DECIMALS = 9;
 
 // External Addresses (Liquidity Venues)
