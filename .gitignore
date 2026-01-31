@@ -19,6 +19,7 @@ package-lock.json
 !docs/LIVE_STATUS.md
 !docs/TREASURY.md
 !docs/SECURITY_AUDIT.md
+!docs/PRODUCTION_READINESS.md
 !docs/specs/transfer-fee-capture.md
 
 # Next.js output
