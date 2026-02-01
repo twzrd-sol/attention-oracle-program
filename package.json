@@ -39,6 +39,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@sqds/multisig": "^2.1.4",
     "bs58": "^6.0.0",
     "dotenv": "^16.6.1",
     "js-sha3": "^0.9.3"
