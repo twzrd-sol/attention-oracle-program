@@ -4,7 +4,7 @@ use anchor_lang::prelude::*;
 
 use crate::constants::{VAULT_ORACLE_POSITION_SEED, VAULT_SEED};
 use crate::errors::VaultError;
-use crate::events::{AdminUpdated, OraclePositionSynced, VaultPaused, VaultResumed};
+use crate::events::{AdminUpdated, OraclePositionSynced, VaultPaused, VaultResumed, WithdrawQueueSlotsUpdated};
 use crate::state::{ChannelVault, VaultOraclePosition};
 
 use token_2022::UserChannelStake;
@@ -138,6 +138,35 @@ pub fn sync_oracle_position(ctx: Context<SyncOraclePosition>) -> Result<()> {
         "Oracle position synced: active={}, amount={}, total_staked corrected",
         position.is_active,
         position.stake_amount
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Update Withdraw Queue Slots
+// ---------------------------------------------------------------------------
+
+/// Update withdrawal queue duration in slots (admin only).
+pub fn update_withdraw_queue_slots(
+    ctx: Context<AdminAction>,
+    new_withdraw_queue_slots: u64,
+) -> Result<()> {
+    let vault = &mut ctx.accounts.vault;
+    let old_value = vault.withdraw_queue_slots;
+    vault.withdraw_queue_slots = new_withdraw_queue_slots;
+
+    emit!(WithdrawQueueSlotsUpdated {
+        vault: vault.key(),
+        admin: ctx.accounts.admin.key(),
+        old_withdraw_queue_slots: old_value,
+        new_withdraw_queue_slots,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
+    msg!(
+        "Withdraw queue slots updated: {} -> {}",
+        old_value,
+        new_withdraw_queue_slots
     );
     Ok(())
 }

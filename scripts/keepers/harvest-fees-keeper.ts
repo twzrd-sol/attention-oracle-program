@@ -1,16 +1,22 @@
 /**
- * Harvest Fees Keeper — Admin crank for Token-2022 transfer fee collection.
+ * Harvest Fees Keeper — Permissionless crank for Token-2022 transfer fee collection.
  *
  * Periodically discovers CCM token accounts with withheld transfer fees,
  * then calls harvest_fees() to sweep them to the protocol treasury.
  *
- * REQUIRES admin keypair (checked against protocol_state.admin on-chain).
+ * harvest_fees is permissionless (since proposal #24) — any funded wallet
+ * can call it. Treasury destination is enforced by on-chain constraints.
+ *
+ * Discovery strategy (avoids getProgramAccounts on Token-2022):
+ *   1. getTokenLargestAccounts(CCM_MINT) — top 20 holders
+ *   2. Derive all 16 vault CCM buffer PDAs — deterministic
+ *   3. Dedupe, check each for withheld fees, batch harvest
  *
  * Environment:
  *   CLUSTER=mainnet-beta   (or devnet)
  *   I_UNDERSTAND_MAINNET=1 (for mainnet)
  *   RPC_URL=https://...
- *   KEYPAIR=/secure/path/admin.json
+ *   KEYPAIR=/secure/path/keeper.json
  *   HARVEST_INTERVAL_MS=3600000   (optional, default 1 hour)
  *
  * Usage:
@@ -35,19 +41,20 @@ import { readFileSync } from "fs";
 
 import { requireScriptEnv } from "../script-guard.js";
 import {
-  CCM_V3_MINT,
-  PROGRAM_ID as ORACLE_PROGRAM_ID,
-} from "../config.js";
-import {
+  CCM_MINT,
+  ORACLE_PROGRAM_ID,
   deriveProtocolState,
   deriveFeeConfig,
+  deriveVault,
+  deriveCcmBuffer,
 } from "./lib/vault-pda.js";
+import { CHANNELS } from "./lib/channels.js";
 import { createLogger } from "./lib/logger.js";
 import { runKeeperLoop } from "./lib/keeper-loop.js";
 import { DRY_RUN, simulateAndLog } from "./lib/dry-run.js";
 
 const INTERVAL_MS = Number(process.env.HARVEST_INTERVAL_MS || 3_600_000);
-const MAX_SOURCES_PER_TX = 30; // governance.rs cap
+const MAX_SOURCES_PER_TX = 20; // limited by 1232-byte tx size, not governance.rs cap (30)
 const log = createLogger("harvest-fees");
 
 async function main() {
@@ -70,15 +77,15 @@ async function main() {
   const oracleProgram = new Program(oracleIdl, provider);
 
   // Static accounts
-  const protocolState = deriveProtocolState(CCM_V3_MINT);
-  const feeConfig = deriveFeeConfig(CCM_V3_MINT);
+  const protocolState = deriveProtocolState(CCM_MINT);
+  const feeConfig = deriveFeeConfig(CCM_MINT);
 
   // Fetch treasury info from protocol state
   const protocolData: any =
     await oracleProgram.account.protocolState.fetch(protocolState);
   const treasuryOwner: PublicKey = protocolData.treasury;
   const treasuryAta = getAssociatedTokenAddressSync(
-    CCM_V3_MINT,
+    CCM_MINT,
     treasuryOwner,
     true, // allowOwnerOffCurve
     TOKEN_2022_PROGRAM_ID,
@@ -93,38 +100,57 @@ async function main() {
     dryRun: DRY_RUN,
   });
 
+  // Pre-derive all 16 vault CCM buffer addresses (deterministic, no RPC)
+  const vaultBuffers: PublicKey[] = CHANNELS.map((ch) => {
+    const vault = deriveVault(new PublicKey(ch.channelConfig));
+    return deriveCcmBuffer(vault);
+  });
+
   async function tick() {
-    // Step 1: Find all CCM token accounts
+    // Step 1: Build candidate list without getProgramAccounts
+    // (Syndica and many RPCs reject GPA on Token-2022 — too many accounts)
     log.info("Scanning for withheld fees...");
 
-    const allAccounts = await connection.getProgramAccounts(
-      TOKEN_2022_PROGRAM_ID,
-      {
-        filters: [
-          {
-            memcmp: {
-              offset: 0,
-              bytes: CCM_V3_MINT.toBase58(),
-            },
-          },
-        ],
-      },
-    );
+    // 1a. Top holders from RPC (lightweight, ~20 accounts)
+    const candidates = new Set<string>();
+    try {
+      const largest = await connection.getTokenLargestAccounts(CCM_MINT, "confirmed");
+      for (const entry of largest.value) {
+        candidates.add(entry.address.toBase58());
+      }
+    } catch (err: any) {
+      log.warn("getTokenLargestAccounts failed, continuing with known accounts", {
+        error: err.message,
+      });
+    }
 
-    log.info("Scanned token accounts", { total: allAccounts.length });
+    // 1b. All vault CCM buffers (deterministic)
+    for (const buf of vaultBuffers) {
+      candidates.add(buf.toBase58());
+    }
 
-    // Step 2: Filter for accounts with withheld fees > 0
+    // 1c. Treasury ATA
+    candidates.add(treasuryAta.toBase58());
+
+    log.info("Candidate accounts", { count: candidates.size });
+
+    // Step 2: Fetch accounts and filter for withheld fees > 0
+    const candidateKeys = [...candidates].map((s) => new PublicKey(s));
+    const infos = await connection.getMultipleAccountsInfo(candidateKeys, "confirmed");
+
     const withWithheld: PublicKey[] = [];
 
-    for (const { pubkey, account } of allAccounts) {
+    for (let i = 0; i < candidateKeys.length; i++) {
+      const info = infos[i];
+      if (!info) continue;
       try {
-        const unpacked = unpackAccount(pubkey, account, TOKEN_2022_PROGRAM_ID);
+        const unpacked = unpackAccount(candidateKeys[i], info, TOKEN_2022_PROGRAM_ID);
         const feeAmount = getTransferFeeAmount(unpacked);
         if (feeAmount && feeAmount.withheldAmount > 0n) {
-          withWithheld.push(pubkey);
+          withWithheld.push(candidateKeys[i]);
         }
       } catch {
-        // Skip unparseable accounts
+        // Skip non-token or unparseable accounts
       }
     }
 
@@ -154,7 +180,7 @@ async function main() {
             authority: adminKeypair.publicKey,
             protocolState,
             feeConfig,
-            mint: CCM_V3_MINT,
+            mint: CCM_MINT,
             treasury: treasuryAta,
             tokenProgram: TOKEN_2022_PROGRAM_ID,
           })

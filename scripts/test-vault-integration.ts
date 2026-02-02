@@ -38,12 +38,12 @@
  */
 
 import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
-import { Program, AnchorProvider, Wallet, BN } from "@coral-xyz/anchor";
+import { Program, AnchorProvider, Wallet } from "@coral-xyz/anchor";
+import BN from "bn.js";
 import {
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
-  createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
 import * as fs from "fs";
 
@@ -56,7 +56,7 @@ const CCM_MINT = new PublicKey("Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM");
 
 const VAULT_SEED = Buffer.from("vault");
 const VLOFI_MINT_SEED = Buffer.from("vlofi");
-const CCM_BUFFER_SEED = Buffer.from("ccm_buffer");
+const CCM_BUFFER_SEED = Buffer.from("vault_ccm");
 
 // All 16 vaults
 const VAULTS = [
@@ -233,22 +233,7 @@ async function deposit(
     process.exit(1);
   }
 
-  // Check if user vLOFI ATA exists, create if not
-  const vlofiInfo = await connection.getAccountInfo(userVlofi);
   const tx = new Transaction();
-
-  if (!vlofiInfo) {
-    console.log("  Creating vLOFI token account...");
-    tx.add(
-      createAssociatedTokenAccountInstruction(
-        user.publicKey,
-        userVlofi,
-        user.publicKey,
-        vlofiMint,
-        TOKEN_PROGRAM_ID,
-      ),
-    );
-  }
 
   // Fetch vault state for min shares calculation
   const vaultData = await program.account.channelVault.fetch(vault);
@@ -277,9 +262,8 @@ async function deposit(
       ccmMint: CCM_MINT,
       vlofiMint,
       userCcm,
+      vaultCcmBuffer: ccmBuffer,
       userVlofi,
-      ccmBuffer,
-      tokenProgram: TOKEN_PROGRAM_ID,
       token2022Program: TOKEN_2022_PROGRAM_ID,
     })
     .instruction();
@@ -372,17 +356,23 @@ async function redeem(
   console.log();
 
   // Build instant redeem instruction
+  const VAULT_ORACLE_SEED = Buffer.from("vault_oracle");
+  const [vaultOraclePosition] = PublicKey.findProgramAddressSync(
+    [VAULT_ORACLE_SEED, vault.toBuffer()],
+    VAULT_PROGRAM_ID,
+  );
+
   const redeemIx = await program.methods
     .instantRedeem(new BN(redeemLamports.toString()), new BN(minCcm.toString()))
     .accounts({
       user: user.publicKey,
       vault,
-      ccmMint: CCM_MINT,
+      vaultOraclePosition,
       vlofiMint,
-      userCcm,
       userVlofi,
-      ccmBuffer,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      ccmMint: CCM_MINT,
+      vaultCcmBuffer: ccmBuffer,
+      userCcm,
       token2022Program: TOKEN_2022_PROGRAM_ID,
     })
     .instruction();

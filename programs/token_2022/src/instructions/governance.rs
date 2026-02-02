@@ -27,7 +27,8 @@ pub struct FeesHarvested {
 /// Source ATAs (user/LP accounts with withheld fees) passed via remaining_accounts
 #[derive(Accounts)]
 pub struct HarvestFees<'info> {
-    /// Withdraw authority (must be protocol admin)
+    /// Permissionless crank -- anyone can trigger fee harvesting.
+    /// Fees always go to the protocol treasury (enforced by treasury constraint).
     #[account(mut)]
     pub authority: Signer<'info>,
 
@@ -35,7 +36,6 @@ pub struct HarvestFees<'info> {
     #[account(
         seeds = [PROTOCOL_SEED, mint.key().as_ref()],
         bump = protocol_state.bump,
-        constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
