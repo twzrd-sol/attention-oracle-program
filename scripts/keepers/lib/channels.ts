@@ -92,52 +92,52 @@ export const CHANNELS: ChannelEntry[] = [
   },
 
   // -------------------------------------------------------------------------
-  // Playlist-bound vaults (6h lock)
+  // Audio:listening vaults (6h lock)
   // -------------------------------------------------------------------------
   {
-    name: "spotify-999",
+    name: "audio-999",
     label: "vLOFI 999",
     channelConfig: "9G1MvnVq3dX6UwGFvhTC9bDArNt9TyvS5UimffTL1BAJ",
     lockDurationSlots: 54_000,
     withdrawQueueSlots: 9_000,
   },
   {
-    name: "spotify-212",
+    name: "audio-212",
     label: "vLOFI 212",
     channelConfig: "Dg84d5BkSYxKSix9m6YgbLz1L7mEsSH81Svp24watxEC",
     lockDurationSlots: 54_000,
     withdrawQueueSlots: 9_000,
   },
   {
-    name: "spotify-247",
+    name: "audio-247",
     label: "vLOFI 247",
     channelConfig: "GdrV9DjKZFePZadxuQANKEBvVaB7rM8aEhMEzMHWrFJE",
     lockDurationSlots: 54_000,
     withdrawQueueSlots: 9_000,
   },
   {
-    name: "spotify-1999",
+    name: "audio-1999",
     label: "vLOFI 1999",
     channelConfig: "8LCSiL2a4FjTAveMMn8SjLVxrYecWSfFDH48sdhzdbv",
     lockDurationSlots: 54_000,
     withdrawQueueSlots: 9_000,
   },
   {
-    name: "spotify-415",
+    name: "audio-415",
     label: "vLOFI 415",
     channelConfig: "GxzK9iqyFJf3TRJG5XAQJD3eJtgKCivzkQtj7iPKrUsG",
     lockDurationSlots: 54_000,
     withdrawQueueSlots: 9_000,
   },
   {
-    name: "spotify-3121",
+    name: "audio-3121",
     label: "vLOFI 3121",
     channelConfig: "4JawzmsofxVCim7eDtFPCMwiP21NMcAQqsZRPT7k9uL1",
     lockDurationSlots: 54_000,
     withdrawQueueSlots: 9_000,
   },
   {
-    name: "spotify-69",
+    name: "audio-69",
     label: "vLOFI 69",
     channelConfig: "2uGQDJMsGy3undJCT9NazdJXjSoCcXd71vgkvYzMt3eR",
     lockDurationSlots: 54_000,
