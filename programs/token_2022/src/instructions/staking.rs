@@ -9,7 +9,7 @@ use crate::constants::{
     STAKE_VAULT_SEED,
 };
 use crate::errors::OracleError;
-use crate::events::{ChannelStaked, ChannelUnstaked, ChannelEmergencyUnstaked};
+use crate::events::{ChannelStaked, ChannelUnstaked, ChannelEmergencyUnstaked, PoolClosed};
 use crate::state::{ChannelConfigV2, ChannelStakePool, ProtocolState, UserChannelStake};
 use anchor_lang::prelude::*;
 use anchor_spl::{
@@ -1579,5 +1579,195 @@ pub fn admin_shutdown_pool(ctx: Context<AdminShutdownPool>, reason: String) -> R
         reason
     );
 
+    Ok(())
+}
+
+// =============================================================================
+// CLOSE STAKE POOL (Recover surplus reward tokens from emptied pools)
+// =============================================================================
+
+/// Close a fully-emptied shutdown pool.
+///
+/// Steps:
+///   1. Withdraw withheld Token-2022 transfer fees from vault (protocol_state signs)
+///   2. Transfer remaining spendable tokens to destination (stake_pool signs)
+///   3. Close the vault Token-2022 ATA (stake_pool signs)
+///   4. Anchor closes the stake pool PDA (via `close = admin`)
+///
+/// Safety: only callable when pool is shut down, has 0 stakers, 0 staked,
+/// and 0 weighted. This does NOT weaken trust guarantees — admin cannot
+/// touch active pools or staked principal.
+#[derive(Accounts)]
+pub struct CloseStakePool<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// Channel config (for PDA derivation of stake pool).
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
+
+    /// Stake pool to close — must be shutdown with 0 stakers, 0 staked, 0 weighted.
+    /// Anchor's `close = admin` returns rent after handler completes.
+    #[account(
+        mut,
+        seeds = [CHANNEL_STAKE_POOL_SEED, channel_config.key().as_ref()],
+        bump = stake_pool.bump,
+        close = admin,
+        constraint = stake_pool.is_shutdown @ OracleError::PoolNotShutdown,
+        constraint = stake_pool.staker_count == 0 @ OracleError::StakePoolNotEmpty,
+        constraint = stake_pool.total_staked == 0 @ OracleError::StakePoolNotEmpty,
+        constraint = stake_pool.total_weighted == 0 @ OracleError::StakePoolNotEmpty,
+    )]
+    pub stake_pool: Box<Account<'info, ChannelStakePool>>,
+
+    /// Vault holding any remaining reward tokens.
+    /// Referenced by pubkey stored on stake_pool (not derived by seeds) for robustness.
+    #[account(
+        mut,
+        address = stake_pool.vault,
+    )]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
+
+    /// CCM mint (needed for transfer_checked and withheld fee withdrawal).
+    #[account(mut)]
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    /// Destination for remaining reward tokens (treasury ATA, admin ATA, etc.).
+    /// Must match the same mint.
+    #[account(
+        mut,
+        constraint = destination.mint == mint.key() @ OracleError::InvalidMint,
+    )]
+    pub destination: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(
+        constraint = token_program.key() == TOKEN_2022_PROGRAM_ID @ OracleError::InvalidTokenProgram,
+    )]
+    pub token_program: Interface<'info, TokenInterface>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn close_stake_pool(ctx: Context<CloseStakePool>) -> Result<()> {
+    use anchor_spl::token_2022_extensions::transfer_fee::{
+        withdraw_withheld_tokens_from_accounts, WithdrawWithheldTokensFromAccounts,
+    };
+
+    let channel_key = ctx.accounts.channel_config.key();
+    let pool_bump = ctx.accounts.stake_pool.bump;
+    let mint_key = ctx.accounts.mint.key();
+    let decimals = ctx.accounts.mint.decimals;
+
+    // Pool PDA signer seeds (vault authority for transfers + close)
+    let pool_seeds: &[&[u8]] = &[
+        CHANNEL_STAKE_POOL_SEED,
+        channel_key.as_ref(),
+        &[pool_bump],
+    ];
+    let pool_signer = &[pool_seeds];
+
+    // Protocol PDA signer seeds (withdraw_withheld_authority for the mint)
+    let protocol_seeds: &[&[u8]] = &[
+        PROTOCOL_SEED,
+        mint_key.as_ref(),
+        &[ctx.accounts.protocol_state.bump],
+    ];
+    let protocol_signer = &[protocol_seeds];
+
+    // Step 1: Withdraw withheld Token-2022 transfer fees from the vault.
+    // The protocol_state PDA is the mint's withdraw_withheld_authority.
+    // This moves any withheld fees from vault -> destination so the vault
+    // can be closed (close_account requires zero withheld + zero balance).
+    {
+        let sources = vec![ctx.accounts.vault.to_account_info()];
+        withdraw_withheld_tokens_from_accounts(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                WithdrawWithheldTokensFromAccounts {
+                    token_program_id: ctx.accounts.token_program.to_account_info(),
+                    mint: ctx.accounts.mint.to_account_info(),
+                    destination: ctx.accounts.destination.to_account_info(),
+                    authority: ctx.accounts.protocol_state.to_account_info(),
+                },
+                protocol_signer,
+            ),
+            sources,
+        )?;
+        msg!("Withheld fees withdrawn from vault");
+    }
+
+    // Step 2: Transfer remaining spendable tokens (reward surplus) to destination.
+    // Reload vault after withheld fee withdrawal to get current spendable balance.
+    ctx.accounts.vault.reload()?;
+    let vault_balance = ctx.accounts.vault.amount;
+
+    if vault_balance > 0 {
+        let transfer_ix = spl_token_2022::instruction::transfer_checked(
+            &ctx.accounts.token_program.key(),
+            &ctx.accounts.vault.key(),
+            &mint_key,
+            &ctx.accounts.destination.key(),
+            &ctx.accounts.stake_pool.key(),
+            &[],
+            vault_balance,
+            decimals,
+        )?;
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &transfer_ix,
+            &[
+                ctx.accounts.vault.to_account_info(),
+                ctx.accounts.mint.to_account_info(),
+                ctx.accounts.destination.to_account_info(),
+                ctx.accounts.stake_pool.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+            pool_signer,
+        )?;
+
+        msg!("Transferred {} surplus tokens to destination", vault_balance);
+    }
+
+    // Step 3: Close the vault ATA (returns SOL rent to admin).
+    let close_ix = spl_token_2022::instruction::close_account(
+        &ctx.accounts.token_program.key(),
+        &ctx.accounts.vault.key(),
+        &ctx.accounts.admin.key(),
+        &ctx.accounts.stake_pool.key(),
+        &[],
+    )?;
+
+    anchor_lang::solana_program::program::invoke_signed(
+        &close_ix,
+        &[
+            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.admin.to_account_info(),
+            ctx.accounts.stake_pool.to_account_info(),
+            ctx.accounts.token_program.to_account_info(),
+        ],
+        pool_signer,
+    )?;
+
+    // Step 4: Emit event (vault_balance = gross amount attempted, subject to 0.5% transfer fee).
+    emit!(PoolClosed {
+        channel: ctx.accounts.channel_config.key(),
+        admin: ctx.accounts.admin.key(),
+        tokens_recovered: vault_balance,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
+    msg!(
+        "Pool closed: channel={}, tokens_recovered={} (gross, minus 0.5% transfer fee)",
+        ctx.accounts.channel_config.key(),
+        vault_balance,
+    );
+
+    // Step 5: Anchor closes the stake_pool PDA via `close = admin` after handler returns.
     Ok(())
 }

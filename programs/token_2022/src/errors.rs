@@ -171,6 +171,9 @@ pub enum OracleError {
 
     #[msg("Reward claim would exceed available rewards (principal protection)")]
     ClaimExceedsAvailableRewards,
+
+    #[msg("Pool must be shut down before closing")]
+    PoolNotShutdown,
 }
 
 // =============================================================================

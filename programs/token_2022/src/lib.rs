@@ -247,6 +247,9 @@ pub mod token_2022 {
         instructions::staking::admin_shutdown_pool(ctx, reason)
     }
 
-    // admin_withdraw removed - treasury locked to claims only
-    // See: https://solscan.io/tx/L53wKdRPTYKCwR1DJJQjFr34SYsCzjqcyNgXP7BbZAV7Yasz7bDwqP2no6ozm7tLVMawUcADGhZPXRNe4wQajeh
+    /// Admin: Close a fully-emptied shutdown pool, recovering remaining
+    /// reward tokens and rent. Requires: is_shutdown, 0 stakers, 0 staked.
+    pub fn close_stake_pool(ctx: Context<CloseStakePool>) -> Result<()> {
+        instructions::staking::close_stake_pool(ctx)
+    }
 }
