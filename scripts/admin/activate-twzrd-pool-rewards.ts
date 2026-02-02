@@ -49,8 +49,8 @@ const CCM_MINT = new PublicKey(
   "Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM",
 );
 
-/** Target reward rate: 12,894 per slot (matching lower Spotify playlist tier) */
-const NEW_REWARD_RATE = 12_894;
+/** Target reward rate: 1,500 per slot (fits within 15% APR cap) */
+const NEW_REWARD_RATE = 1_500;
 
 /** The 5 TWZRD pools that currently have reward_per_slot = 0 (filtered from source of truth) */
 const TWZRD_POOL_NAMES = [
@@ -185,9 +185,9 @@ async function main() {
   console.log(`  Members:          ${multisigAccount.members.length}`);
   console.log(`  Last tx index:    ${currentIndex}`);
 
-  // Check if proposals #27-#30 exist from failed previous runs
+  // Check if proposals #27-#32 exist from failed previous runs
   // If so, skip to the next available index
-  const potentialIndices = [27, 28, 29, 30];
+  const potentialIndices = [27, 28, 29, 30, 31, 32];
   for (const txIdx of potentialIndices) {
     try {
       const [proposalPda] = multisig.getProposalPda({
