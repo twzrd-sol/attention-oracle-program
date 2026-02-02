@@ -10,6 +10,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { CHANNELS } from "../keepers/lib/channels.js";
 
 // ============================================================================
 // Constants
@@ -21,28 +22,17 @@ const ORACLE_PROGRAM_ID = new PublicKey(
 
 const CHANNEL_STAKE_POOL_SEED = Buffer.from("channel_pool");
 
-const TWZRD_POOLS = [
-  {
-    name: "twzrd-247-6h",
-    channelConfig: "DT7ztXPv4SMMPGNdaXQ8YMPvFwt82YG2LJNKiBHpFTa8",
-  },
-  {
-    name: "twzrd-1999-6h",
-    channelConfig: "3v2V4PtxmUfk22DZhLgVx8wSMPKgpNkv83a7cKEXJq6z",
-  },
-  {
-    name: "twzrd-415-6h",
-    channelConfig: "4W3hJ1MWnKEUfNM2hPZQPEPxHx7m7B9h6z3TpDPW7dK9",
-  },
-  {
-    name: "twzrd-3121-6h",
-    channelConfig: "9wZ4tJXKx7Y5VqPKmNhD8FgQXZ2Yx3pW6R1vT8sNcMd4",
-  },
-  {
-    name: "twzrd-69-6h",
-    channelConfig: "3E5vP2tKm8L9XqR1wT6yN4zH7sF8dJ2vB9cA5xG1nY6W",
-  },
+const TWZRD_POOL_NAMES = [
+  "twzrd-247-6h",
+  "twzrd-1999-6h",
+  "twzrd-415-6h",
+  "twzrd-3121-6h",
+  "twzrd-69-6h",
 ];
+
+const TWZRD_POOLS = CHANNELS.filter((ch) =>
+  TWZRD_POOL_NAMES.includes(ch.name)
+);
 
 const EXPECTED_RATE = 12_894;
 

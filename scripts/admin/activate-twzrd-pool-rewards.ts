@@ -12,7 +12,7 @@
  *   twzrd-3121-6h:  reward_per_slot = 0  (no stakers)
  *   twzrd-69-6h:    reward_per_slot = 0  (no stakers)
  *
- * Target rate: 12,894 per slot (matching lower Spotify playlist tier)
+ * Target rate: 12,894 per slot (matching lower audio:listening tier)
  *
  * Usage:
  *   RPC_URL="..." npx tsx scripts/admin/activate-twzrd-pool-rewards.ts
@@ -28,6 +28,7 @@ import {
 import * as multisig from "@sqds/multisig";
 import * as fs from "fs";
 import * as crypto from "crypto";
+import { CHANNELS } from "../keepers/lib/channels.js";
 
 // ============================================================================
 // Constants
@@ -51,29 +52,18 @@ const CCM_MINT = new PublicKey(
 /** Target reward rate: 12,894 per slot (matching lower Spotify playlist tier) */
 const NEW_REWARD_RATE = 12_894;
 
-/** The 5 TWZRD pools that currently have reward_per_slot = 0 */
-const TWZRD_POOLS = [
-  {
-    name: "twzrd-247-6h",
-    channelConfig: "DT7ztXPv4SMMPGNdaXQ8YMPvFwt82YG2LJNKiBHpFTa8",
-  },
-  {
-    name: "twzrd-1999-6h",
-    channelConfig: "3v2V4PtxmUfk22DZhLgVx8wSMPKgpNkv83a7cKEXJq6z",
-  },
-  {
-    name: "twzrd-415-6h",
-    channelConfig: "4W3hJ1MWnKEUfNM2hPZQPEPxHx7m7B9h6z3TpDPW7dK9",
-  },
-  {
-    name: "twzrd-3121-6h",
-    channelConfig: "9wZ4tJXKx7Y5VqPKmNhD8FgQXZ2Yx3pW6R1vT8sNcMd4",
-  },
-  {
-    name: "twzrd-69-6h",
-    channelConfig: "3E5vP2tKm8L9XqR1wT6yN4zH7sF8dJ2vB9cA5xG1nY6W",
-  },
+/** The 5 TWZRD pools that currently have reward_per_slot = 0 (filtered from source of truth) */
+const TWZRD_POOL_NAMES = [
+  "twzrd-247-6h",
+  "twzrd-1999-6h",
+  "twzrd-415-6h",
+  "twzrd-3121-6h",
+  "twzrd-69-6h",
 ];
+
+const TWZRD_POOLS = CHANNELS.filter((ch) =>
+  TWZRD_POOL_NAMES.includes(ch.name)
+);
 
 const KEYPAIR_PATHS = [
   `${process.env.HOME}/.config/solana/id.json`, // 2pHj...
@@ -195,9 +185,9 @@ async function main() {
   console.log(`  Members:          ${multisigAccount.members.length}`);
   console.log(`  Last tx index:    ${currentIndex}`);
 
-  // Check if proposals #27, #28, #29 exist from failed previous runs
+  // Check if proposals #27-#30 exist from failed previous runs
   // If so, skip to the next available index
-  const potentialIndices = [27, 28, 29];
+  const potentialIndices = [27, 28, 29, 30];
   for (const txIdx of potentialIndices) {
     try {
       const [proposalPda] = multisig.getProposalPda({
