@@ -34,7 +34,7 @@ const TWZRD_POOLS = CHANNELS.filter((ch) =>
   TWZRD_POOL_NAMES.includes(ch.name)
 );
 
-const EXPECTED_RATE = 12_894;
+const EXPECTED_RATE = 1_500;
 
 // ============================================================================
 // Main
