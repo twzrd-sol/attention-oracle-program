@@ -195,18 +195,18 @@ async function main() {
   console.log(`  Members:          ${multisigAccount.members.length}`);
   console.log(`  Last tx index:    ${currentIndex}`);
 
-  // Check if tx #27 or #28 exist from failed previous runs
+  // Check if proposals #27, #28, #29 exist from failed previous runs
   // If so, skip to the next available index
-  const existingTxs = [27, 28];
-  for (const txIdx of existingTxs) {
+  const potentialIndices = [27, 28, 29];
+  for (const txIdx of potentialIndices) {
     try {
-      const [txPda] = multisig.getTransactionPda({
+      const [proposalPda] = multisig.getProposalPda({
         multisigPda: MULTISIG_PDA,
-        index: BigInt(txIdx),
+        transactionIndex: BigInt(txIdx),
       });
-      const txInfo = await connection.getAccountInfo(txPda);
-      if (txInfo) {
-        console.log(`  Skipping tx #${txIdx} (already exists)`);
+      const proposalInfo = await connection.getAccountInfo(proposalPda);
+      if (proposalInfo) {
+        console.log(`  Skipping tx #${txIdx} (proposal already exists)`);
         currentIndex = Math.max(currentIndex, txIdx);
       }
     } catch {
