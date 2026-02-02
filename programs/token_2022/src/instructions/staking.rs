@@ -356,13 +356,8 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
         .ok_or(OracleError::MathOverflow)?;
     require!(actual_received > 0, OracleError::StakeBelowMinimum);
 
-    // 2. Create NFT mint account with NonTransferable extension
-    let extension_types = &[ExtensionType::NonTransferable];
-    let space = ExtensionType::try_calculate_account_len::<spl_token_2022::state::Mint>(extension_types)
-        .map_err(|_| OracleError::MathOverflow)?;
-    let rent_lamports = ctx.accounts.rent.minimum_balance(space);
-
-    // NFT mint PDA seeds
+    // 2. Handle NFT mint — may already exist from a previous stake cycle
+    let nft_mint_info = ctx.accounts.nft_mint.to_account_info();
     let nft_mint_bump = ctx.bumps.nft_mint;
     let nft_mint_seeds: &[&[u8]] = &[
         STAKE_NFT_MINT_SEED,
@@ -372,115 +367,167 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     ];
     let nft_mint_signer = &[nft_mint_seeds];
 
-    // Create the mint account (payer funds rent, nft_mint is the new account)
-    anchor_lang::solana_program::program::invoke_signed(
-        &anchor_lang::solana_program::system_instruction::create_account(
+    let nft_mint_exists = nft_mint_info.data_len() > 0;
+
+    if nft_mint_exists {
+        // Re-stake: NFT mint already exists from previous cycle.
+        // Check if pool still has mint authority (post-fix mints retain it).
+        use spl_token_2022::extension::StateWithExtensions;
+        use anchor_lang::solana_program::program_option::COption;
+
+        let has_mint_authority = {
+            let mint_data = nft_mint_info.try_borrow_data()?;
+            let mint_state = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&mint_data)?;
+            mint_state.base.mint_authority == COption::Some(pool_key)
+        };
+
+        // Create ATA idempotently (may already exist from previous cycle)
+        let create_ata_ix = anchor_spl::associated_token::spl_associated_token_account::instruction::create_associated_token_account_idempotent(
             &payer_key,
+            &user_key,
             &nft_mint_key,
-            rent_lamports,
-            space as u64,
             &ctx.accounts.token_program.key(),
-        ),
-        &[
-            ctx.accounts.payer.to_account_info(),
-            ctx.accounts.nft_mint.to_account_info(),
-            ctx.accounts.system_program.to_account_info(),
-        ],
-        nft_mint_signer,
-    )?;
+        );
 
-    // 3. Initialize NonTransferable extension
-    let init_non_transferable_ix = spl_token_2022::instruction::initialize_non_transferable_mint(
-        &ctx.accounts.token_program.key(),
-        &nft_mint_key,
-    )?;
+        anchor_lang::solana_program::program::invoke(
+            &create_ata_ix,
+            &[
+                ctx.accounts.payer.to_account_info(),
+                ctx.accounts.nft_ata.to_account_info(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.nft_mint.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.associated_token_program.to_account_info(),
+            ],
+        )?;
 
-    anchor_lang::solana_program::program::invoke(
-        &init_non_transferable_ix,
-        &[
-            ctx.accounts.nft_mint.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
-        ],
-    )?;
+        if has_mint_authority {
+            // Post-fix mint: authority retained — remint 1 NFT
+            let mint_to_ix = spl_token_2022::instruction::mint_to(
+                &ctx.accounts.token_program.key(),
+                &nft_mint_key,
+                &ctx.accounts.nft_ata.key(),
+                &pool_key,
+                &[],
+                1,
+            )?;
 
-    // 4. Initialize the mint
-    let init_mint_ix = spl_token_2022::instruction::initialize_mint2(
-        &ctx.accounts.token_program.key(),
-        &nft_mint_key,
-        &pool_key,    // mint authority
-        Some(&pool_key), // freeze authority
-        0, // decimals
-    )?;
+            anchor_lang::solana_program::program::invoke_signed(
+                &mint_to_ix,
+                &[
+                    ctx.accounts.nft_mint.to_account_info(),
+                    ctx.accounts.nft_ata.to_account_info(),
+                    ctx.accounts.stake_pool.to_account_info(),
+                    ctx.accounts.token_program.to_account_info(),
+                ],
+                signer_seeds,
+            )?;
+            msg!("Re-minted soulbound NFT (authority retained)");
+        } else {
+            // Legacy mint: authority revoked — skip NFT minting entirely.
+            // The user_stake PDA serves as the authoritative stake receipt.
+            msg!("Legacy NFT mint (authority revoked) — skipping NFT receipt");
+        }
+    } else {
+        // Fresh stake: create NFT mint from scratch
+        let extension_types = &[ExtensionType::NonTransferable];
+        let space = ExtensionType::try_calculate_account_len::<spl_token_2022::state::Mint>(extension_types)
+            .map_err(|_| OracleError::MathOverflow)?;
+        let rent_lamports = ctx.accounts.rent.minimum_balance(space);
 
-    anchor_lang::solana_program::program::invoke(
-        &init_mint_ix,
-        &[
-            ctx.accounts.nft_mint.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
-        ],
-    )?;
+        // Create the mint account (payer funds rent, nft_mint is the new account)
+        anchor_lang::solana_program::program::invoke_signed(
+            &anchor_lang::solana_program::system_instruction::create_account(
+                &payer_key,
+                &nft_mint_key,
+                rent_lamports,
+                space as u64,
+                &ctx.accounts.token_program.key(),
+            ),
+            &[
+                ctx.accounts.payer.to_account_info(),
+                ctx.accounts.nft_mint.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            nft_mint_signer,
+        )?;
 
-    // 5. Create associated token account for NFT (payer funds, user owns the ATA)
-    let create_ata_ix = anchor_spl::associated_token::spl_associated_token_account::instruction::create_associated_token_account(
-        &payer_key,
-        &user_key,
-        &nft_mint_key,
-        &ctx.accounts.token_program.key(),
-    );
+        // Initialize NonTransferable extension
+        let init_non_transferable_ix = spl_token_2022::instruction::initialize_non_transferable_mint(
+            &ctx.accounts.token_program.key(),
+            &nft_mint_key,
+        )?;
 
-    anchor_lang::solana_program::program::invoke(
-        &create_ata_ix,
-        &[
-            ctx.accounts.payer.to_account_info(),
-            ctx.accounts.nft_ata.to_account_info(),
-            ctx.accounts.user.to_account_info(),
-            ctx.accounts.nft_mint.to_account_info(),
-            ctx.accounts.system_program.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
-            ctx.accounts.associated_token_program.to_account_info(),
-        ],
-    )?;
+        anchor_lang::solana_program::program::invoke(
+            &init_non_transferable_ix,
+            &[
+                ctx.accounts.nft_mint.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+        )?;
 
-    // 6. Mint soulbound NFT to user
-    let mint_to_ix = spl_token_2022::instruction::mint_to(
-        &ctx.accounts.token_program.key(),
-        &nft_mint_key,
-        &ctx.accounts.nft_ata.key(),
-        &pool_key,
-        &[],
-        1,
-    )?;
+        // Initialize the mint — pool retains authority to support future re-stakes
+        let init_mint_ix = spl_token_2022::instruction::initialize_mint2(
+            &ctx.accounts.token_program.key(),
+            &nft_mint_key,
+            &pool_key,    // mint authority (retained, NOT revoked)
+            Some(&pool_key), // freeze authority
+            0, // decimals
+        )?;
 
-    anchor_lang::solana_program::program::invoke_signed(
-        &mint_to_ix,
-        &[
-            ctx.accounts.nft_mint.to_account_info(),
-            ctx.accounts.nft_ata.to_account_info(),
-            ctx.accounts.stake_pool.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
-        ],
-        signer_seeds,
-    )?;
+        anchor_lang::solana_program::program::invoke(
+            &init_mint_ix,
+            &[
+                ctx.accounts.nft_mint.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+        )?;
 
-    // 7. Revoke mint authority (fixed supply of 1)
-    let revoke_ix = spl_token_2022::instruction::set_authority(
-        &ctx.accounts.token_program.key(),
-        &nft_mint_key,
-        None,
-        spl_token_2022::instruction::AuthorityType::MintTokens,
-        &pool_key,
-        &[],
-    )?;
+        // Create ATA idempotently (payer funds, user owns the ATA)
+        let create_ata_ix = anchor_spl::associated_token::spl_associated_token_account::instruction::create_associated_token_account_idempotent(
+            &payer_key,
+            &user_key,
+            &nft_mint_key,
+            &ctx.accounts.token_program.key(),
+        );
 
-    anchor_lang::solana_program::program::invoke_signed(
-        &revoke_ix,
-        &[
-            ctx.accounts.nft_mint.to_account_info(),
-            ctx.accounts.stake_pool.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
-        ],
-        signer_seeds,
-    )?;
+        anchor_lang::solana_program::program::invoke(
+            &create_ata_ix,
+            &[
+                ctx.accounts.payer.to_account_info(),
+                ctx.accounts.nft_ata.to_account_info(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.nft_mint.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.associated_token_program.to_account_info(),
+            ],
+        )?;
+
+        // Mint soulbound NFT to user
+        let mint_to_ix = spl_token_2022::instruction::mint_to(
+            &ctx.accounts.token_program.key(),
+            &nft_mint_key,
+            &ctx.accounts.nft_ata.key(),
+            &pool_key,
+            &[],
+            1,
+        )?;
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &mint_to_ix,
+            &[
+                ctx.accounts.nft_mint.to_account_info(),
+                ctx.accounts.nft_ata.to_account_info(),
+                ctx.accounts.stake_pool.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+            signer_seeds,
+        )?;
+
+        // NOTE: mint authority intentionally NOT revoked to allow re-minting on re-stakes
+    }
 
     // 8. Update pool rewards BEFORE changing totals
     let pool = &mut ctx.accounts.stake_pool;
@@ -604,13 +651,12 @@ pub struct UnstakeChannel<'info> {
     )]
     pub nft_mint: Box<InterfaceAccount<'info, Mint>>,
 
-    /// User's NFT token account
+    /// User's NFT token account (may hold 0 if legacy re-stake skipped NFT)
     #[account(
         mut,
         associated_token::mint = nft_mint,
         associated_token::authority = user,
         associated_token::token_program = token_program,
-        constraint = nft_ata.amount == 1 @ OracleError::NftHolderMismatch,
     )]
     pub nft_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
@@ -674,25 +720,27 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
     let channel_key = ctx.accounts.channel_config.key();
     let pool_key = ctx.accounts.stake_pool.key();
 
-    // 4. Burn the receipt NFT
-    let burn_ix = spl_token_2022::instruction::burn(
-        &ctx.accounts.token_program.key(),
-        &ctx.accounts.nft_ata.key(),
-        &ctx.accounts.nft_mint.key(),
-        &ctx.accounts.user.key(),
-        &[],
-        1,
-    )?;
+    // 4. Burn the receipt NFT (if present — legacy re-stakes may have skipped minting)
+    if ctx.accounts.nft_ata.amount > 0 {
+        let burn_ix = spl_token_2022::instruction::burn(
+            &ctx.accounts.token_program.key(),
+            &ctx.accounts.nft_ata.key(),
+            &ctx.accounts.nft_mint.key(),
+            &ctx.accounts.user.key(),
+            &[],
+            1,
+        )?;
 
-    anchor_lang::solana_program::program::invoke(
-        &burn_ix,
-        &[
-            ctx.accounts.nft_ata.to_account_info(),
-            ctx.accounts.nft_mint.to_account_info(),
-            ctx.accounts.user.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
-        ],
-    )?;
+        anchor_lang::solana_program::program::invoke(
+            &burn_ix,
+            &[
+                ctx.accounts.nft_ata.to_account_info(),
+                ctx.accounts.nft_mint.to_account_info(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+        )?;
+    }
 
     // 5. Transfer tokens from vault back to user
     let seeds: &[&[u8]] = &[
@@ -905,11 +953,15 @@ pub fn claim_channel_rewards(ctx: Context<ClaimChannelRewards>) -> Result<()> {
 
 #[derive(Accounts)]
 pub struct SetRewardRate<'info> {
-    #[account(
-        mut,
-        constraint = admin.key() == crate::constants::ADMIN_AUTHORITY @ OracleError::Unauthorized,
-    )]
+    #[account(mut)]
     pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
 
     /// Channel config
     pub channel_config: Box<Account<'info, ChannelConfigV2>>,
@@ -991,11 +1043,15 @@ pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()>
 
 #[derive(Accounts)]
 pub struct MigrateUserStake<'info> {
-    #[account(
-        mut,
-        constraint = admin.key() == crate::constants::ADMIN_AUTHORITY @ OracleError::Unauthorized,
-    )]
+    #[account(mut)]
     pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
 
     /// Channel config
     pub channel_config: Box<Account<'info, ChannelConfigV2>>,
@@ -1117,11 +1173,15 @@ pub fn migrate_user_stake(ctx: Context<MigrateUserStake>) -> Result<()> {
 
 #[derive(Accounts)]
 pub struct MigrateStakePool<'info> {
-    #[account(
-        mut,
-        constraint = admin.key() == crate::constants::ADMIN_AUTHORITY @ OracleError::Unauthorized,
-    )]
+    #[account(mut)]
     pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
 
     /// Channel config
     pub channel_config: Box<Account<'info, ChannelConfigV2>>,
@@ -1261,13 +1321,12 @@ pub struct EmergencyUnstakeChannel<'info> {
     )]
     pub nft_mint: Box<InterfaceAccount<'info, Mint>>,
 
-    /// User's NFT token account
+    /// User's NFT token account (may hold 0 if legacy re-stake skipped NFT)
     #[account(
         mut,
         associated_token::mint = nft_mint,
         associated_token::authority = user,
         associated_token::token_program = token_program,
-        constraint = nft_ata.amount == 1 @ OracleError::NftHolderMismatch,
     )]
     pub nft_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
@@ -1331,25 +1390,27 @@ pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Resul
     ];
     let signer_seeds = &[seeds];
 
-    // 1. Burn the receipt NFT
-    let burn_ix = spl_token_2022::instruction::burn(
-        &ctx.accounts.token_program.key(),
-        &ctx.accounts.nft_ata.key(),
-        &ctx.accounts.nft_mint.key(),
-        &ctx.accounts.user.key(),
-        &[],
-        1,
-    )?;
+    // 1. Burn the receipt NFT (if present — legacy re-stakes may have skipped minting)
+    if ctx.accounts.nft_ata.amount > 0 {
+        let burn_ix = spl_token_2022::instruction::burn(
+            &ctx.accounts.token_program.key(),
+            &ctx.accounts.nft_ata.key(),
+            &ctx.accounts.nft_mint.key(),
+            &ctx.accounts.user.key(),
+            &[],
+            1,
+        )?;
 
-    anchor_lang::solana_program::program::invoke(
-        &burn_ix,
-        &[
-            ctx.accounts.nft_ata.to_account_info(),
-            ctx.accounts.nft_mint.to_account_info(),
-            ctx.accounts.user.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
-        ],
-    )?;
+        anchor_lang::solana_program::program::invoke(
+            &burn_ix,
+            &[
+                ctx.accounts.nft_ata.to_account_info(),
+                ctx.accounts.nft_mint.to_account_info(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+        )?;
+    }
 
     // 2. Return tokens (minus penalty) to user
     if return_amount > 0 {
@@ -1459,11 +1520,15 @@ pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Resul
 
 #[derive(Accounts)]
 pub struct AdminShutdownPool<'info> {
-    #[account(
-        mut,
-        constraint = admin.key() == crate::constants::ADMIN_AUTHORITY @ OracleError::Unauthorized,
-    )]
+    #[account(mut)]
     pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
 
     /// Channel config
     pub channel_config: Box<Account<'info, ChannelConfigV2>>,

@@ -118,6 +118,14 @@ pub mod channel_vault {
         instructions::admin::sync_oracle_position(ctx)
     }
 
+    /// Update withdrawal queue duration in slots (admin only).
+    pub fn update_withdraw_queue_slots(
+        ctx: Context<AdminAction>,
+        new_withdraw_queue_slots: u64,
+    ) -> Result<()> {
+        instructions::admin::update_withdraw_queue_slots(ctx, new_withdraw_queue_slots)
+    }
+
     /// Close an empty vault and reclaim rent.
     /// Only callable when vault has no shares, deposits, or active positions.
     pub fn close_vault(ctx: Context<CloseVault>) -> Result<()> {
@@ -133,5 +141,12 @@ pub mod channel_vault {
         uri: String,
     ) -> Result<()> {
         instructions::metadata::handler(ctx, name, symbol, uri)
+    }
+
+    /// Migrate oracle position for vaults deployed before oracle tracking.
+    /// Admin-only, idempotent. After migration, use sync_oracle_position
+    /// to reconcile with on-chain Oracle state.
+    pub fn migrate_oracle_position(ctx: Context<MigrateOraclePosition>) -> Result<()> {
+        instructions::migrate_oracle_position::handler(ctx)
     }
 }

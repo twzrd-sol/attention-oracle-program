@@ -35,9 +35,9 @@ import {
 import { readFileSync } from "fs";
 
 import { requireScriptEnv } from "../script-guard.js";
-import { CCM_V3_MINT } from "../config.js";
 import { CHANNELS } from "./lib/channels.js";
 import {
+  CCM_MINT,
   VAULT_PROGRAM_ID,
   deriveVault,
   deriveOraclePosition,
@@ -146,7 +146,7 @@ async function main() {
           currentSlot,
         });
 
-        const accounts = deriveCompoundAccounts(channelConfig, CCM_V3_MINT);
+        const accounts = deriveCompoundAccounts(channelConfig, CCM_MINT);
 
         const builder = vaultProgram.methods
           .compound()

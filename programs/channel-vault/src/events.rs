@@ -140,3 +140,22 @@ pub struct OraclePositionSynced {
     pub lock_end_slot: u64,
     pub timestamp: i64,
 }
+
+/// Emitted when oracle position is retroactively added to existing vault.
+#[event]
+pub struct OraclePositionMigrated {
+    pub vault: Pubkey,
+    pub admin: Pubkey,
+    pub oracle_position: Pubkey,
+    pub timestamp: i64,
+}
+
+/// Emitted when withdraw queue slots are updated.
+#[event]
+pub struct WithdrawQueueSlotsUpdated {
+    pub vault: Pubkey,
+    pub admin: Pubkey,
+    pub old_withdraw_queue_slots: u64,
+    pub new_withdraw_queue_slots: u64,
+    pub timestamp: i64,
+}

@@ -25,6 +25,11 @@ export const METADATA_PROGRAM_ID = new PublicKey(
   "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
 );
 
+// Mainnet CCM token mint (Token-2022)
+export const CCM_MINT = new PublicKey(
+  "Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM",
+);
+
 // =========================================================================
 // Seeds (matching constants.rs in both programs)
 // =========================================================================

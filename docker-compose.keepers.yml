@@ -46,14 +46,15 @@ services:
       CLUSTER: "${CLUSTER:-mainnet-beta}"
       I_UNDERSTAND_MAINNET: "${I_UNDERSTAND_MAINNET:-1}"
       RPC_URL: "${RPC_URL}"
-      KEYPAIR: "/secrets/admin.json"
+      # permissionless since proposal #24 — only needs a funded wallet for tx fees
+      KEYPAIR: "/secrets/keeper.json"
       CCM_V3_MINT: "${CCM_V3_MINT}"
       HEALTHCHECK_FILE: "/tmp/keeper-heartbeat"
       HEALTHCHECK_MAX_AGE: "7800"
       # DRY_RUN: "1"
       # HARVEST_INTERVAL_MS: "3600000"
     volumes:
-      - ${ADMIN_KEYPAIR_PATH:-./.keys/admin.json}:/secrets/admin.json:ro
+      - ${KEEPER_KEYPAIR_PATH:-./.keys/keeper.json}:/secrets/keeper.json:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 120s
