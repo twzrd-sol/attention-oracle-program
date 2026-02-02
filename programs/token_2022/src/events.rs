@@ -140,3 +140,12 @@ pub struct PoolShutdown {
     pub total_staked: u64,
     pub timestamp: i64,
 }
+
+/// Emitted when admin closes a fully-emptied shutdown pool, recovering surplus CCM.
+#[event]
+pub struct PoolClosed {
+    pub channel: Pubkey,
+    pub admin: Pubkey,
+    pub tokens_recovered: u64,
+    pub timestamp: i64,
+}
