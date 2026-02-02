@@ -190,10 +190,30 @@ async function main() {
     MULTISIG_PDA,
   );
 
-  const currentIndex = Number(multisigAccount.transactionIndex);
+  let currentIndex = Number(multisigAccount.transactionIndex);
   console.log(`  Threshold:        ${multisigAccount.threshold}`);
   console.log(`  Members:          ${multisigAccount.members.length}`);
   console.log(`  Last tx index:    ${currentIndex}`);
+
+  // Check if tx #27 or #28 exist from failed previous runs
+  // If so, skip to the next available index
+  const existingTxs = [27, 28];
+  for (const txIdx of existingTxs) {
+    try {
+      const [txPda] = multisig.getTransactionPda({
+        multisigPda: MULTISIG_PDA,
+        index: BigInt(txIdx),
+      });
+      const txInfo = await connection.getAccountInfo(txPda);
+      if (txInfo) {
+        console.log(`  Skipping tx #${txIdx} (already exists)`);
+        currentIndex = Math.max(currentIndex, txIdx);
+      }
+    } catch {
+      // Doesn't exist, ok
+    }
+  }
+
 
   // Verify keypairs are members
   for (const kp of keypairs) {
