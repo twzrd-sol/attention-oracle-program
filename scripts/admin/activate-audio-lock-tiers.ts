@@ -41,6 +41,7 @@ const MULTISIG_PDA = new PublicKey(
 const PROTOCOL_SEED = Buffer.from("protocol");
 const CHANNEL_STAKE_POOL_SEED = Buffer.from("channel_pool");
 const CHANNEL_CONFIG_V2_SEED = Buffer.from("channel_cfg_v2");
+const STAKE_VAULT_SEED = Buffer.from("stake_vault");
 
 const CCM_MINT = new PublicKey(
   "Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM",
@@ -102,6 +103,7 @@ function setRewardRateIx(
   protocolState: PublicKey,
   channelConfig: PublicKey,
   stakePool: PublicKey,
+  vault: PublicKey,
   newRate: number,
 ): TransactionInstruction {
   const discriminator = anchorDiscriminator("set_reward_rate");
@@ -116,6 +118,7 @@ function setRewardRateIx(
       { pubkey: protocolState, isSigner: false, isWritable: false },
       { pubkey: channelConfig, isSigner: false, isWritable: false },
       { pubkey: stakePool, isSigner: false, isWritable: true },
+      { pubkey: vault, isSigner: false, isWritable: false },
       { pubkey: new PublicKey("11111111111111111111111111111111"), isSigner: false, isWritable: false },
     ],
     data,
@@ -192,6 +195,7 @@ async function main() {
     name: string;
     channelConfig: PublicKey;
     stakePool: PublicKey;
+    vault: PublicKey;
     totalWeighted: number;
     targetAprBps: number;
     rate: number;
@@ -204,6 +208,10 @@ async function main() {
       const channelConfig = deriveChannelConfig(channelName);
       const [stakePool] = PublicKey.findProgramAddressSync(
         [CHANNEL_STAKE_POOL_SEED, channelConfig.toBuffer()],
+        ORACLE_PROGRAM_ID,
+      );
+      const [vault] = PublicKey.findProgramAddressSync(
+        [STAKE_VAULT_SEED, stakePool.toBuffer()],
         ORACLE_PROGRAM_ID,
       );
 
@@ -243,6 +251,7 @@ async function main() {
           name: vaultName,
           channelConfig,
           stakePool,
+          vault,
           totalWeighted,
           targetAprBps,
           rate,
@@ -295,6 +304,7 @@ async function main() {
         protocolState,
         pool.channelConfig,
         pool.stakePool,
+        pool.vault,
         pool.rate,
       ),
     );

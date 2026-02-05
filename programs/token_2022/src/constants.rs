@@ -65,6 +65,11 @@ pub const BOOST_PRECISION: u64 = 10_000;
 /// Slots per day (approximate at 400ms slot time)
 pub const SLOTS_PER_DAY: u64 = 216_000;
 
+/// Minimum runway slots for reward rate validation (~1 day)
+/// When setting a reward rate, the treasury must have enough funds
+/// to sustain that rate for at least this many slots.
+pub const MIN_RUNWAY_SLOTS: u64 = 216_000;
+
 /// Precision for reward accumulator (1e12)
 pub const REWARD_PRECISION: u128 = 1_000_000_000_000;
 

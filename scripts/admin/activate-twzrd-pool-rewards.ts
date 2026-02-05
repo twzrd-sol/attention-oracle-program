@@ -44,6 +44,7 @@ const MULTISIG_PDA = new PublicKey(
 
 const PROTOCOL_SEED = Buffer.from("protocol");
 const CHANNEL_STAKE_POOL_SEED = Buffer.from("channel_pool");
+const STAKE_VAULT_SEED = Buffer.from("stake_vault");
 
 const CCM_MINT = new PublicKey(
   "Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM",
@@ -101,7 +102,8 @@ function anchorDiscriminator(name: string): Buffer {
  *   1. protocol_state  — PDA derived from ["protocol", mint]
  *   2. channel_config  — the channel config pubkey
  *   3. stake_pool      — mut, PDA derived from ["channel_pool", channel_config]
- *   4. system_program  — System Program (required for realloc)
+ *   4. vault           — PDA derived from ["stake_vault", stake_pool] (for treasury funding validation)
+ *   5. system_program  — System Program (required for realloc)
  *
  * Data: 8-byte discriminator + u64 LE new_rate
  */
@@ -110,6 +112,7 @@ function setRewardRateIx(
   protocolState: PublicKey,
   channelConfig: PublicKey,
   stakePool: PublicKey,
+  vault: PublicKey,
   newRate: number,
 ): TransactionInstruction {
   const discriminator = anchorDiscriminator("set_reward_rate");
@@ -124,6 +127,7 @@ function setRewardRateIx(
       { pubkey: protocolState, isSigner: false, isWritable: false },
       { pubkey: channelConfig, isSigner: false, isWritable: false },
       { pubkey: stakePool, isSigner: false, isWritable: true },
+      { pubkey: vault, isSigner: false, isWritable: false },
       { pubkey: new PublicKey("11111111111111111111111111111111"), isSigner: false, isWritable: false },
     ],
     data,
@@ -238,6 +242,12 @@ async function main() {
       ORACLE_PROGRAM_ID,
     );
 
+    // Derive vault PDA (for treasury funding validation)
+    const [vault] = PublicKey.findProgramAddressSync(
+      [STAKE_VAULT_SEED, stakePool.toBuffer()],
+      ORACLE_PROGRAM_ID,
+    );
+
     console.log(`  ${pool.name.padEnd(18)} ${stakePool.toBase58()}`);
 
     const ix = setRewardRateIx(
@@ -245,6 +255,7 @@ async function main() {
       protocolState,
       channelConfig,
       stakePool,
+      vault,
       NEW_REWARD_RATE,
     );
     instructions.push(ix);
