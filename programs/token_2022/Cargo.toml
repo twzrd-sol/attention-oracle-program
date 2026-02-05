@@ -33,6 +33,7 @@ solana-system-interface = "1.0"
 tokio = { version = "1", features = ["full"] }
 hex = "0.4"
 sha2 = "0.10"
+spl-token-2022 = "8.0.1"
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(docsrs)'] }
