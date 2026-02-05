@@ -183,6 +183,9 @@ pub enum OracleError {
     // =========================================================================
     #[msg("Stake snapshot mismatch - user has unstaked below snapshot amount")]
     StakeSnapshotMismatch,
+
+    #[msg("Proof has expired - snapshot_slot is too old")]
+    ProofExpired,
 }
 
 // =============================================================================

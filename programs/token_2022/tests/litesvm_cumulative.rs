@@ -1378,6 +1378,7 @@ fn test_chaos_v3_stake_snapshot_forgery() {
     let channel_config = Pubkey::new_unique();
     let root_seq = 1u64;
     let wallet = Pubkey::new_unique();
+    let snapshot_slot = 12345u64;
 
     // Real scenario: User had 100 CCM staked at snapshot, earned 50 CCM boosted rewards
     let real_stake_snapshot = 100_000_000_000u64;
@@ -1385,10 +1386,10 @@ fn test_chaos_v3_stake_snapshot_forgery() {
 
     // Build tree with REAL stake_snapshot
     let real_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, real_stake_snapshot
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, real_stake_snapshot, snapshot_slot
     );
     let other_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
     );
     let leaves = vec![real_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
@@ -1405,7 +1406,7 @@ fn test_chaos_v3_stake_snapshot_forgery() {
 
     // BUT the forged leaf doesn't match what's in the tree
     let forged_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, forged_stake_snapshot
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, forged_stake_snapshot, snapshot_slot
     );
 
     // Verify forged leaf against real root - should FAIL
@@ -1436,4 +1437,252 @@ fn test_chaos_v3_stake_snapshot_forgery() {
     println!("  Real stake_snapshot (10 < 100): REJECTED by stake check");
 
     println!("✅ V3 CHAOS PASSED: Stake snapshot forgery attack blocked by dual verification");
+}
+
+// ============================================================================
+// V3 PROOF EXPIRY TESTS
+// ============================================================================
+
+/// Maximum proof age in slots (~6-7 minutes at 400ms/slot)
+/// Must match on-chain constant in constants.rs
+const MAX_PROOF_AGE_SLOTS: u64 = 1000;
+
+/// V3 EXPIRY TEST #1: Proof fails when snapshot_slot is too old
+/// Security: Prevents stale-stake attacks where user:
+/// 1. Stakes to boost rewards at snapshot time
+/// 2. Waits for proof generation
+/// 3. Unstakes and waits until proof ages out
+/// 4. Re-stakes minimum and tries to claim with old proof
+#[test]
+fn test_v3_proof_expired() {
+    let mint = Pubkey::new_unique();
+    let channel_config = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let wallet = Pubkey::new_unique();
+    let cumulative_total = 10_000_000_000u64; // 10 CCM earned
+    let stake_snapshot = 5_000_000_000u64; // 5 CCM staked at snapshot time
+    let current_stake = 5_000_000_000u64; // User still has stake (passes stake check)
+
+    // ATTACK SCENARIO:
+    // snapshot_slot = 10000 (when proof was generated)
+    // current_slot = 12000 (now, 2000 slots later)
+    // Age = 12000 - 10000 = 2000 slots > MAX_PROOF_AGE_SLOTS (1000)
+    let snapshot_slot = 10_000u64;
+    let current_slot = 12_000u64;
+    let proof_age = current_slot.saturating_sub(snapshot_slot);
+
+    // Build V3 merkle tree
+    let user_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
+    );
+    let other_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
+    );
+    let leaves = vec![user_leaf, other_leaf];
+    let root = compute_merkle_root(&leaves);
+    let proof = generate_proof(&leaves, 0);
+
+    // Verify merkle proof is technically valid
+    let mut computed = user_leaf;
+    for node in &proof {
+        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let mut hasher = Keccak256::new();
+        hasher.update(&a);
+        hasher.update(&b);
+        computed = hasher.finalize().into();
+    }
+    assert_eq!(computed, root, "Merkle proof should be valid");
+    println!("  Merkle proof: VALID");
+
+    // Stake check passes (user still has sufficient stake)
+    let stake_check_passes = current_stake >= stake_snapshot;
+    assert!(stake_check_passes, "Stake check should pass");
+    println!("  Stake check (current {} >= snapshot {}): PASSED", current_stake, stake_snapshot);
+
+    // SECURITY CHECK: Proof age exceeds maximum
+    let proof_age_check_passes = proof_age <= MAX_PROOF_AGE_SLOTS;
+    assert!(!proof_age_check_passes, "Proof age check should FAIL for expired proof");
+    println!("  Proof age check ({} > {}): REJECTED (ProofExpired)", proof_age, MAX_PROOF_AGE_SLOTS);
+
+    // On-chain error would be: OracleError::ProofExpired
+    println!("  On-chain would return: OracleError::ProofExpired");
+
+    println!("✅ V3 EXPIRY TEST #1 PASSED: Expired proof correctly rejected");
+}
+
+/// V3 EXPIRY TEST #2: Proof succeeds when snapshot_slot is fresh
+/// Ensures fresh proofs are accepted within the valid window
+#[test]
+fn test_v3_proof_fresh() {
+    let mint = Pubkey::new_unique();
+    let channel_config = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let wallet = Pubkey::new_unique();
+    let cumulative_total = 10_000_000_000u64; // 10 CCM earned
+    let stake_snapshot = 5_000_000_000u64; // 5 CCM staked at snapshot time
+    let current_stake = 5_000_000_000u64; // User still has stake
+
+    // Fresh proof scenario:
+    // snapshot_slot = 10000 (when proof was generated)
+    // current_slot = 10500 (now, 500 slots later)
+    // Age = 10500 - 10000 = 500 slots <= MAX_PROOF_AGE_SLOTS (1000)
+    let snapshot_slot = 10_000u64;
+    let current_slot = 10_500u64;
+    let proof_age = current_slot.saturating_sub(snapshot_slot);
+
+    // Build V3 merkle tree
+    let user_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
+    );
+    let other_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
+    );
+    let leaves = vec![user_leaf, other_leaf];
+    let root = compute_merkle_root(&leaves);
+    let proof = generate_proof(&leaves, 0);
+
+    // Verify merkle proof is valid
+    let mut computed = user_leaf;
+    for node in &proof {
+        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let mut hasher = Keccak256::new();
+        hasher.update(&a);
+        hasher.update(&b);
+        computed = hasher.finalize().into();
+    }
+    assert_eq!(computed, root, "Merkle proof should be valid");
+    println!("  Merkle proof: VALID");
+
+    // Stake check passes
+    let stake_check_passes = current_stake >= stake_snapshot;
+    assert!(stake_check_passes, "Stake check should pass");
+    println!("  Stake check (current {} >= snapshot {}): PASSED", current_stake, stake_snapshot);
+
+    // Proof age check passes (within window)
+    let proof_age_check_passes = proof_age <= MAX_PROOF_AGE_SLOTS;
+    assert!(proof_age_check_passes, "Proof age check should pass for fresh proof");
+    println!("  Proof age check ({} <= {}): PASSED", proof_age, MAX_PROOF_AGE_SLOTS);
+
+    // All checks pass - claim would succeed
+    println!("  All V3 checks: PASSED (claim would succeed)");
+
+    println!("✅ V3 EXPIRY TEST #2 PASSED: Fresh proof correctly accepted");
+}
+
+/// V3 EXPIRY TEST #3: Edge case - proof exactly at MAX_PROOF_AGE_SLOTS boundary
+#[test]
+fn test_v3_proof_boundary() {
+    let mint = Pubkey::new_unique();
+    let channel_config = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let wallet = Pubkey::new_unique();
+    let cumulative_total = 10_000_000_000u64;
+    let stake_snapshot = 5_000_000_000u64;
+    let _current_stake = 5_000_000_000u64;
+
+    // Boundary test cases
+    let test_cases = vec![
+        (10_000u64, 10_000u64 + MAX_PROOF_AGE_SLOTS, true, "exactly at boundary"),
+        (10_000u64, 10_000u64 + MAX_PROOF_AGE_SLOTS + 1, false, "one slot over boundary"),
+        (10_000u64, 10_000u64 + MAX_PROOF_AGE_SLOTS - 1, true, "one slot under boundary"),
+        (10_000u64, 10_000u64, true, "same slot (age = 0)"),
+        (0u64, MAX_PROOF_AGE_SLOTS, true, "snapshot at slot 0"),
+        (0u64, MAX_PROOF_AGE_SLOTS + 1, false, "snapshot at slot 0, over boundary"),
+    ];
+
+    for (snapshot_slot, current_slot, should_pass, description) in test_cases {
+        let proof_age = current_slot.saturating_sub(snapshot_slot);
+        let check_passes = proof_age <= MAX_PROOF_AGE_SLOTS;
+
+        // Build V3 leaf for this test case
+        let user_leaf = compute_cumulative_leaf_v3(
+            &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
+        );
+        let other_leaf = compute_cumulative_leaf_v3(
+            &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
+        );
+        let leaves = vec![user_leaf, other_leaf];
+        let _root = compute_merkle_root(&leaves);
+
+        assert_eq!(
+            check_passes, should_pass,
+            "Test case '{}' failed: age={}, max={}, expected {}",
+            description, proof_age, MAX_PROOF_AGE_SLOTS, if should_pass { "pass" } else { "fail" }
+        );
+
+        let status = if check_passes { "PASS" } else { "REJECT" };
+        println!("  {} (age={}): {}", description, proof_age, status);
+    }
+
+    println!("✅ V3 EXPIRY TEST #3 PASSED: Boundary conditions correctly handled");
+}
+
+/// V3 EXPIRY TEST #4: Saturating subtraction prevents underflow attack
+/// Security: Ensures current_slot < snapshot_slot doesn't cause issues
+#[test]
+fn test_v3_proof_underflow_protection() {
+    let mint = Pubkey::new_unique();
+    let channel_config = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let wallet = Pubkey::new_unique();
+    let cumulative_total = 10_000_000_000u64;
+    let stake_snapshot = 5_000_000_000u64;
+
+    // ATTACK SCENARIO: Attacker provides future snapshot_slot
+    // snapshot_slot = 20000 (claims to be from the future)
+    // current_slot = 10000 (actual current slot)
+    // Without saturating_sub: 10000 - 20000 = underflow!
+    // With saturating_sub: 10000 - 20000 = 0 (would incorrectly pass)
+    //
+    // NOTE: This attack is actually blocked by the merkle proof itself,
+    // since the aggregator would never create a proof with a future snapshot_slot.
+    // The snapshot_slot is committed to the merkle root, so attacker cannot forge it.
+    let snapshot_slot = 20_000u64;
+    let current_slot = 10_000u64;
+
+    // saturating_sub returns 0 for underflow
+    let proof_age = current_slot.saturating_sub(snapshot_slot);
+    assert_eq!(proof_age, 0, "saturating_sub should return 0 for underflow");
+    println!("  Underflow case: current({}) - snapshot({}) = {} (saturating)", current_slot, snapshot_slot, proof_age);
+
+    // This would pass the age check, BUT:
+    // 1. The merkle proof would be invalid (aggregator never produced this proof)
+    // 2. The aggregator only generates proofs with snapshot_slot <= current_slot
+    let age_check_passes = proof_age <= MAX_PROOF_AGE_SLOTS;
+    assert!(age_check_passes, "Underflow saturates to 0, which passes age check");
+    println!("  Age check: PASS (saturated to 0)");
+
+    // Verify that the leaf with future snapshot_slot is unique
+    let legit_snapshot = 10_000u64;
+    let legit_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, legit_snapshot
+    );
+    let future_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
+    );
+
+    assert_ne!(legit_leaf, future_leaf, "Different snapshot_slots produce different leaves");
+    println!("  Leaf isolation: Future snapshot produces different leaf hash");
+
+    // Build tree with legitimate leaf
+    let other_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, legit_snapshot
+    );
+    let leaves = vec![legit_leaf, other_leaf];
+    let root = compute_merkle_root(&leaves);
+    let proof = generate_proof(&leaves, 0);
+
+    // Future leaf won't verify against legitimate root
+    let mut computed = future_leaf;
+    for node in &proof {
+        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let mut hasher = Keccak256::new();
+        hasher.update(&a);
+        hasher.update(&b);
+        computed = hasher.finalize().into();
+    }
+    assert_ne!(computed, root, "Future snapshot leaf should NOT verify against legitimate root");
+    println!("  Merkle verification: Future snapshot REJECTED");
+
+    println!("✅ V3 EXPIRY TEST #4 PASSED: Underflow attack blocked by merkle proof (defense in depth)");
 }

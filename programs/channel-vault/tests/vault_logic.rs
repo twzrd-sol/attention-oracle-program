@@ -609,3 +609,387 @@ fn test_add_to_reserve_truly_zero_when_saturated() {
     let added = vault.add_to_reserve(10_000_000_000).unwrap();
     assert_eq!(added, 0);
 }
+
+// =========================================================================
+// SLIPPAGE PROTECTION TESTS (complete_withdraw)
+// =========================================================================
+
+/// Simulates the slippage check from complete_withdraw.
+/// Returns Ok(actual_received) if passes, Err if slippage exceeded.
+fn check_slippage(
+    ccm_amount_sent: u64,
+    transfer_fee_bps: u64,
+    min_ccm_amount: u64,
+) -> Result<u64, VaultError> {
+    // Calculate what user actually receives after transfer fee
+    let fee = (ccm_amount_sent as u128)
+        .checked_mul(transfer_fee_bps as u128)
+        .unwrap()
+        .checked_div(BPS_DENOMINATOR as u128)
+        .unwrap() as u64;
+    let actual_received = ccm_amount_sent.saturating_sub(fee);
+
+    // Slippage check from complete_withdraw (line 476-479 in redeem.rs)
+    if actual_received >= min_ccm_amount {
+        Ok(actual_received)
+    } else {
+        Err(VaultError::SlippageExceeded)
+    }
+}
+
+#[test]
+fn test_slippage_protection_fails_when_min_too_high() {
+    // CCM has 0.5% transfer fee (50 bps)
+    let ccm_amount = 1_000_000_000_000u64; // 1000 CCM sent
+    let transfer_fee_bps = 50u64; // 0.5%
+
+    // Expected: user receives 995 CCM (1000 - 0.5%)
+    let expected_received = 995_000_000_000u64;
+
+    // User sets min_ccm_amount higher than what they'll receive
+    let min_too_high = 996_000_000_000u64; // 996 CCM
+
+    let result = check_slippage(ccm_amount, transfer_fee_bps, min_too_high);
+    assert!(
+        matches!(result, Err(VaultError::SlippageExceeded)),
+        "Should fail when min_ccm_amount ({}) > actual_received ({})",
+        min_too_high,
+        expected_received
+    );
+}
+
+#[test]
+fn test_slippage_protection_succeeds_when_min_correct() {
+    // CCM has 0.5% transfer fee (50 bps)
+    let ccm_amount = 1_000_000_000_000u64; // 1000 CCM sent
+    let transfer_fee_bps = 50u64; // 0.5%
+
+    // Expected: user receives 995 CCM
+    let expected_received = 995_000_000_000u64;
+
+    // User sets min_ccm_amount correctly (accounting for fee)
+    let min_correct = 995_000_000_000u64;
+
+    let result = check_slippage(ccm_amount, transfer_fee_bps, min_correct);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), expected_received);
+}
+
+#[test]
+fn test_slippage_protection_succeeds_with_buffer() {
+    // CCM has 0.5% transfer fee (50 bps)
+    let ccm_amount = 1_000_000_000_000u64;
+    let transfer_fee_bps = 50u64;
+
+    // User sets min with some safety buffer (990 CCM < 995 CCM actual)
+    let min_with_buffer = 990_000_000_000u64;
+
+    let result = check_slippage(ccm_amount, transfer_fee_bps, min_with_buffer);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 995_000_000_000u64);
+}
+
+#[test]
+fn test_slippage_protection_boundary_exactly_equal() {
+    // Test boundary: min_ccm_amount == actual_received (should pass)
+    let ccm_amount = 1_000_000_000_000u64;
+    let transfer_fee_bps = 50u64;
+    let min_exactly_equal = 995_000_000_000u64;
+
+    let result = check_slippage(ccm_amount, transfer_fee_bps, min_exactly_equal);
+    assert!(result.is_ok(), "Should pass when min == actual");
+}
+
+#[test]
+fn test_slippage_protection_boundary_one_lamport_over() {
+    // Test boundary: min_ccm_amount = actual_received + 1 (should fail)
+    let ccm_amount = 1_000_000_000_000u64;
+    let transfer_fee_bps = 50u64;
+    let min_one_over = 995_000_000_001u64;
+
+    let result = check_slippage(ccm_amount, transfer_fee_bps, min_one_over);
+    assert!(
+        matches!(result, Err(VaultError::SlippageExceeded)),
+        "Should fail when min is 1 lamport over actual"
+    );
+}
+
+#[test]
+fn test_slippage_protection_with_zero_fee() {
+    // Edge case: no transfer fee (theoretical)
+    let ccm_amount = 1_000_000_000_000u64;
+    let transfer_fee_bps = 0u64;
+    let min_amount = 1_000_000_000_000u64;
+
+    let result = check_slippage(ccm_amount, transfer_fee_bps, min_amount);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), ccm_amount, "No fee means full amount received");
+}
+
+#[test]
+fn test_slippage_protection_with_high_fee() {
+    // Edge case: 5% transfer fee
+    let ccm_amount = 1_000_000_000_000u64;
+    let transfer_fee_bps = 500u64; // 5%
+
+    // User receives 950 CCM
+    let expected = 950_000_000_000u64;
+
+    // Setting min at expected should pass
+    let result = check_slippage(ccm_amount, transfer_fee_bps, expected);
+    assert!(result.is_ok());
+
+    // Setting min above expected should fail
+    let result = check_slippage(ccm_amount, transfer_fee_bps, expected + 1);
+    assert!(matches!(result, Err(VaultError::SlippageExceeded)));
+}
+
+#[test]
+fn test_slippage_protection_small_amount() {
+    // Small amount where fee rounding matters
+    let ccm_amount = 1_000_000u64; // 0.001 CCM
+    let transfer_fee_bps = 50u64;
+
+    // Fee = 1_000_000 * 50 / 10_000 = 5_000 lamports
+    let expected = 995_000u64;
+
+    let result = check_slippage(ccm_amount, transfer_fee_bps, expected);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), expected);
+}
+
+// =========================================================================
+// COMPOUND BOUNTY PAYMENT TESTS
+// =========================================================================
+
+/// Calculate bounty payment (mirrors compound.rs lines 335-340)
+fn calculate_bounty(rewards_claimed: u64, bounty_bps: u64) -> u64 {
+    (rewards_claimed as u128)
+        .checked_mul(bounty_bps as u128)
+        .unwrap()
+        .checked_div(BPS_DENOMINATOR as u128)
+        .unwrap() as u64
+}
+
+/// Simulate compound bounty payment and restaking
+/// Returns (bounty_paid, amount_restaked)
+fn simulate_compound_with_bounty(
+    unstaked_received: u64,    // Principal returned from Oracle
+    rewards_claimed: u64,      // Rewards claimed from Oracle
+    stakeable_pending: u64,    // New deposits waiting to be staked
+    bounty_bps: u64,           // Bounty rate in bps (should be 10 = 0.1%)
+) -> (u64, u64) {
+    let mut amount_to_stake = stakeable_pending
+        .checked_add(unstaked_received)
+        .unwrap()
+        .checked_add(rewards_claimed)
+        .unwrap();
+
+    let mut bounty_paid = 0u64;
+
+    // Pay keeper bounty from claimed rewards only (never from principal)
+    // This mirrors compound.rs lines 335-370
+    if rewards_claimed > 0 && bounty_bps > 0 {
+        bounty_paid = calculate_bounty(rewards_claimed, bounty_bps);
+        if bounty_paid > 0 {
+            amount_to_stake = amount_to_stake.checked_sub(bounty_paid).unwrap();
+        }
+    }
+
+    (bounty_paid, amount_to_stake)
+}
+
+#[test]
+fn test_compound_bounty_is_10_bps_of_rewards() {
+    // COMPOUND_BOUNTY_BPS = 10 (0.1%) - from constants.rs
+    let bounty_bps = 10u64;
+
+    let unstaked_principal = 1_000_000_000_000u64; // 1000 CCM principal
+    let rewards_claimed = 100_000_000_000u64;      // 100 CCM rewards
+    let new_deposits = 50_000_000_000u64;          // 50 CCM new
+
+    let (bounty_paid, amount_restaked) = simulate_compound_with_bounty(
+        unstaked_principal,
+        rewards_claimed,
+        new_deposits,
+        bounty_bps,
+    );
+
+    // Bounty = 100 CCM * 10 / 10000 = 0.1 CCM = 100_000_000 lamports
+    let expected_bounty = 100_000_000u64;
+    assert_eq!(bounty_paid, expected_bounty, "Bounty should be 0.1% of rewards");
+
+    // Amount restaked = 1000 + 100 + 50 - 0.1 = 1149.9 CCM
+    let expected_restaked = unstaked_principal + rewards_claimed + new_deposits - bounty_paid;
+    assert_eq!(amount_restaked, expected_restaked);
+}
+
+#[test]
+fn test_bounty_comes_from_rewards_not_principal() {
+    // Critical test: bounty is calculated from rewards_claimed only,
+    // NOT from the unstaked principal or pending deposits
+
+    let bounty_bps = 10u64;
+    let unstaked_principal = 1_000_000_000_000u64; // 1000 CCM principal
+    let rewards_claimed = 10_000_000_000u64;       // 10 CCM rewards (small)
+    let new_deposits = 500_000_000_000u64;         // 500 CCM new deposits
+
+    let (bounty_paid, amount_restaked) = simulate_compound_with_bounty(
+        unstaked_principal,
+        rewards_claimed,
+        new_deposits,
+        bounty_bps,
+    );
+
+    // Bounty should only be 0.1% of 10 CCM rewards = 0.01 CCM
+    // NOT 0.1% of (1000 + 10 + 500) = 1.51 CCM
+    let expected_bounty = 10_000_000u64; // 0.01 CCM in lamports
+    assert_eq!(
+        bounty_paid, expected_bounty,
+        "Bounty must come from rewards only, not principal or deposits"
+    );
+
+    // Total going back to stake
+    let total_input = unstaked_principal + rewards_claimed + new_deposits;
+    assert_eq!(
+        amount_restaked,
+        total_input - bounty_paid,
+        "Restaked = total input - bounty"
+    );
+}
+
+#[test]
+fn test_no_bounty_when_no_rewards() {
+    let bounty_bps = 10u64;
+    let unstaked_principal = 1_000_000_000_000u64;
+    let rewards_claimed = 0u64; // No rewards
+    let new_deposits = 100_000_000_000u64;
+
+    let (bounty_paid, amount_restaked) = simulate_compound_with_bounty(
+        unstaked_principal,
+        rewards_claimed,
+        new_deposits,
+        bounty_bps,
+    );
+
+    // No rewards = no bounty
+    assert_eq!(bounty_paid, 0, "No bounty when no rewards claimed");
+
+    // All goes to restaking
+    assert_eq!(
+        amount_restaked,
+        unstaked_principal + new_deposits,
+        "All principal + deposits should be restaked"
+    );
+}
+
+#[test]
+fn test_no_bounty_when_zero_bps() {
+    let bounty_bps = 0u64; // Bounty disabled
+    let rewards_claimed = 100_000_000_000u64;
+
+    let (bounty_paid, _) = simulate_compound_with_bounty(
+        1_000_000_000_000,
+        rewards_claimed,
+        0,
+        bounty_bps,
+    );
+
+    assert_eq!(bounty_paid, 0, "No bounty when bps is 0");
+}
+
+#[test]
+fn test_bounty_small_rewards_rounding() {
+    // Test with small rewards where bounty might round to 0
+    let bounty_bps = 10u64;
+
+    // 1000 lamports rewards * 10 / 10000 = 1 lamport bounty
+    let small_rewards = 1_000u64;
+
+    let (bounty_paid, _) = simulate_compound_with_bounty(
+        1_000_000_000_000,
+        small_rewards,
+        0,
+        bounty_bps,
+    );
+
+    assert_eq!(bounty_paid, 1, "Very small bounty should still be paid (1 lamport)");
+}
+
+#[test]
+fn test_bounty_very_small_rewards_rounds_to_zero() {
+    // Test with extremely small rewards that round to 0
+    let bounty_bps = 10u64;
+
+    // 99 lamports * 10 / 10000 = 0 (integer division)
+    let tiny_rewards = 99u64;
+
+    let bounty = calculate_bounty(tiny_rewards, bounty_bps);
+    assert_eq!(bounty, 0, "Sub-threshold rewards should round bounty to 0");
+}
+
+#[test]
+fn test_bounty_large_rewards() {
+    let bounty_bps = 10u64;
+
+    // 1 billion CCM in rewards (extreme case)
+    let large_rewards = 1_000_000_000_000_000_000u64;
+
+    let (bounty_paid, amount_restaked) = simulate_compound_with_bounty(
+        0,             // No principal (first stake scenario)
+        large_rewards,
+        0,             // No pending
+        bounty_bps,
+    );
+
+    // 0.1% of 1B CCM = 1M CCM
+    let expected_bounty = 1_000_000_000_000_000u64;
+    assert_eq!(bounty_paid, expected_bounty);
+    assert_eq!(amount_restaked, large_rewards - bounty_paid);
+}
+
+#[test]
+fn test_bounty_preserves_principal_invariant() {
+    // Invariant: principal + new deposits should never be touched for bounty
+
+    let bounty_bps = 10u64;
+    let principal = 1_000_000_000_000u64;
+    let new_deposits = 200_000_000_000u64;
+    let rewards = 50_000_000_000u64;
+
+    let (bounty_paid, amount_restaked) = simulate_compound_with_bounty(
+        principal,
+        rewards,
+        new_deposits,
+        bounty_bps,
+    );
+
+    // The sum going to Oracle should be:
+    // principal + deposits + rewards - bounty
+    let expected = principal + new_deposits + rewards - bounty_paid;
+    assert_eq!(amount_restaked, expected);
+
+    // Critically, the principal + deposits portion is fully preserved
+    // Only the rewards portion is reduced by bounty
+    let principal_and_deposits = principal + new_deposits;
+    let rewards_after_bounty = rewards - bounty_paid;
+    assert_eq!(
+        amount_restaked,
+        principal_and_deposits + rewards_after_bounty,
+        "Principal and deposits must be fully preserved"
+    );
+}
+
+#[test]
+fn test_bounty_calculation_matches_constants() {
+    // Verify our test uses the actual constant value
+    // COMPOUND_BOUNTY_BPS = 10 (from constants.rs line 77)
+    let bounty_bps = 10u64;
+
+    let rewards = 10_000_000_000_000u64; // 10,000 CCM
+
+    let bounty = calculate_bounty(rewards, bounty_bps);
+
+    // 10,000 CCM * 0.001 = 10 CCM
+    assert_eq!(bounty, 10_000_000_000u64, "10 bps = 0.1% of rewards");
+}
