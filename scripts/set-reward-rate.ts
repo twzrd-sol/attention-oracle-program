@@ -19,6 +19,7 @@ import BN from "bn.js";
 
 const ORACLE_PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 const CHANNEL_STAKE_POOL_SEED = Buffer.from("channel_pool");
+const STAKE_VAULT_SEED = Buffer.from("stake_vault");
 
 // Channel config pubkeys keyed by human-readable name.
 // Add your channel configs here after running initialize_channel_cumulative.
@@ -60,11 +61,18 @@ async function main() {
     ORACLE_PROGRAM_ID
   );
 
+  // Derive vault PDA (for treasury funding validation)
+  const [vault] = PublicKey.findProgramAddressSync(
+    [STAKE_VAULT_SEED, stakePool.toBuffer()],
+    ORACLE_PROGRAM_ID
+  );
+
   console.log("\n📊 SET REWARD RATE");
   console.log("==================");
   console.log("Channel:", channelName);
   console.log("Channel Config:", channelConfig.toBase58());
   console.log("Stake Pool:", stakePool.toBase58());
+  console.log("Vault:", vault.toBase58());
   console.log("Admin:", admin.toBase58());
   console.log("New Rate:", newRate.toString(), "per slot");
 
@@ -82,6 +90,7 @@ async function main() {
         admin: admin,
         channelConfig: channelConfig,
         stakePool: stakePool,
+        vault: vault,
       })
       .rpc();
 

@@ -1,8 +1,8 @@
 # Security Audit Report: Attention Oracle Protocol
 
-**Date:** January 2026 (updated post-hardening)
+**Date:** January 2026 (updated February 2026)
 **Scope:** `token_2022` (Oracle) + `channel_vault` (Vault) programs
-**Commit:** `cff6981` — post-audit-hardening
+**Commit:** `cff6981` (initial) / `482828b` (post-launch improvements)
 **Framework:** Anchor 0.32.1 / Solana SDK 2.3.x
 
 ---
@@ -11,7 +11,7 @@
 
 A comprehensive review of both on-chain programs in the Attention Oracle Protocol was conducted. The audit covers the Oracle program (`token_2022`) — cumulative claims, channel staking, governance, and transfer-fee management — and the Vault program (`channel_vault`) — an ERC4626-style liquid staking wrapper with compound, redeem, and emergency reserve mechanics.
 
-**Conclusion:** No critical or high-severity vulnerabilities were identified. Three medium-severity items are documented as open (see [Open Items](#open-items)). Both programs enforce strict access control, checked arithmetic, PDA validation, and pause/shutdown controls. The governance roadmap (Admin -> Multisig -> DAO) is documented and the codebase is hardened for mainnet operation.
+**Conclusion:** No critical or high-severity vulnerabilities were identified. Two medium-severity items remain open; one has been mitigated via Squads multisig (see [Open Items](#open-items)). Both programs enforce strict access control, checked arithmetic, PDA validation, and pause/shutdown controls. Admin governance has transitioned from single-key to Squads v4 multisig (Phase 2 complete).
 
 **Test coverage:** 89 tests across 3 test suites (36 vault + 31 staking + 22 cumulative), all passing.
 
@@ -218,6 +218,87 @@ Used for: `claim_channel_rewards`, `unstake_channel`, `stake_channel`. No privil
 
 ---
 
+## Post-Launch Improvements
+
+The following security and decentralization improvements were implemented after initial mainnet deployment:
+
+### 16. Keeper Bounty for Compound
+
+**Commit:** `086fb35`
+**Status:** IMPLEMENTED
+
+A permissionless keeper bounty incentivizes decentralized operation of the compound crank:
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Bounty Rate | 0.10% (10 bps) | Applied to claimed rewards only |
+| Source | Rewards | Never deducted from principal |
+| Payout | Immediate | Transferred to caller's ATA in same tx |
+
+* **Decentralization:** Anyone can profitably run a compound keeper, reducing reliance on protocol-operated infrastructure.
+* **Principal Protection:** Bounty is calculated strictly on `rewards_claimed`, never touching depositor principal or pending deposits.
+* **Event Emission:** `CompoundBountyPaid` event logged with vault, caller, amount, and timestamp.
+
+### 17. Complete Withdraw Slippage Protection
+
+**Commit:** `0a791de`
+**Status:** IMPLEMENTED
+
+Added `min_ccm_amount` parameter to `complete_withdraw` to protect users from transfer-fee-related slippage:
+
+```rust
+pub fn complete_withdraw(
+    ctx: Context<CompleteWithdraw>,
+    request_id: u64,
+    min_ccm_amount: u64,  // slippage protection
+) -> Result<()>
+```
+
+* **Transfer Fee Handling:** CCM has a 0.5% transfer fee. Users now specify the minimum acceptable amount after fees.
+* **Post-Transfer Verification:** Actual received amount is measured by comparing user balance before/after transfer.
+* **Revert on Slippage:** Transaction fails with `VaultError::SlippageExceeded` if `actual_received < min_ccm_amount`.
+* **Consistency:** Aligns with existing slippage protection in `request_withdraw` and `instant_redeem`.
+
+### 18. Pool Consolidation (Legacy Pool Shutdown)
+
+**Commit:** `482828b`
+**Status:** COMPLETED
+
+Shutdown of 12 legacy staking pools to consolidate into new lock-tier architecture:
+
+| Category | Pools Shutdown | New Structure |
+|----------|---------------|---------------|
+| Lofi Vault | 4 pools (3h, 6h, 9h, 12h) | Consolidated to 3h + 12h tiers |
+| TWZRD | 1 pool (twzrd-247-6h) | Migrated to new tier structure |
+| Audio | 7 pools (various) | Consolidated to standard tiers |
+| **Total** | **12 pools** | |
+
+* **Shutdown Reason:** "Consolidating to new lock-tier pools (3h + 12h)"
+* **Execution:** Via Squads multisig proposals with batched `admin_shutdown_pool` instructions.
+* **User Impact:** Lock requirements waived for exit; users can withdraw penalty-free from shutdown pools.
+* **Cleanup:** Pool configs removed from `channels.ts` keeper registry.
+
+### 19. Buffer Authority Validation in Upgrade Script
+
+**Commit:** `a57ed03`
+**Status:** IMPLEMENTED
+
+Enhanced program upgrade script with strict buffer authority validation:
+
+```typescript
+// Trusted authorities for buffer ownership
+const trustedAuthorities = [
+  vaultPda,                              // Squads vault PDA (ideal)
+  ...keypairs.map((kp) => kp.publicKey), // Local multisig member keys
+];
+```
+
+* **Validation:** Script rejects buffers with untrusted authorities before creating upgrade proposals.
+* **Guidance:** Provides clear instructions for transferring buffer authority to Squads vault if needed.
+* **Defense-in-Depth:** Prevents accidental or malicious use of compromised buffers in upgrade flow.
+
+---
+
 ## Vulnerability Checklist
 
 | Vulnerability | Oracle | Vault | Notes |
@@ -258,12 +339,36 @@ Used for: `claim_channel_rewards`, `unstake_channel`, `stake_channel`. No privil
 
 ### 3. Immediate Admin Transfer
 
-**Severity:** Medium
+**Severity:** Medium | **Status:** Mitigated via Squads Multisig configuration
 
 `update_admin` executes immediately without a timelock. A compromised admin key can transfer authority in a single transaction.
 
 * **Impact:** Attacker with admin key gains full control immediately.
-* **Mitigation:** Planned transition to Squads multisig (Phase 2). Timelock to be added in Phase 2 governance upgrade.
+* **Mitigation:** Operational controls via Squads Multisig. On-chain timelock would require program upgrade.
+
+#### Squads Multisig Configuration (Recommended)
+
+The following Squads configuration provides equivalent protection to an on-chain timelock:
+
+1. **Enable Time Delay on Vault**
+   - Navigate to Squads UI > Settings > Time Lock
+   - Set execution delay to **24-48 hours** for all transactions
+   - This creates a window for team members to review and potentially reject malicious proposals
+
+2. **Configure Approval Threshold**
+   - Set threshold to **3/5** (or higher) for admin operations
+   - Ensures no single compromised key can execute `update_admin`
+   - Add trusted team members as vault members with appropriate permissions
+
+3. **Squads UI Configuration Steps**
+   - Create or select your multisig vault at [v4.squads.so](https://v4.squads.so)
+   - Go to **Settings** > **Multisig Settings**
+   - Under **Threshold**, set to 3 of 5 signers minimum
+   - Under **Time Lock**, enable and set delay to 24-48 hours
+   - Transfer program admin authority to the Squads vault address
+   - Test with a non-critical transaction before transferring admin
+
+**Note:** On-chain timelock enforcement (two-step transfer with delay) is planned for a future program upgrade but requires redeployment. The Squads operational controls provide equivalent security for the current deployment.
 
 ---
 
@@ -325,9 +430,9 @@ All 89 tests pass on commit `cff6981`.
 
 ## Recommendations
 
-1. **Multisig Transition:** Migrate admin authority to Squads multisig once mainnet operational stability is confirmed. This addresses Open Item #3 and reduces single-key-compromise risk.
+1. ~~**Multisig Transition:**~~ **COMPLETED** (commit `4e30207`) — Admin authority migrated to Squads v4 multisig. See Open Item #3 for operational timelock configuration.
 
-2. **Timelock on Admin Transfer:** Add a 24-48h delay to `update_admin` as part of the multisig Phase 2 upgrade.
+2. **Timelock on Admin Transfer:** Configure Squads time delay (24-48h) for operational timelock. On-chain timelock would require program upgrade.
 
 3. **Reward Rate Validation:** Add off-chain monitoring to alert when `reward_per_slot * slots_remaining > treasury_balance`. Consider an on-chain check in a future program upgrade.
 

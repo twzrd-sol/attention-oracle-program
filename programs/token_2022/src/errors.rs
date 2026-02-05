@@ -82,6 +82,9 @@ pub enum OracleError {
     #[msg("Insufficient treasury balance")]
     InsufficientTreasuryBalance,
 
+    #[msg("Insufficient treasury funding for reward rate (need at least 1 day runway)")]
+    InsufficientTreasuryFunding,
+
     // =========================================================================
     // STAKING
     // =========================================================================
@@ -192,14 +195,14 @@ pub enum OracleError {
 /// Anchor error code offset for `#[error_code]` enums.
 pub const ANCHOR_ERROR_OFFSET: u32 = 6000;
 
-/// `OracleError::NoRewardsToClaim` (variant index 41)
-pub const ORACLE_ERROR_NO_REWARDS_TO_CLAIM: u32 = ANCHOR_ERROR_OFFSET + 41;
+/// `OracleError::NoRewardsToClaim` (variant index 42)
+pub const ORACLE_ERROR_NO_REWARDS_TO_CLAIM: u32 = ANCHOR_ERROR_OFFSET + 42;
 
-/// `OracleError::PoolIsShutdown` (variant index 44)
-pub const ORACLE_ERROR_POOL_IS_SHUTDOWN: u32 = ANCHOR_ERROR_OFFSET + 44;
+/// `OracleError::PoolIsShutdown` (variant index 45)
+pub const ORACLE_ERROR_POOL_IS_SHUTDOWN: u32 = ANCHOR_ERROR_OFFSET + 45;
 
-/// `OracleError::ClaimExceedsAvailableRewards` (variant index 46)
-pub const ORACLE_ERROR_CLAIM_EXCEEDS_AVAILABLE: u32 = ANCHOR_ERROR_OFFSET + 46;
+/// `OracleError::ClaimExceedsAvailableRewards` (variant index 47)
+pub const ORACLE_ERROR_CLAIM_EXCEEDS_AVAILABLE: u32 = ANCHOR_ERROR_OFFSET + 47;
 
 #[cfg(test)]
 mod tests {

@@ -977,11 +977,17 @@ pub struct SetRewardRate<'info> {
     )]
     pub stake_pool: Box<Account<'info, ChannelStakePool>>,
 
+    /// Vault holding staked tokens + reward reserves (for funding validation)
+    #[account(
+        address = stake_pool.vault,
+    )]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
+
     pub system_program: Program<'info, System>,
 }
 
 pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()> {
-    use crate::constants::{BPS_DENOMINATOR, MAX_APR_BPS, SLOTS_PER_YEAR};
+    use crate::constants::{BPS_DENOMINATOR, MAX_APR_BPS, MIN_RUNWAY_SLOTS, SLOTS_PER_YEAR};
     use crate::events::RewardRateUpdated;
 
     let clock = Clock::get()?;
@@ -1013,6 +1019,32 @@ pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()>
             max_rate,
             MAX_APR_BPS / 100,
             pool.total_weighted
+        );
+    }
+
+    // Enforce minimum treasury runway (prevents setting unsustainable rates)
+    // Available rewards = vault_balance - total_staked (principal is sacrosanct)
+    // Must have at least MIN_RUNWAY_SLOTS worth of rewards at the new rate
+    if new_rate > 0 {
+        let vault_balance = ctx.accounts.vault.amount;
+        let total_staked = pool.total_staked;
+        let available_rewards = vault_balance.saturating_sub(total_staked);
+
+        let required_runway = (new_rate as u128)
+            .checked_mul(MIN_RUNWAY_SLOTS as u128)
+            .ok_or(OracleError::MathOverflow)? as u64;
+
+        require!(
+            available_rewards >= required_runway,
+            OracleError::InsufficientTreasuryFunding
+        );
+
+        msg!(
+            "Treasury runway check: available={}, required={} ({} slots at {} per slot)",
+            available_rewards,
+            required_runway,
+            MIN_RUNWAY_SLOTS,
+            new_rate
         );
     }
 

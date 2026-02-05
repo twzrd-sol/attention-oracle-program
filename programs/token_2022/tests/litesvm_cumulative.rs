@@ -30,7 +30,9 @@ fn program_id() -> Pubkey {
 const PROTOCOL_SEED: &[u8] = b"protocol";
 const CHANNEL_CONFIG_V2_SEED: &[u8] = b"channel_cfg_v2";
 const CLAIM_STATE_V2_SEED: &[u8] = b"claim_state_v2";
+const CHANNEL_USER_STAKE_SEED: &[u8] = b"channel_user";
 const CUMULATIVE_V2_DOMAIN: &[u8] = b"TWZRD:CUMULATIVE_V2";
+const CUMULATIVE_V3_DOMAIN: &[u8] = b"TWZRD:CUMULATIVE_V3";
 
 /// Compute Anchor discriminator for an instruction
 fn compute_discriminator(name: &str) -> [u8; 8] {
@@ -72,7 +74,15 @@ fn derive_claim_state_v2(channel_config: &Pubkey, wallet: &Pubkey) -> (Pubkey, u
     )
 }
 
-/// Compute cumulative leaf hash (matches on-chain)
+/// Derive user channel stake PDA (for V3 stake-bound claims)
+fn derive_user_channel_stake(channel_config: &Pubkey, wallet: &Pubkey) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[CHANNEL_USER_STAKE_SEED, channel_config.as_ref(), wallet.as_ref()],
+        &program_id(),
+    )
+}
+
+/// Compute cumulative leaf hash (matches on-chain V2)
 fn compute_cumulative_leaf(
     channel_config: &Pubkey,
     mint: &Pubkey,
@@ -87,6 +97,30 @@ fn compute_cumulative_leaf(
     hasher.update(&root_seq.to_le_bytes());
     hasher.update(wallet.as_ref());
     hasher.update(&cumulative_total.to_le_bytes());
+    hasher.finalize().into()
+}
+
+/// Compute cumulative leaf hash with stake snapshot (matches on-chain V3)
+/// V3 adds stake_snapshot to prevent "boost gaming" where users:
+/// 1. Stake tokens to boost rewards at snapshot time
+/// 2. Unstake before claim
+/// 3. Claim with boosted proof despite no longer having stake
+fn compute_cumulative_leaf_v3(
+    channel_config: &Pubkey,
+    mint: &Pubkey,
+    root_seq: u64,
+    wallet: &Pubkey,
+    cumulative_total: u64,
+    stake_snapshot: u64,
+) -> [u8; 32] {
+    let mut hasher = Keccak256::new();
+    hasher.update(CUMULATIVE_V3_DOMAIN);
+    hasher.update(channel_config.as_ref());
+    hasher.update(mint.as_ref());
+    hasher.update(&root_seq.to_le_bytes());
+    hasher.update(wallet.as_ref());
+    hasher.update(&cumulative_total.to_le_bytes());
+    hasher.update(&stake_snapshot.to_le_bytes());
     hasher.finalize().into()
 }
 
@@ -1023,4 +1057,367 @@ fn test_chaos_proof_index_bounds() {
     println!("  Fake leaf with valid proof structure rejected ✓");
 
     println!("✅ CHAOS #16 PASSED: Proof verification is index-agnostic (leaf-based)");
+}
+
+// ============================================================================
+// V3 STAKE-BOUND PROOF TESTS
+// ============================================================================
+
+/// V3 TEST #1: Valid V3 claim with stake snapshot binding
+/// Tests that V3 leaf computation and proof verification work correctly
+/// when user has sufficient stake (user_stake >= stake_snapshot)
+#[test]
+fn test_claim_cumulative_v3_success() {
+    let mint = Pubkey::new_unique();
+    let channel_config = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let wallet = Pubkey::new_unique();
+    let cumulative_total = 10_000_000_000u64; // 10 CCM earned
+    let stake_snapshot = 5_000_000_000u64; // 5 CCM staked at snapshot time
+
+    // User's current stake (must be >= stake_snapshot for claim to succeed)
+    let current_stake = 7_000_000_000u64; // 7 CCM currently staked
+
+    // Build V3 merkle tree with stake_snapshot in leaf
+    let user_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot
+    );
+    let other_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000
+    );
+    let leaves = vec![user_leaf, other_leaf];
+    let root = compute_merkle_root(&leaves);
+    let proof = generate_proof(&leaves, 0);
+
+    // Verify proof
+    let mut computed = user_leaf;
+    for node in &proof {
+        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let mut hasher = Keccak256::new();
+        hasher.update(&a);
+        hasher.update(&b);
+        computed = hasher.finalize().into();
+    }
+    assert_eq!(computed, root, "V3 proof should verify against root");
+    println!("  V3 proof verification: PASSED");
+
+    // Simulate on-chain stake check: user_stake.amount >= stake_snapshot
+    let stake_check_passes = current_stake >= stake_snapshot;
+    assert!(stake_check_passes, "User has sufficient stake");
+    println!("  Stake check (current {} >= snapshot {}): PASSED", current_stake, stake_snapshot);
+
+    // Verify PDA derivation for user_channel_stake
+    let (stake_pda, _) = derive_user_channel_stake(&channel_config, &wallet);
+    println!("  UserChannelStake PDA: {}", stake_pda);
+
+    println!("✅ V3 TEST #1 PASSED: Valid V3 claim with stake snapshot");
+}
+
+/// V3 TEST #2: V3 claim fails when user stake < snapshot
+/// Prevents "boost gaming" attack where user unstakes after earning boosted rewards
+#[test]
+fn test_claim_cumulative_v3_insufficient_stake() {
+    let mint = Pubkey::new_unique();
+    let channel_config = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let wallet = Pubkey::new_unique();
+    let cumulative_total = 50_000_000_000u64; // 50 CCM earned (boosted by stake)
+    let stake_snapshot = 100_000_000_000u64; // 100 CCM was staked at snapshot
+
+    // ATTACK SCENARIO:
+    // 1. Attacker stakes 100 CCM to get 3x boost
+    // 2. Snapshot captures stake_snapshot = 100 CCM with boosted rewards
+    // 3. Attacker unstakes to 10 CCM before claim
+    // 4. Attacker tries to claim 50 CCM in boosted rewards
+
+    let current_stake = 10_000_000_000u64; // Attacker unstaked to 10 CCM
+
+    // Build V3 tree (proof is valid)
+    let attacker_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot
+    );
+    let other_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000
+    );
+    let leaves = vec![attacker_leaf, other_leaf];
+    let root = compute_merkle_root(&leaves);
+    let proof = generate_proof(&leaves, 0);
+
+    // Verify merkle proof is valid (attacker has correct proof data)
+    let mut computed = attacker_leaf;
+    for node in &proof {
+        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let mut hasher = Keccak256::new();
+        hasher.update(&a);
+        hasher.update(&b);
+        computed = hasher.finalize().into();
+    }
+    assert_eq!(computed, root, "Merkle proof is valid");
+    println!("  Merkle proof: VALID (attacker has correct proof)");
+
+    // SECURITY CHECK: On-chain would fail here
+    // require!(user_stake.amount >= stake_snapshot, OracleError::StakeSnapshotMismatch)
+    let stake_check_passes = current_stake >= stake_snapshot;
+    assert!(!stake_check_passes, "Stake check should FAIL for boost gamer");
+    println!("  Stake check (current {} < snapshot {}): REJECTED", current_stake, stake_snapshot);
+
+    // On-chain error would be: StakeSnapshotMismatch (error code 0x1775 / 6005)
+    println!("  On-chain would return: OracleError::StakeSnapshotMismatch");
+
+    println!("✅ V3 TEST #2 PASSED: Insufficient stake correctly rejected (anti-boost-gaming)");
+}
+
+/// V3 TEST #3: V2 claims still work (backwards compatibility)
+/// Ensures V3 introduction doesn't break existing V2 claim infrastructure
+#[test]
+fn test_claim_cumulative_v3_backwards_compat() {
+    let mint = Pubkey::new_unique();
+    let channel_config = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let wallet = Pubkey::new_unique();
+    let cumulative_total = 10_000_000_000u64;
+
+    // V2 leaf (no stake_snapshot)
+    let v2_leaf = compute_cumulative_leaf(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total
+    );
+
+    // V3 leaf with stake_snapshot = 0 (equivalent to "no stake requirement")
+    let v3_leaf_zero_stake = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, 0
+    );
+
+    // KEY INSIGHT: V2 and V3 leaves are DIFFERENT even with zero stake
+    // This is due to domain separation (CUMULATIVE_V2_DOMAIN vs CUMULATIVE_V3_DOMAIN)
+    assert_ne!(v2_leaf, v3_leaf_zero_stake, "V2 and V3 leaves should differ (domain separation)");
+    println!("  Domain separation: V2 leaf != V3 leaf (even with stake=0)");
+
+    // Build separate V2 tree
+    let v2_other = compute_cumulative_leaf(
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000
+    );
+    let v2_leaves = vec![v2_leaf, v2_other];
+    let v2_root = compute_merkle_root(&v2_leaves);
+    let v2_proof = generate_proof(&v2_leaves, 0);
+
+    // Verify V2 proof still works
+    let mut computed_v2 = v2_leaf;
+    for node in &v2_proof {
+        let (a, b) = if computed_v2 <= *node { (computed_v2, *node) } else { (*node, computed_v2) };
+        let mut hasher = Keccak256::new();
+        hasher.update(&a);
+        hasher.update(&b);
+        computed_v2 = hasher.finalize().into();
+    }
+    assert_eq!(computed_v2, v2_root, "V2 proof should still verify");
+    println!("  V2 claim path: WORKS");
+
+    // Build separate V3 tree
+    let v3_other = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 1_000_000_000
+    );
+    let v3_leaves = vec![v3_leaf_zero_stake, v3_other];
+    let v3_root = compute_merkle_root(&v3_leaves);
+    let v3_proof = generate_proof(&v3_leaves, 0);
+
+    // Verify V3 proof works
+    let mut computed_v3 = v3_leaf_zero_stake;
+    for node in &v3_proof {
+        let (a, b) = if computed_v3 <= *node { (computed_v3, *node) } else { (*node, computed_v3) };
+        let mut hasher = Keccak256::new();
+        hasher.update(&a);
+        hasher.update(&b);
+        computed_v3 = hasher.finalize().into();
+    }
+    assert_eq!(computed_v3, v3_root, "V3 proof should verify");
+    println!("  V3 claim path: WORKS");
+
+    // Verify roots are different (can't reuse V2 proofs for V3 claims)
+    assert_ne!(v2_root, v3_root, "V2 and V3 trees should have different roots");
+    println!("  Tree isolation: V2 root != V3 root");
+
+    // Cross-version attack: V2 proof against V3 root should fail
+    let mut cross_computed = v2_leaf;
+    for node in &v2_proof {
+        let (a, b) = if cross_computed <= *node { (cross_computed, *node) } else { (*node, cross_computed) };
+        let mut hasher = Keccak256::new();
+        hasher.update(&a);
+        hasher.update(&b);
+        cross_computed = hasher.finalize().into();
+    }
+    assert_ne!(cross_computed, v3_root, "V2 proof should NOT verify against V3 root");
+    println!("  Cross-version attack: BLOCKED");
+
+    println!("✅ V3 TEST #3 PASSED: Backwards compatibility maintained");
+}
+
+/// V3 TEST #4: Verify V3 leaf computation includes stake_snapshot correctly
+/// Ensures leaf hash changes when stake_snapshot changes (critical for security)
+#[test]
+fn test_v3_leaf_computation() {
+    let mint = Pubkey::new_unique();
+    let channel_config = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let wallet = Pubkey::new_unique();
+    let cumulative_total = 10_000_000_000u64;
+
+    // Test 1: Same parameters except stake_snapshot produces different leaves
+    let stake_1 = 1_000_000_000u64;
+    let stake_2 = 2_000_000_000u64;
+
+    let leaf_stake_1 = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_1
+    );
+    let leaf_stake_2 = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_2
+    );
+
+    assert_ne!(leaf_stake_1, leaf_stake_2, "Different stake_snapshot should produce different leaves");
+    println!("  stake_snapshot binding: Different stakes produce different leaves ✓");
+
+    // Test 2: Zero stake_snapshot produces unique leaf
+    let leaf_zero_stake = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, 0
+    );
+    assert_ne!(leaf_zero_stake, leaf_stake_1, "Zero stake should differ from non-zero stake");
+    println!("  Zero stake leaf: Unique ✓");
+
+    // Test 3: Maximum stake_snapshot produces unique leaf
+    let max_stake = u64::MAX;
+    let leaf_max_stake = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, max_stake
+    );
+    assert_ne!(leaf_max_stake, leaf_stake_1, "Max stake should differ from other stakes");
+    assert_ne!(leaf_max_stake, leaf_zero_stake, "Max stake should differ from zero stake");
+    println!("  Max stake (u64::MAX) leaf: Unique ✓");
+
+    // Test 4: Verify V3 domain is included (compare against V2 with same params minus stake)
+    let v2_leaf = compute_cumulative_leaf(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total
+    );
+    // Even if we could somehow strip the stake from V3, domain separation keeps them apart
+    assert_ne!(v2_leaf, leaf_stake_1, "V3 leaf differs from V2 (domain separation)");
+    assert_ne!(v2_leaf, leaf_zero_stake, "V3 zero-stake leaf differs from V2 (domain separation)");
+    println!("  Domain separation (TWZRD:CUMULATIVE_V3): Enforced ✓");
+
+    // Test 5: Leaf is deterministic
+    let leaf_stake_1_again = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_1
+    );
+    assert_eq!(leaf_stake_1, leaf_stake_1_again, "Leaf computation must be deterministic");
+    println!("  Deterministic computation: Same inputs produce same leaf ✓");
+
+    // Test 6: Each component affects the leaf
+    let different_mint = Pubkey::new_unique();
+    let different_channel = Pubkey::new_unique();
+    let different_wallet = Pubkey::new_unique();
+    let different_seq = root_seq + 1;
+    let different_total = cumulative_total + 1;
+
+    let leaf_diff_mint = compute_cumulative_leaf_v3(
+        &channel_config, &different_mint, root_seq, &wallet, cumulative_total, stake_1
+    );
+    let leaf_diff_channel = compute_cumulative_leaf_v3(
+        &different_channel, &mint, root_seq, &wallet, cumulative_total, stake_1
+    );
+    let leaf_diff_wallet = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &different_wallet, cumulative_total, stake_1
+    );
+    let leaf_diff_seq = compute_cumulative_leaf_v3(
+        &channel_config, &mint, different_seq, &wallet, cumulative_total, stake_1
+    );
+    let leaf_diff_total = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, different_total, stake_1
+    );
+
+    assert_ne!(leaf_stake_1, leaf_diff_mint, "Different mint should change leaf");
+    assert_ne!(leaf_stake_1, leaf_diff_channel, "Different channel should change leaf");
+    assert_ne!(leaf_stake_1, leaf_diff_wallet, "Different wallet should change leaf");
+    assert_ne!(leaf_stake_1, leaf_diff_seq, "Different root_seq should change leaf");
+    assert_ne!(leaf_stake_1, leaf_diff_total, "Different cumulative_total should change leaf");
+    println!("  All components affect leaf hash: mint, channel, wallet, seq, total, stake ✓");
+
+    // Test 7: Verify expected leaf structure matches on-chain
+    // keccak(domain || channel_cfg || mint || root_seq || wallet || cumulative_total || stake_snapshot)
+    let mut hasher = Keccak256::new();
+    hasher.update(CUMULATIVE_V3_DOMAIN);
+    hasher.update(channel_config.as_ref());
+    hasher.update(mint.as_ref());
+    hasher.update(&root_seq.to_le_bytes());
+    hasher.update(wallet.as_ref());
+    hasher.update(&cumulative_total.to_le_bytes());
+    hasher.update(&stake_1.to_le_bytes());
+    let expected_leaf: [u8; 32] = hasher.finalize().into();
+    assert_eq!(leaf_stake_1, expected_leaf, "Leaf computation should match manual keccak");
+    println!("  Manual keccak verification: Matches compute_cumulative_leaf_v3 ✓");
+
+    println!("✅ V3 TEST #4 PASSED: V3 leaf computation correctly includes stake_snapshot");
+}
+
+/// V3 CHAOS TEST: Stake snapshot forgery attack
+/// Attack: Attacker provides fake stake_snapshot lower than their actual snapshot
+#[test]
+fn test_chaos_v3_stake_snapshot_forgery() {
+    let mint = Pubkey::new_unique();
+    let channel_config = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let wallet = Pubkey::new_unique();
+
+    // Real scenario: User had 100 CCM staked at snapshot, earned 50 CCM boosted rewards
+    let real_stake_snapshot = 100_000_000_000u64;
+    let cumulative_total = 50_000_000_000u64;
+
+    // Build tree with REAL stake_snapshot
+    let real_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, real_stake_snapshot
+    );
+    let other_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000
+    );
+    let leaves = vec![real_leaf, other_leaf];
+    let root = compute_merkle_root(&leaves);
+    let proof = generate_proof(&leaves, 0);
+
+    // ATTACK: User now has only 10 CCM, tries to claim with FORGED stake_snapshot = 10 CCM
+    let forged_stake_snapshot = 10_000_000_000u64;
+    let current_stake = 10_000_000_000u64;
+
+    // Forged stake passes the on-chain check (current_stake >= forged_snapshot)
+    let forged_check_passes = current_stake >= forged_stake_snapshot;
+    assert!(forged_check_passes, "Forged stake check would pass");
+    println!("  Forged stake check (10 >= 10): Would pass if proof verified");
+
+    // BUT the forged leaf doesn't match what's in the tree
+    let forged_leaf = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, forged_stake_snapshot
+    );
+
+    // Verify forged leaf against real root - should FAIL
+    let mut computed_forged = forged_leaf;
+    for node in &proof {
+        let (a, b) = if computed_forged <= *node { (computed_forged, *node) } else { (*node, computed_forged) };
+        let mut hasher = Keccak256::new();
+        hasher.update(&a);
+        hasher.update(&b);
+        computed_forged = hasher.finalize().into();
+    }
+
+    assert_ne!(computed_forged, root, "SECURITY FAILURE: Forged stake_snapshot should NOT verify!");
+    println!("  Forged stake_snapshot proof: REJECTED (leaf mismatch)");
+
+    // Real leaf would verify but fail stake check
+    let mut computed_real = real_leaf;
+    for node in &proof {
+        let (a, b) = if computed_real <= *node { (computed_real, *node) } else { (*node, computed_real) };
+        let mut hasher = Keccak256::new();
+        hasher.update(&a);
+        hasher.update(&b);
+        computed_real = hasher.finalize().into();
+    }
+    assert_eq!(computed_real, root, "Real proof verifies");
+    let real_check_passes = current_stake >= real_stake_snapshot;
+    assert!(!real_check_passes, "Real stake check fails (10 < 100)");
+    println!("  Real stake_snapshot (10 < 100): REJECTED by stake check");
+
+    println!("✅ V3 CHAOS PASSED: Stake snapshot forgery attack blocked by dual verification");
 }

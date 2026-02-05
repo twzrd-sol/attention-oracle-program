@@ -102,6 +102,8 @@ pub struct AdminEmergencyUnstaked {
     pub ccm_returned: u64,
     /// CCM burned by Oracle penalty
     pub oracle_penalty: u64,
+    /// Rewards claimed before emergency unstake (would have been forfeited otherwise)
+    pub rewards_claimed: u64,
     pub timestamp: i64,
 }
 
