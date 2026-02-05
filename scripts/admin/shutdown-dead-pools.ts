@@ -1,16 +1,10 @@
 /**
- * Shut down 4 dead TWZRD pools via Squads Multisig
+ * Shut down old pools via Squads Multisig
  *
- * These pools have 0 stakers and 0 weighted stake. Shutting them down:
+ * Shutting down a pool:
  * - Sets is_shutdown = true (blocks new stakes)
  * - Sets reward_per_slot = 0 (stops emission)
  * - Waives any lock durations for exit
- *
- * Pools to shut down:
- *   twzrd-1999-6h:  0 stakers, 0 weighted
- *   twzrd-415-6h:   0 stakers, 0 weighted
- *   twzrd-3121-6h:  0 stakers, 0 weighted
- *   twzrd-69-6h:    0 stakers, 0 weighted
  *
  * Usage:
  *   RPC_URL="..." npx tsx scripts/admin/shutdown-dead-pools.ts
@@ -47,15 +41,26 @@ const CCM_MINT = new PublicKey(
   "Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM",
 );
 
-/** Pools to shut down (0 stakers, dead) — hardcoded since already removed from channels.ts */
+/** All old pools to shut down — consolidating to 14 new lock-tier pools */
 const DEAD_POOLS = [
-  { name: "twzrd-1999-6h", channelConfig: "7g1qkWgZkbhZNFgbEzxxvYxCJHt4NMb3fwE2RHyrygDL" },
-  { name: "twzrd-415-6h", channelConfig: "DqoM3QcGPbUD2Hic1fxsSLqZY1CaSDkiaNaas2ufZUpb" },
-  { name: "twzrd-3121-6h", channelConfig: "EADvLuoe6ZXTfVBpVEKAMSfnFr1oZuHMxiButLVMnHuE" },
-  { name: "twzrd-69-6h", channelConfig: "HEa4KgAyuvRZPyAsUPmVTRXiTRuxVEkkGbmtEeybzGB9" },
+  // Lofi vaults
+  { name: "lofi-vault-3h", channelConfig: "J3HAT4NbL6REyyNqbW1BDGF9BXXc3FYuQ1fr6NbCQaoW" },
+  { name: "lofi-vault-6h", channelConfig: "dJvatt5bga4ak64ghTLEtxs1jxfLX4TNoZuvfiDCcGy" },
+  { name: "lofi-vault-9h", channelConfig: "2TWM1H1gHWrA6Ta6A9tH3E1TTTRbPpmSL2Xg7KdHwxCM" },
+  { name: "lofi-vault-12h", channelConfig: "GZL7vAo9vxdNbsmrreVueVd1Xm9oWmatkQauFcxhq8qP" },
+  // TWZRD vault
+  { name: "twzrd-247-6h", channelConfig: "84SxXryEL2dFT5rno9F1SGBAFvvkEDyp3wNQZyxT3hQ9" },
+  // Audio standard (7.5h) pools
+  { name: "audio-999", channelConfig: "9G1MvnVq3dX6UwGFvhTC9bDArNt9TyvS5UimffTL1BAJ" },
+  { name: "audio-212", channelConfig: "Dg84d5BkSYxKSix9m6YgbLz1L7mEsSH81Svp24watxEC" },
+  { name: "audio-247", channelConfig: "GdrV9DjKZFePZadxuQANKEBvVaB7rM8aEhMEzMHWrFJE" },
+  { name: "audio-1999", channelConfig: "8LCSiL2a4FjTAveMMn8SjLVxrYecWSfFDH48sdhzdbv" },
+  { name: "audio-415", channelConfig: "GxzK9iqyFJf3TRJG5XAQJD3eJtgKCivzkQtj7iPKrUsG" },
+  { name: "audio-3121", channelConfig: "4JawzmsofxVCim7eDtFPCMwiP21NMcAQqsZRPT7k9uL1" },
+  { name: "audio-69", channelConfig: "2uGQDJMsGy3undJCT9NazdJXjSoCcXd71vgkvYzMt3eR" },
 ];
 
-const SHUTDOWN_REASON = "Pruned: zero stakers, consolidating lock tiers";
+const SHUTDOWN_REASON = "Consolidating to new lock-tier pools (3h + 12h)";
 
 const KEYPAIR_PATHS = [
   `${process.env.HOME}/.config/solana/id.json`,
@@ -208,95 +213,96 @@ async function main() {
     );
   }
 
-  // --- Build shutdown instructions for all 4 dead pools ---
+  // --- Build shutdown instructions in batches (tx size limits) ---
 
-  console.log(
-    `\n  Building ${DEAD_POOLS.length} admin_shutdown_pool instructions...\n`,
-  );
-
-  const instructions: TransactionInstruction[] = [];
-
-  for (const pool of DEAD_POOLS) {
-    const channelConfig = new PublicKey(pool.channelConfig);
-
-    const [stakePool] = PublicKey.findProgramAddressSync(
-      [CHANNEL_STAKE_POOL_SEED, channelConfig.toBuffer()],
-      ORACLE_PROGRAM_ID,
-    );
-
-    console.log(`  ${pool.name.padEnd(18)} -> shutdown`);
-
-    const ix = adminShutdownPoolIx(
-      squadsVaultPda,
-      protocolState,
-      channelConfig,
-      stakePool,
-      SHUTDOWN_REASON,
-    );
-    instructions.push(ix);
+  const BATCH_SIZE = 6;
+  const batches: typeof DEAD_POOLS[] = [];
+  for (let i = 0; i < DEAD_POOLS.length; i += BATCH_SIZE) {
+    batches.push(DEAD_POOLS.slice(i, i + BATCH_SIZE));
   }
 
-  // --- Create Squads vault transaction ---
+  console.log(
+    `\n  ${DEAD_POOLS.length} pools -> ${batches.length} batch(es) of ${BATCH_SIZE}\n`,
+  );
 
-  const txIndex = BigInt(currentIndex + 1);
-  console.log(`\n  Creating Squads vault transaction #${txIndex}...\n`);
+  const txIndices: bigint[] = [];
 
-  const { blockhash } = await connection.getLatestBlockhash("confirmed");
-  const message = new TransactionMessage({
-    payerKey: squadsVaultPda,
-    recentBlockhash: blockhash,
-    instructions,
-  });
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    console.log(`  === Batch ${b + 1} (${batch.length} pools) ===\n`);
 
-  const vtSig = await multisig.rpc.vaultTransactionCreate({
-    connection,
-    feePayer,
-    multisigPda: MULTISIG_PDA,
-    transactionIndex: txIndex,
-    creator: feePayer.publicKey,
-    vaultIndex: 0,
-    ephemeralSigners: 0,
-    transactionMessage: message,
-  });
-  console.log(`  Vault tx created: ${vtSig}`);
-  await sleep(1000);
+    const instructions: TransactionInstruction[] = [];
+    for (const pool of batch) {
+      const channelConfig = new PublicKey(pool.channelConfig);
+      const [stakePool] = PublicKey.findProgramAddressSync(
+        [CHANNEL_STAKE_POOL_SEED, channelConfig.toBuffer()],
+        ORACLE_PROGRAM_ID,
+      );
+      console.log(`  ${pool.name.padEnd(18)} -> shutdown`);
+      instructions.push(
+        adminShutdownPoolIx(squadsVaultPda, protocolState, channelConfig, stakePool, SHUTDOWN_REASON),
+      );
+    }
 
-  // --- Create proposal ---
+    const txIndex = BigInt(currentIndex + 1 + b);
+    txIndices.push(txIndex);
+    console.log(`\n  Creating vault transaction #${txIndex}...`);
 
-  const proposalSig = await multisig.rpc.proposalCreate({
-    connection,
-    feePayer,
-    creator: feePayer,
-    multisigPda: MULTISIG_PDA,
-    transactionIndex: txIndex,
-    isDraft: false,
-  });
-  console.log(`  Proposal created: ${proposalSig}`);
-  await sleep(1000);
+    const { blockhash } = await connection.getLatestBlockhash("confirmed");
+    const message = new TransactionMessage({
+      payerKey: squadsVaultPda,
+      recentBlockhash: blockhash,
+      instructions,
+    });
 
-  // --- Approve with both local keypairs ---
-
-  for (const kp of keypairs) {
-    const approveSig = await multisig.rpc.proposalApprove({
+    const vtSig = await multisig.rpc.vaultTransactionCreate({
       connection,
       feePayer,
-      member: kp,
       multisigPda: MULTISIG_PDA,
       transactionIndex: txIndex,
+      creator: feePayer.publicKey,
+      vaultIndex: 0,
+      ephemeralSigners: 0,
+      transactionMessage: message,
     });
-    console.log(
-      `  Approved by ${kp.publicKey.toBase58().slice(0, 8)}...: ${approveSig}`,
-    );
-    await sleep(1000);
+    console.log(`  Vault tx created: ${vtSig}`);
+    await sleep(2000);
+
+    const proposalSig = await multisig.rpc.proposalCreate({
+      connection,
+      feePayer,
+      creator: feePayer,
+      multisigPda: MULTISIG_PDA,
+      transactionIndex: txIndex,
+      isDraft: false,
+    });
+    console.log(`  Proposal created: ${proposalSig}`);
+    await sleep(2000);
+
+    for (const kp of keypairs) {
+      const approveSig = await multisig.rpc.proposalApprove({
+        connection,
+        feePayer,
+        member: kp,
+        multisigPda: MULTISIG_PDA,
+        transactionIndex: txIndex,
+      });
+      console.log(
+        `  Approved by ${kp.publicKey.toBase58().slice(0, 8)}...: ${approveSig}`,
+      );
+      await sleep(1000);
+    }
+
+    console.log();
   }
 
   // --- Summary ---
 
   console.log("\n" + "=".repeat(70));
-  console.log("  SUMMARY - Shutdown Proposal Created");
+  console.log("  SUMMARY - Shutdown Proposals Created");
   console.log("=".repeat(70));
-  console.log(`\n  Tx index:     ${txIndex}`);
-  console.log(`  Approvals:    2 / ${multisigAccount.threshold}`);
+  console.log(`\n  Tx indices:   ${txIndices.join(", ")}`);
+  console.log(`  Approvals:    2 / ${multisigAccount.threshold} each`);
   console.log(`  Reason:       ${SHUTDOWN_REASON}`);
   console.log();
 
@@ -307,15 +313,9 @@ async function main() {
 
   console.log(`\n  Next steps:`);
   console.log(
-    `  1. Open app.squads.so -> approve tx #${txIndex}`,
+    `  1. Open app.squads.so -> approve tx #${txIndices.join(" and #")}`,
   );
-  console.log(`  2. Execute the proposal`);
-  console.log(
-    `  3. Remove dead pools from scripts/keepers/lib/channels.ts`,
-  );
-  console.log(
-    `  4. Run: npx tsx scripts/admin/audit-onchain-channels.ts to verify`,
-  );
+  console.log(`  2. Execute both proposals`);
   console.log();
 }
 
