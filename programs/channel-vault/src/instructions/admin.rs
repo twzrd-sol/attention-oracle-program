@@ -1,10 +1,11 @@
 //! Admin instructions for vault management.
 
 use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{Mint as MintInterface, TokenAccount, TokenInterface, TransferChecked};
 
-use crate::constants::{VAULT_ORACLE_POSITION_SEED, VAULT_SEED};
+use crate::constants::{TOKEN_2022_PROGRAM_ID, VAULT_ORACLE_POSITION_SEED, VAULT_SEED};
 use crate::errors::VaultError;
-use crate::events::{AdminUpdated, OraclePositionSynced, VaultPaused, VaultResumed, WithdrawQueueSlotsUpdated};
+use crate::events::{AdminUpdated, CapitalInjected, OraclePositionSynced, VaultPaused, VaultResumed, WithdrawQueueSlotsUpdated};
 use crate::state::{ChannelVault, VaultOraclePosition};
 
 use token_2022::UserChannelStake;
@@ -168,5 +169,128 @@ pub fn update_withdraw_queue_slots(
         old_value,
         new_withdraw_queue_slots
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Inject Capital (Insolvency Recovery)
+// ---------------------------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct InjectCapital<'info> {
+    #[account(
+        mut,
+        constraint = admin.key() == vault.admin @ VaultError::Unauthorized
+    )]
+    pub admin: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, vault.channel_config.as_ref()],
+        bump = vault.bump,
+    )]
+    pub vault: Account<'info, ChannelVault>,
+
+    /// CCM mint (Token-2022)
+    #[account(address = vault.ccm_mint)]
+    pub ccm_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// Admin's CCM token account
+    #[account(
+        mut,
+        constraint = admin_ccm.owner == admin.key() @ VaultError::Unauthorized,
+        constraint = admin_ccm.mint == ccm_mint.key() @ VaultError::InvalidMint,
+    )]
+    pub admin_ccm: InterfaceAccount<'info, TokenAccount>,
+
+    /// Vault's CCM buffer
+    #[account(
+        mut,
+        address = vault.ccm_buffer,
+    )]
+    pub vault_ccm_buffer: InterfaceAccount<'info, TokenAccount>,
+
+    /// Token-2022 program (for CCM transfer)
+    #[account(
+        constraint = token_2022_program.key() == TOKEN_2022_PROGRAM_ID @ VaultError::InvalidTokenProgram,
+    )]
+    pub token_2022_program: Interface<'info, TokenInterface>,
+}
+
+/// Admin injects capital to recover from insolvency.
+///
+/// Use case: When pending_withdrawals > (total_staked + pending_deposits + emergency_reserve),
+/// the vault becomes insolvent and cannot honor withdrawal requests. This instruction
+/// allows the admin to inject CCM to restore solvency.
+///
+/// The injected capital goes to pending_deposits and will be:
+/// 1. Used to honor queued withdrawals (if any)
+/// 2. Staked to Oracle on next compound
+///
+/// Note: CCM has a 0.5% transfer fee, so less than `amount` arrives in the vault.
+pub fn inject_capital(ctx: Context<InjectCapital>, amount: u64) -> Result<()> {
+    require!(amount > 0, VaultError::DepositTooSmall);
+
+    let clock = Clock::get()?;
+
+    // Capture buffer balance BEFORE transfer (for transfer-fee accounting)
+    let balance_before = ctx.accounts.vault_ccm_buffer.amount;
+
+    // Transfer CCM from admin to vault buffer (Token-2022)
+    let transfer_ctx = CpiContext::new(
+        ctx.accounts.token_2022_program.to_account_info(),
+        TransferChecked {
+            from: ctx.accounts.admin_ccm.to_account_info(),
+            mint: ctx.accounts.ccm_mint.to_account_info(),
+            to: ctx.accounts.vault_ccm_buffer.to_account_info(),
+            authority: ctx.accounts.admin.to_account_info(),
+        },
+    );
+    anchor_spl::token_interface::transfer_checked(
+        transfer_ctx,
+        amount,
+        ctx.accounts.ccm_mint.decimals,
+    )?;
+
+    // Reload buffer to get actual received amount (post transfer-fee)
+    ctx.accounts.vault_ccm_buffer.reload()?;
+    let balance_after = ctx.accounts.vault_ccm_buffer.amount;
+    let actual_received = balance_after
+        .checked_sub(balance_before)
+        .ok_or(VaultError::MathOverflow)?;
+
+    // Add to pending_deposits (will be staked on next compound)
+    let vault = &mut ctx.accounts.vault;
+    vault.pending_deposits = vault
+        .pending_deposits
+        .checked_add(actual_received)
+        .ok_or(VaultError::MathOverflow)?;
+
+    // Check if vault is now solvent
+    let gross_assets = vault.total_staked
+        .checked_add(vault.pending_deposits)
+        .ok_or(VaultError::MathOverflow)?
+        .checked_add(vault.emergency_reserve)
+        .ok_or(VaultError::MathOverflow)?;
+    let is_solvent = gross_assets >= vault.pending_withdrawals;
+
+    emit!(CapitalInjected {
+        vault: vault.key(),
+        admin: ctx.accounts.admin.key(),
+        ccm_requested: amount,
+        ccm_received: actual_received,
+        pending_deposits_after: vault.pending_deposits,
+        is_solvent,
+        timestamp: clock.unix_timestamp,
+    });
+
+    msg!(
+        "Capital injected: {} CCM (requested {}), pending_deposits={}, solvent={}",
+        actual_received,
+        amount,
+        vault.pending_deposits,
+        is_solvent
+    );
+
     Ok(())
 }

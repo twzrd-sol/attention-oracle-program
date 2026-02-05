@@ -1037,3 +1037,147 @@ fn test_claim_precheck_skips_when_no_pending() {
     );
     assert!(!should_claim, "Zero pending rewards should skip claim CPI");
 }
+
+// =========================================================================
+// CAPITAL INJECTION (INSOLVENCY RECOVERY) TESTS
+// =========================================================================
+
+/// Check if vault is solvent (can honor all pending withdrawals).
+fn is_solvent(vault: &ChannelVault) -> bool {
+    let gross = vault.total_staked
+        .saturating_add(vault.pending_deposits)
+        .saturating_add(vault.emergency_reserve);
+    gross >= vault.pending_withdrawals
+}
+
+/// Simulate capital injection: add actual_received to pending_deposits.
+fn simulate_inject_capital(vault: &mut ChannelVault, actual_received: u64) {
+    vault.pending_deposits = vault.pending_deposits
+        .saturating_add(actual_received);
+}
+
+#[test]
+fn test_insolvency_detection() {
+    let mut vault = make_vault();
+    vault.total_staked = 500_000_000_000;    // 500 CCM staked
+    vault.pending_deposits = 100_000_000_000; // 100 CCM pending
+    vault.emergency_reserve = 50_000_000_000; // 50 CCM reserve
+    vault.pending_withdrawals = 800_000_000_000; // 800 CCM queued!
+
+    // Gross assets = 500 + 100 + 50 = 650 CCM
+    // Pending withdrawals = 800 CCM
+    // 650 < 800 → insolvent
+    assert!(!is_solvent(&vault), "Vault should be insolvent");
+
+    // Exchange rate should error when insolvent
+    let rate_result = vault.exchange_rate();
+    assert!(rate_result.is_err(), "Exchange rate should error when insolvent");
+}
+
+#[test]
+fn test_capital_injection_restores_solvency() {
+    let mut vault = make_vault();
+    vault.total_staked = 500_000_000_000;    // 500 CCM staked
+    vault.pending_deposits = 100_000_000_000; // 100 CCM pending
+    vault.emergency_reserve = 50_000_000_000; // 50 CCM reserve
+    vault.pending_withdrawals = 800_000_000_000; // 800 CCM queued
+    vault.total_shares = 700_000_000_000;    // For rate calculation
+
+    // Insolvent: gross 650, pending_withdrawals 800
+    assert!(!is_solvent(&vault));
+
+    // Inject 200 CCM (covers shortfall + buffer)
+    // Assuming 0.5% transfer fee, actual_received = 199 CCM
+    let actual_received = 199_000_000_000;
+    simulate_inject_capital(&mut vault, actual_received);
+
+    // Now: gross = 500 + 299 + 50 = 849 CCM
+    // pending_withdrawals = 800 CCM
+    // 849 >= 800 → solvent!
+    assert!(is_solvent(&vault), "Vault should be solvent after injection");
+
+    // Exchange rate should work now
+    let rate = vault.exchange_rate().unwrap();
+    assert!(rate > 0, "Exchange rate should be positive after recovery");
+}
+
+#[test]
+fn test_capital_injection_does_not_mint_shares() {
+    let mut vault = make_vault();
+    vault.total_staked = 1_000_000_000_000;
+    vault.pending_deposits = 0;
+    vault.total_shares = 1_000_000_000_000;
+    vault.pending_withdrawals = 1_500_000_000_000; // Insolvent!
+
+    let shares_before = vault.total_shares;
+
+    // Inject 600 CCM (restores solvency)
+    simulate_inject_capital(&mut vault, 600_000_000_000);
+
+    // Shares should NOT increase - injection is a gift to existing shareholders
+    assert_eq!(vault.total_shares, shares_before,
+        "Capital injection must not mint new shares");
+}
+
+#[test]
+fn test_capital_injection_increases_share_value() {
+    let mut vault = make_vault();
+    vault.total_staked = 1_000_000_000_000;  // 1000 CCM
+    vault.pending_deposits = 0;
+    vault.total_shares = 1_000_000_000_000;  // 1000 shares
+    // Solvent: rate = 1e9 (1:1)
+
+    let rate_before = vault.exchange_rate().unwrap();
+    assert_eq!(rate_before, 1_000_000_000);
+
+    // Admin injects 100 CCM capital (no new shares minted)
+    simulate_inject_capital(&mut vault, 100_000_000_000);
+
+    // Now: NAV = 1100 CCM, shares = 1000
+    // Rate = 1100/1000 = 1.1 CCM per share
+    let rate_after = vault.exchange_rate().unwrap();
+    assert_eq!(rate_after, 1_100_000_000, "Share value should increase after injection");
+}
+
+#[test]
+fn test_capital_injection_minimum_to_restore_solvency() {
+    let mut vault = make_vault();
+    vault.total_staked = 400_000_000_000;    // 400 CCM
+    vault.pending_deposits = 50_000_000_000;  // 50 CCM
+    vault.emergency_reserve = 0;
+    vault.pending_withdrawals = 500_000_000_000; // 500 CCM queued
+    vault.total_shares = 450_000_000_000;
+
+    // Shortfall: 500 - 450 = 50 CCM
+    assert!(!is_solvent(&vault));
+
+    // Inject exactly enough (50 CCM, minus 0.5% fee → 49.75 CCM received)
+    // Still not enough! Need 50.25 CCM sent to receive 50 CCM
+    simulate_inject_capital(&mut vault, 49_750_000_000);
+    assert!(!is_solvent(&vault), "49.75 CCM not enough");
+
+    // Inject 0.25 CCM more
+    simulate_inject_capital(&mut vault, 250_000_000);
+    assert!(is_solvent(&vault), "Exactly at solvency threshold");
+}
+
+#[test]
+fn test_injected_capital_available_for_withdrawals() {
+    let mut vault = make_vault();
+    vault.total_staked = 0;                   // Nothing staked
+    vault.pending_deposits = 100_000_000_000; // 100 CCM in buffer
+    vault.pending_withdrawals = 150_000_000_000; // 150 CCM queued
+
+    // Currently: 50 CCM shortfall
+    assert!(!is_solvent(&vault));
+
+    // Inject 60 CCM (covers shortfall + 10 buffer)
+    simulate_inject_capital(&mut vault, 60_000_000_000);
+
+    // Now: pending_deposits = 160 CCM, pending_withdrawals = 150 CCM
+    assert!(is_solvent(&vault));
+
+    // The 160 CCM in pending_deposits can honor the 150 CCM withdrawals
+    // with 10 CCM remaining for next compound cycle
+    assert_eq!(vault.pending_deposits, 160_000_000_000);
+}

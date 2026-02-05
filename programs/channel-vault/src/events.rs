@@ -170,3 +170,20 @@ pub struct WithdrawQueueSlotsUpdated {
     pub new_withdraw_queue_slots: u64,
     pub timestamp: i64,
 }
+
+/// Emitted when admin injects capital to cover insolvency.
+/// This is an emergency measure for when pending_withdrawals > assets.
+#[event]
+pub struct CapitalInjected {
+    pub vault: Pubkey,
+    pub admin: Pubkey,
+    /// CCM amount requested to transfer
+    pub ccm_requested: u64,
+    /// Actual CCM received (after transfer fee)
+    pub ccm_received: u64,
+    /// pending_deposits after injection
+    pub pending_deposits_after: u64,
+    /// Whether vault is now solvent (NAV > 0)
+    pub is_solvent: bool,
+    pub timestamp: i64,
+}
