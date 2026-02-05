@@ -529,6 +529,7 @@ dependencies = [
  "solana-sdk",
  "solana-security-txt",
  "solana-system-interface",
+ "spl-token-2022",
  "tokio",
 ]
 
