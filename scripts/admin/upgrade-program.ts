@@ -165,11 +165,50 @@ async function createAndApprove(
   console.log(`  Buffer size:     ${(bufferSize / 1024).toFixed(1)} KB`);
   console.log(`  Buffer rent:     ${(bufferLamports / 1e9).toFixed(4)} SOL`);
 
-  // Parse buffer authority
+  // Validate buffer authority
   const hasAuthority = bufferInfo.data[4];
-  if (hasAuthority === 1) {
-    const bufferAuth = new PublicKey(bufferInfo.data.slice(5, 37));
-    console.log(`  Buffer authority: ${bufferAuth.toBase58()}`);
+  if (hasAuthority !== 1) {
+    console.error("  ERROR: Buffer has no authority set (already used or invalid)");
+    console.error("  A buffer without authority cannot be used for upgrades.");
+    process.exit(1);
+  }
+
+  const bufferAuth = new PublicKey(bufferInfo.data.slice(5, 37));
+  console.log(`  Buffer authority: ${bufferAuth.toBase58()}`);
+
+  // Buffer authority must be either:
+  // 1. The Squads vault PDA (ideal - already transferred)
+  // 2. One of the local keypairs (acceptable - they can sign the upgrade)
+  const trustedAuthorities = [
+    vaultPda,
+    ...keypairs.map((kp) => kp.publicKey),
+  ];
+
+  const isTrustedAuthority = trustedAuthorities.some((auth) =>
+    auth.equals(bufferAuth),
+  );
+
+  if (!isTrustedAuthority) {
+    console.error("\n  ERROR: Buffer authority is not a trusted key");
+    console.error(`    Buffer authority: ${bufferAuth.toBase58()}`);
+    console.error(`    Expected one of:`);
+    console.error(`      - Squads vault: ${vaultPda.toBase58()}`);
+    for (const kp of keypairs) {
+      console.error(`      - Local key:    ${kp.publicKey.toBase58()}`);
+    }
+    console.error("\n  To fix, transfer buffer authority to the Squads vault:");
+    console.error(`    solana program set-buffer-authority ${bufferAddress.toBase58()} \\`);
+    console.error(`      --new-buffer-authority ${vaultPda.toBase58()} --url mainnet-beta`);
+    process.exit(1);
+  }
+
+  if (bufferAuth.equals(vaultPda)) {
+    console.log("  OK: Buffer authority is Squads vault (ideal)");
+  } else {
+    console.log(`  OK: Buffer authority is trusted local key`);
+    console.log("  Note: Consider transferring to Squads vault for added security:");
+    console.log(`    solana program set-buffer-authority ${bufferAddress.toBase58()} \\`);
+    console.log(`      --new-buffer-authority ${vaultPda.toBase58()} --url mainnet-beta`);
   }
 
   // --- Verify program ---
