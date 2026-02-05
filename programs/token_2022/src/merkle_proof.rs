@@ -54,12 +54,16 @@ pub fn compute_cumulative_leaf(
 }
 
 /// Computes the cumulative (v3) leaf hash with stake snapshot binding:
-/// keccak(domain || channel_cfg || mint || root_seq || wallet || cumulative_total || stake_snapshot)
+/// keccak(domain || channel_cfg || mint || root_seq || wallet || cumulative_total || stake_snapshot || snapshot_slot)
 ///
-/// V3 adds stake_snapshot to prevent "boost gaming" where users:
+/// V3 adds stake_snapshot and snapshot_slot to prevent "boost gaming" where users:
 /// 1. Stake tokens to boost rewards at snapshot time
 /// 2. Unstake before claim
 /// 3. Claim with boosted proof despite no longer having stake
+///
+/// This binds the proof to:
+/// - The user's stake at snapshot time (prevents unstaking after proof)
+/// - The specific slot when stakes were read (enables proof expiry)
 ///
 /// The on-chain claim instruction verifies: user_stake.amount >= stake_snapshot
 pub fn compute_cumulative_leaf_v3(
@@ -69,10 +73,12 @@ pub fn compute_cumulative_leaf_v3(
     wallet: &Pubkey,
     cumulative_total: u64,
     stake_snapshot: u64,
+    snapshot_slot: u64,
 ) -> [u8; 32] {
     let seq = root_seq.to_le_bytes();
     let total = cumulative_total.to_le_bytes();
-    let snapshot = stake_snapshot.to_le_bytes();
+    let stake = stake_snapshot.to_le_bytes();
+    let slot = snapshot_slot.to_le_bytes();
     keccak_hashv(&[
         CUMULATIVE_V3_DOMAIN,
         channel_config.as_ref(),
@@ -80,6 +86,7 @@ pub fn compute_cumulative_leaf_v3(
         &seq,
         wallet.as_ref(),
         &total,
-        &snapshot,
+        &stake,
+        &slot,
     ])
 }

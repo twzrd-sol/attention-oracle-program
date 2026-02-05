@@ -101,10 +101,14 @@ fn compute_cumulative_leaf(
 }
 
 /// Compute cumulative leaf hash with stake snapshot (matches on-chain V3)
-/// V3 adds stake_snapshot to prevent "boost gaming" where users:
+/// V3 adds stake_snapshot and snapshot_slot to prevent "boost gaming" where users:
 /// 1. Stake tokens to boost rewards at snapshot time
 /// 2. Unstake before claim
 /// 3. Claim with boosted proof despite no longer having stake
+///
+/// This binds the proof to:
+/// - The user's stake at snapshot time (prevents unstaking after proof)
+/// - The specific slot when stakes were read (enables proof expiry)
 fn compute_cumulative_leaf_v3(
     channel_config: &Pubkey,
     mint: &Pubkey,
@@ -112,6 +116,7 @@ fn compute_cumulative_leaf_v3(
     wallet: &Pubkey,
     cumulative_total: u64,
     stake_snapshot: u64,
+    snapshot_slot: u64,
 ) -> [u8; 32] {
     let mut hasher = Keccak256::new();
     hasher.update(CUMULATIVE_V3_DOMAIN);
@@ -121,6 +126,7 @@ fn compute_cumulative_leaf_v3(
     hasher.update(wallet.as_ref());
     hasher.update(&cumulative_total.to_le_bytes());
     hasher.update(&stake_snapshot.to_le_bytes());
+    hasher.update(&snapshot_slot.to_le_bytes());
     hasher.finalize().into()
 }
 
@@ -1074,16 +1080,17 @@ fn test_claim_cumulative_v3_success() {
     let wallet = Pubkey::new_unique();
     let cumulative_total = 10_000_000_000u64; // 10 CCM earned
     let stake_snapshot = 5_000_000_000u64; // 5 CCM staked at snapshot time
+    let snapshot_slot = 12345u64; // Slot when stakes were captured
 
     // User's current stake (must be >= stake_snapshot for claim to succeed)
     let current_stake = 7_000_000_000u64; // 7 CCM currently staked
 
-    // Build V3 merkle tree with stake_snapshot in leaf
+    // Build V3 merkle tree with stake_snapshot and snapshot_slot in leaf
     let user_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
     );
     let other_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
     );
     let leaves = vec![user_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
@@ -1123,6 +1130,7 @@ fn test_claim_cumulative_v3_insufficient_stake() {
     let wallet = Pubkey::new_unique();
     let cumulative_total = 50_000_000_000u64; // 50 CCM earned (boosted by stake)
     let stake_snapshot = 100_000_000_000u64; // 100 CCM was staked at snapshot
+    let snapshot_slot = 12345u64; // Slot when stakes were captured
 
     // ATTACK SCENARIO:
     // 1. Attacker stakes 100 CCM to get 3x boost
@@ -1134,10 +1142,10 @@ fn test_claim_cumulative_v3_insufficient_stake() {
 
     // Build V3 tree (proof is valid)
     let attacker_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
     );
     let other_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
     );
     let leaves = vec![attacker_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
@@ -1183,8 +1191,9 @@ fn test_claim_cumulative_v3_backwards_compat() {
     );
 
     // V3 leaf with stake_snapshot = 0 (equivalent to "no stake requirement")
+    let snapshot_slot = 12345u64;
     let v3_leaf_zero_stake = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, 0
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, 0, snapshot_slot
     );
 
     // KEY INSIGHT: V2 and V3 leaves are DIFFERENT even with zero stake
@@ -1214,7 +1223,7 @@ fn test_claim_cumulative_v3_backwards_compat() {
 
     // Build separate V3 tree
     let v3_other = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 1_000_000_000
+        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 1_000_000_000, snapshot_slot
     );
     let v3_leaves = vec![v3_leaf_zero_stake, v3_other];
     let v3_root = compute_merkle_root(&v3_leaves);
@@ -1251,8 +1260,8 @@ fn test_claim_cumulative_v3_backwards_compat() {
     println!("✅ V3 TEST #3 PASSED: Backwards compatibility maintained");
 }
 
-/// V3 TEST #4: Verify V3 leaf computation includes stake_snapshot correctly
-/// Ensures leaf hash changes when stake_snapshot changes (critical for security)
+/// V3 TEST #4: Verify V3 leaf computation includes stake_snapshot and snapshot_slot correctly
+/// Ensures leaf hash changes when stake_snapshot or snapshot_slot changes (critical for security)
 #[test]
 fn test_v3_leaf_computation() {
     let mint = Pubkey::new_unique();
@@ -1260,16 +1269,17 @@ fn test_v3_leaf_computation() {
     let root_seq = 1u64;
     let wallet = Pubkey::new_unique();
     let cumulative_total = 10_000_000_000u64;
+    let snapshot_slot = 12345u64;
 
     // Test 1: Same parameters except stake_snapshot produces different leaves
     let stake_1 = 1_000_000_000u64;
     let stake_2 = 2_000_000_000u64;
 
     let leaf_stake_1 = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_1
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_1, snapshot_slot
     );
     let leaf_stake_2 = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_2
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_2, snapshot_slot
     );
 
     assert_ne!(leaf_stake_1, leaf_stake_2, "Different stake_snapshot should produce different leaves");
@@ -1277,7 +1287,7 @@ fn test_v3_leaf_computation() {
 
     // Test 2: Zero stake_snapshot produces unique leaf
     let leaf_zero_stake = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, 0
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, 0, snapshot_slot
     );
     assert_ne!(leaf_zero_stake, leaf_stake_1, "Zero stake should differ from non-zero stake");
     println!("  Zero stake leaf: Unique ✓");
@@ -1285,7 +1295,7 @@ fn test_v3_leaf_computation() {
     // Test 3: Maximum stake_snapshot produces unique leaf
     let max_stake = u64::MAX;
     let leaf_max_stake = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, max_stake
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, max_stake, snapshot_slot
     );
     assert_ne!(leaf_max_stake, leaf_stake_1, "Max stake should differ from other stakes");
     assert_ne!(leaf_max_stake, leaf_zero_stake, "Max stake should differ from zero stake");
@@ -1302,7 +1312,7 @@ fn test_v3_leaf_computation() {
 
     // Test 5: Leaf is deterministic
     let leaf_stake_1_again = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_1
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_1, snapshot_slot
     );
     assert_eq!(leaf_stake_1, leaf_stake_1_again, "Leaf computation must be deterministic");
     println!("  Deterministic computation: Same inputs produce same leaf ✓");
@@ -1313,21 +1323,25 @@ fn test_v3_leaf_computation() {
     let different_wallet = Pubkey::new_unique();
     let different_seq = root_seq + 1;
     let different_total = cumulative_total + 1;
+    let different_slot = snapshot_slot + 1;
 
     let leaf_diff_mint = compute_cumulative_leaf_v3(
-        &channel_config, &different_mint, root_seq, &wallet, cumulative_total, stake_1
+        &channel_config, &different_mint, root_seq, &wallet, cumulative_total, stake_1, snapshot_slot
     );
     let leaf_diff_channel = compute_cumulative_leaf_v3(
-        &different_channel, &mint, root_seq, &wallet, cumulative_total, stake_1
+        &different_channel, &mint, root_seq, &wallet, cumulative_total, stake_1, snapshot_slot
     );
     let leaf_diff_wallet = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &different_wallet, cumulative_total, stake_1
+        &channel_config, &mint, root_seq, &different_wallet, cumulative_total, stake_1, snapshot_slot
     );
     let leaf_diff_seq = compute_cumulative_leaf_v3(
-        &channel_config, &mint, different_seq, &wallet, cumulative_total, stake_1
+        &channel_config, &mint, different_seq, &wallet, cumulative_total, stake_1, snapshot_slot
     );
     let leaf_diff_total = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, different_total, stake_1
+        &channel_config, &mint, root_seq, &wallet, different_total, stake_1, snapshot_slot
+    );
+    let leaf_diff_slot = compute_cumulative_leaf_v3(
+        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_1, different_slot
     );
 
     assert_ne!(leaf_stake_1, leaf_diff_mint, "Different mint should change leaf");
@@ -1335,10 +1349,11 @@ fn test_v3_leaf_computation() {
     assert_ne!(leaf_stake_1, leaf_diff_wallet, "Different wallet should change leaf");
     assert_ne!(leaf_stake_1, leaf_diff_seq, "Different root_seq should change leaf");
     assert_ne!(leaf_stake_1, leaf_diff_total, "Different cumulative_total should change leaf");
-    println!("  All components affect leaf hash: mint, channel, wallet, seq, total, stake ✓");
+    assert_ne!(leaf_stake_1, leaf_diff_slot, "Different snapshot_slot should change leaf");
+    println!("  All components affect leaf hash: mint, channel, wallet, seq, total, stake, slot ✓");
 
     // Test 7: Verify expected leaf structure matches on-chain
-    // keccak(domain || channel_cfg || mint || root_seq || wallet || cumulative_total || stake_snapshot)
+    // keccak(domain || channel_cfg || mint || root_seq || wallet || cumulative_total || stake_snapshot || snapshot_slot)
     let mut hasher = Keccak256::new();
     hasher.update(CUMULATIVE_V3_DOMAIN);
     hasher.update(channel_config.as_ref());
@@ -1347,11 +1362,12 @@ fn test_v3_leaf_computation() {
     hasher.update(wallet.as_ref());
     hasher.update(&cumulative_total.to_le_bytes());
     hasher.update(&stake_1.to_le_bytes());
+    hasher.update(&snapshot_slot.to_le_bytes());
     let expected_leaf: [u8; 32] = hasher.finalize().into();
     assert_eq!(leaf_stake_1, expected_leaf, "Leaf computation should match manual keccak");
     println!("  Manual keccak verification: Matches compute_cumulative_leaf_v3 ✓");
 
-    println!("✅ V3 TEST #4 PASSED: V3 leaf computation correctly includes stake_snapshot");
+    println!("✅ V3 TEST #4 PASSED: V3 leaf computation correctly includes stake_snapshot and snapshot_slot");
 }
 
 /// V3 CHAOS TEST: Stake snapshot forgery attack

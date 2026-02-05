@@ -126,9 +126,10 @@ pub mod token_2022 {
         root_seq: u64,
         cumulative_total: u64,
         stake_snapshot: u64,
+        snapshot_slot: u64,
         proof: Vec<[u8; 32]>,
     ) -> Result<()> {
-        instructions::cumulative::claim_cumulative_v3(ctx, channel, root_seq, cumulative_total, stake_snapshot, proof)
+        instructions::cumulative::claim_cumulative_v3(ctx, channel, root_seq, cumulative_total, stake_snapshot, snapshot_slot, proof)
     }
 
     /// V3 sponsored claim with stake snapshot verification.
@@ -138,9 +139,10 @@ pub mod token_2022 {
         root_seq: u64,
         cumulative_total: u64,
         stake_snapshot: u64,
+        snapshot_slot: u64,
         proof: Vec<[u8; 32]>,
     ) -> Result<()> {
-        instructions::cumulative::claim_cumulative_sponsored_v3(ctx, channel, root_seq, cumulative_total, stake_snapshot, proof)
+        instructions::cumulative::claim_cumulative_sponsored_v3(ctx, channel, root_seq, cumulative_total, stake_snapshot, snapshot_slot, proof)
     }
 
     /// Migrate existing ChannelConfigV2 accounts to add creator_wallet fields.
