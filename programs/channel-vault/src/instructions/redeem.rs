@@ -291,7 +291,11 @@ pub struct CompleteWithdraw<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn complete_withdraw(ctx: Context<CompleteWithdraw>, _request_id: u64) -> Result<()> {
+pub fn complete_withdraw(
+    ctx: Context<CompleteWithdraw>,
+    _request_id: u64,
+    min_ccm_amount: u64,
+) -> Result<()> {
     let request = &ctx.accounts.withdraw_request;
     let clock = Clock::get()?;
 
@@ -377,6 +381,7 @@ pub fn complete_withdraw(ctx: Context<CompleteWithdraw>, _request_id: u64) -> Re
     // Note: CCM has 0.5% transfer fee. User receives ccm_amount - fee.
     // Vault accounting is based on what we send (ccm_amount), not what user receives.
     // This is correct: the fee is borne by the recipient on exit, not the vault.
+    let user_balance_before = ctx.accounts.user_ccm.amount;
     let signer_seeds: &[&[&[u8]]] = &[&[
         VAULT_SEED,
         channel_config_key.as_ref(),
@@ -398,6 +403,15 @@ pub fn complete_withdraw(ctx: Context<CompleteWithdraw>, _request_id: u64) -> Re
         ccm_amount,
         ctx.accounts.ccm_mint.decimals,
     )?;
+
+    // Slippage protection: verify actual received (post transfer-fee)
+    ctx.accounts.user_ccm.reload()?;
+    let user_balance_after = ctx.accounts.user_ccm.amount;
+    let actual_received = user_balance_after.saturating_sub(user_balance_before);
+    require!(
+        actual_received >= min_ccm_amount,
+        VaultError::SlippageExceeded
+    );
 
     // Update vault
     let vault = &mut ctx.accounts.vault;
