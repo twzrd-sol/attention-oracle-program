@@ -62,8 +62,13 @@ pub mod channel_vault {
     }
 
     /// Complete withdrawal after queue period.
-    pub fn complete_withdraw(ctx: Context<CompleteWithdraw>, request_id: u64) -> Result<()> {
-        instructions::redeem::complete_withdraw(ctx, request_id)
+    /// min_ccm_amount: slippage protection - reverts if actual received < min
+    pub fn complete_withdraw(
+        ctx: Context<CompleteWithdraw>,
+        request_id: u64,
+        min_ccm_amount: u64,
+    ) -> Result<()> {
+        instructions::redeem::complete_withdraw(ctx, request_id, min_ccm_amount)
     }
 
     /// Instant redemption - exit with 20% penalty, from buffer/reserve.
