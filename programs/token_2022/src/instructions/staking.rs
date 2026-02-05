@@ -1376,11 +1376,7 @@ pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Resul
         .ok_or(OracleError::MathOverflow)?;
 
     // Calculate remaining lock slots for event
-    let remaining_lock_slots = if lock_end_slot > current_slot {
-        lock_end_slot - current_slot
-    } else {
-        0
-    };
+    let remaining_lock_slots = lock_end_slot.saturating_sub(current_slot);
 
     // Pool signer seeds
     let seeds: &[&[u8]] = &[

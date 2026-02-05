@@ -186,3 +186,6 @@ scripts/build-*-model.py
 scripts/*-valuation*.py
 scripts/*-analysis*.py
 .vercel
+
+# pnpm store
+.pnpm-store/

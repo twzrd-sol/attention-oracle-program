@@ -332,9 +332,8 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
 
     // Now stake the total amount
     // Pay keeper bounty from claimed rewards only (never from principal)
-    let mut bounty_paid: u64 = 0;
     if rewards_claimed > 0 && COMPOUND_BOUNTY_BPS > 0 {
-        bounty_paid = (rewards_claimed as u128)
+        let bounty_paid = (rewards_claimed as u128)
             .checked_mul(COMPOUND_BOUNTY_BPS as u128)
             .ok_or(VaultError::MathOverflow)?
             .checked_div(BPS_DENOMINATOR as u128)
