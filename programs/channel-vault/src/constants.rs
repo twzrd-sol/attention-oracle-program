@@ -69,6 +69,14 @@ pub const EMERGENCY_PENALTY_BPS: u64 = 2000;
 pub const BPS_DENOMINATOR: u64 = 10_000;
 
 // =============================================================================
+// KEEPER INCENTIVES
+// =============================================================================
+
+/// Compound keeper bounty (basis points of rewards claimed).
+/// Paid from claimed rewards only, never from principal.
+pub const COMPOUND_BOUNTY_BPS: u64 = 10; // 0.10%
+
+// =============================================================================
 // EXTERNAL PROGRAMS
 // =============================================================================
 

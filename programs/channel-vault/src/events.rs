@@ -42,6 +42,15 @@ pub struct Compounded {
     pub timestamp: i64,
 }
 
+/// Emitted when a compound bounty is paid to the caller.
+#[event]
+pub struct CompoundBountyPaid {
+    pub vault: Pubkey,
+    pub caller: Pubkey,
+    pub ccm_amount: u64,
+    pub timestamp: i64,
+}
+
 /// Emitted when a user requests withdrawal.
 #[event]
 pub struct WithdrawRequested {

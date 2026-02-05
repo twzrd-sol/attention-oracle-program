@@ -9,12 +9,19 @@
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_interface::{Mint as MintInterface, TokenAccount, TokenInterface},
+    token_interface::{Mint as MintInterface, TokenAccount, TokenInterface, TransferChecked},
 };
 
-use crate::constants::{TOKEN_2022_PROGRAM_ID, VAULT_CCM_BUFFER_SEED, VAULT_ORACLE_POSITION_SEED, VAULT_SEED};
+use crate::constants::{
+    BPS_DENOMINATOR,
+    COMPOUND_BOUNTY_BPS,
+    TOKEN_2022_PROGRAM_ID,
+    VAULT_CCM_BUFFER_SEED,
+    VAULT_ORACLE_POSITION_SEED,
+    VAULT_SEED,
+};
 use crate::errors::VaultError;
-use crate::events::Compounded;
+use crate::events::{Compounded, CompoundBountyPaid};
 use crate::state::{ChannelVault, VaultOraclePosition};
 
 // Import Oracle types, CPI, and state for pre-check
@@ -119,6 +126,16 @@ pub struct Compound<'info> {
     /// CCM mint
     #[account(address = vault.ccm_mint)]
     pub ccm_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// Payer's CCM token account (receives compound bounty)
+    #[account(
+        init_if_needed,
+        payer = payer,
+        associated_token::mint = ccm_mint,
+        associated_token::authority = payer,
+        associated_token::token_program = token_2022_program,
+    )]
+    pub payer_ccm_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
     // -------------------------------------------------------------------------
     // Oracle Accounts
@@ -314,6 +331,45 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
     }
 
     // Now stake the total amount
+    // Pay keeper bounty from claimed rewards only (never from principal)
+    let mut bounty_paid: u64 = 0;
+    if rewards_claimed > 0 && COMPOUND_BOUNTY_BPS > 0 {
+        bounty_paid = (rewards_claimed as u128)
+            .checked_mul(COMPOUND_BOUNTY_BPS as u128)
+            .ok_or(VaultError::MathOverflow)?
+            .checked_div(BPS_DENOMINATOR as u128)
+            .ok_or(VaultError::MathOverflow)? as u64;
+
+        if bounty_paid > 0 {
+            let bounty_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_2022_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.vault_ccm_buffer.to_account_info(),
+                    mint: ctx.accounts.ccm_mint.to_account_info(),
+                    to: ctx.accounts.payer_ccm_ata.to_account_info(),
+                    authority: ctx.accounts.vault.to_account_info(),
+                },
+                signer_seeds,
+            );
+            anchor_spl::token_interface::transfer_checked(
+                bounty_ctx,
+                bounty_paid,
+                ctx.accounts.ccm_mint.decimals,
+            )?;
+
+            amount_to_stake = amount_to_stake
+                .checked_sub(bounty_paid)
+                .ok_or(VaultError::MathOverflow)?;
+
+            emit!(CompoundBountyPaid {
+                vault: vault.key(),
+                caller: ctx.accounts.payer.key(),
+                ccm_amount: bounty_paid,
+                timestamp: clock.unix_timestamp,
+            });
+        }
+    }
+
     if amount_to_stake > 0 {
         msg!("Staking {} CCM in Oracle with {} slot lock", amount_to_stake, vault.lock_duration_slots);
 
