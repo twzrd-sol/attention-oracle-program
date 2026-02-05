@@ -131,6 +131,15 @@ pub mod channel_vault {
         instructions::admin::update_withdraw_queue_slots(ctx, new_withdraw_queue_slots)
     }
 
+    /// Inject capital to recover from insolvency (admin only).
+    ///
+    /// Use when pending_withdrawals > assets, making the vault unable to honor
+    /// withdrawal requests. Admin transfers CCM from their account to restore solvency.
+    /// Injected funds go to pending_deposits and will be staked on next compound.
+    pub fn inject_capital(ctx: Context<InjectCapital>, amount: u64) -> Result<()> {
+        instructions::admin::inject_capital(ctx, amount)
+    }
+
     /// Close an empty vault and reclaim rent.
     /// Only callable when vault has no shares, deposits, or active positions.
     pub fn close_vault(ctx: Context<CloseVault>) -> Result<()> {
