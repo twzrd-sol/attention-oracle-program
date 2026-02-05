@@ -699,6 +699,7 @@ pub fn claim_cumulative_v3<'info>(
     root_seq: u64,
     cumulative_total: u64,
     stake_snapshot: u64,
+    snapshot_slot: u64,
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
     validate_channel(&channel)?;
@@ -747,6 +748,7 @@ pub fn claim_cumulative_v3<'info>(
         &ctx.accounts.claimer.key(),
         cumulative_total,
         stake_snapshot,
+        snapshot_slot,
     );
     require!(verify_proof(&proof, leaf, entry.root), OracleError::InvalidProof);
 
@@ -932,6 +934,7 @@ pub fn claim_cumulative_sponsored_v3<'info>(
     root_seq: u64,
     cumulative_total: u64,
     stake_snapshot: u64,
+    snapshot_slot: u64,
     proof: Vec<[u8; 32]>,
 ) -> Result<()> {
     validate_channel(&channel)?;
@@ -977,6 +980,7 @@ pub fn claim_cumulative_sponsored_v3<'info>(
         &ctx.accounts.claimer.key(),
         cumulative_total,
         stake_snapshot,
+        snapshot_slot,
     );
     require!(verify_proof(&proof, leaf, entry.root), OracleError::InvalidProof);
 
