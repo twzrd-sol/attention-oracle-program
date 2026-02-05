@@ -10,6 +10,21 @@ pub struct CumulativeRewardsClaimed {
     pub root_seq: u64,
 }
 
+/// V3 claim event with stake snapshot binding (anti-gaming)
+#[event]
+pub struct CumulativeRewardsClaimedV3 {
+    pub channel: Pubkey,
+    pub claimer: Pubkey,
+    pub user_amount: u64,
+    pub creator_amount: u64,
+    pub cumulative_total: u64,
+    pub root_seq: u64,
+    /// Stake amount at snapshot time (bound to merkle leaf)
+    pub stake_snapshot: u64,
+    /// Current stake amount at claim time
+    pub current_stake: u64,
+}
+
 // =============================================================================
 // ADMIN OPERATION EVENTS
 // Emitting events for state changes enables off-chain indexing and observability.
