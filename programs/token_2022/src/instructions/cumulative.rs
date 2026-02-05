@@ -5,12 +5,12 @@ use anchor_spl::{
 };
 
 use crate::constants::{
-    CHANNEL_CONFIG_V2_SEED, CLAIM_STATE_V2_SEED, CUMULATIVE_ROOT_HISTORY, PROTOCOL_SEED,
+    CHANNEL_CONFIG_V2_SEED, CHANNEL_USER_STAKE_SEED, CLAIM_STATE_V2_SEED, CUMULATIVE_ROOT_HISTORY, PROTOCOL_SEED,
 };
 use crate::errors::OracleError;
-use crate::events::{ChannelClosed, CumulativeRewardsClaimed, CreatorFeeUpdated, RootSeqRecovered};
-use crate::merkle_proof::{compute_cumulative_leaf, verify_proof};
-use crate::state::{ChannelConfigV2, ClaimStateV2, ProtocolState, RootEntry};
+use crate::events::{ChannelClosed, CumulativeRewardsClaimed, CumulativeRewardsClaimedV3, CreatorFeeUpdated, RootSeqRecovered};
+use crate::merkle_proof::{compute_cumulative_leaf, compute_cumulative_leaf_v3, verify_proof};
+use crate::state::{ChannelConfigV2, ClaimStateV2, ProtocolState, RootEntry, UserChannelStake};
 
 use super::channel::derive_subject_id;
 
@@ -610,6 +610,468 @@ pub fn claim_cumulative_sponsored<'info>(
         creator_amount,
         cumulative_total,
         root_seq,
+    });
+
+    Ok(())
+}
+
+// =============================================================================
+// CLAIM CUMULATIVE V3 - With Stake Snapshot Binding (Anti-Gaming)
+// =============================================================================
+
+/// V3 cumulative claim with stake snapshot verification.
+/// Prevents "boost gaming" where users unstake after snapshot.
+#[derive(Accounts)]
+#[instruction(channel: String)]
+pub struct ClaimCumulativeV3<'info> {
+    #[account(mut)]
+    pub claimer: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), &subject_id_bytes(&channel)],
+        bump = channel_config.bump,
+    )]
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
+
+    #[account(
+        init_if_needed,
+        payer = claimer,
+        space = ClaimStateV2::LEN,
+        seeds = [CLAIM_STATE_V2_SEED, channel_config.key().as_ref(), claimer.key().as_ref()],
+        bump,
+    )]
+    pub claim_state: Box<Account<'info, ClaimStateV2>>,
+
+    /// User's stake position - verified to have >= stake_snapshot amount
+    #[account(
+        seeds = [CHANNEL_USER_STAKE_SEED, channel_config.key().as_ref(), claimer.key().as_ref()],
+        bump = user_channel_stake.bump,
+    )]
+    pub user_channel_stake: Box<Account<'info, UserChannelStake>>,
+
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = protocol_state,
+        associated_token::token_program = token_program
+    )]
+    pub treasury_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        init_if_needed,
+        payer = claimer,
+        associated_token::mint = mint,
+        associated_token::authority = claimer,
+        associated_token::token_program = token_program
+    )]
+    pub claimer_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// CHECK: Wallet of the creator, verified by channel_config
+    #[account(address = channel_config.creator_wallet)]
+    pub creator_wallet: UncheckedAccount<'info>,
+
+    #[account(
+        init_if_needed,
+        payer = claimer,
+        associated_token::mint = mint,
+        associated_token::authority = creator_wallet,
+        associated_token::token_program = token_program
+    )]
+    pub creator_ata: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn claim_cumulative_v3<'info>(
+    ctx: Context<'_, '_, '_, 'info, ClaimCumulativeV3<'info>>,
+    channel: String,
+    root_seq: u64,
+    cumulative_total: u64,
+    stake_snapshot: u64,
+    proof: Vec<[u8; 32]>,
+) -> Result<()> {
+    validate_channel(&channel)?;
+
+    let protocol_state = &ctx.accounts.protocol_state;
+    let cfg = &ctx.accounts.channel_config;
+    let user_stake = &ctx.accounts.user_channel_stake;
+
+    // Block claims while paused
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
+
+    require_keys_eq!(
+        ctx.accounts.mint.key(),
+        protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+
+    let subject_id = derive_subject_id(&channel);
+
+    require!(cfg.version == CHANNEL_CONFIG_V2_VERSION, OracleError::InvalidChannelState);
+    require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
+    require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
+
+    // SECURITY: Prevent "Boost Gaming" (unstake after snapshot)
+    // User must still hold at least the amount they had at snapshot time
+    require!(
+        user_stake.amount >= stake_snapshot,
+        OracleError::StakeSnapshotMismatch
+    );
+
+    require!(
+        cfg.creator_fee_bps == 0 || ctx.accounts.creator_ata.is_some(),
+        OracleError::MissingCreatorAta
+    );
+
+    let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
+    let entry = cfg.roots[idx];
+    require!(entry.seq == root_seq, OracleError::RootTooOldOrMissing);
+
+    // Compute V3 leaf with stake snapshot binding
+    let leaf = compute_cumulative_leaf_v3(
+        &cfg.key(),
+        &protocol_state.mint,
+        root_seq,
+        &ctx.accounts.claimer.key(),
+        cumulative_total,
+        stake_snapshot,
+    );
+    require!(verify_proof(&proof, leaf, entry.root), OracleError::InvalidProof);
+
+    let claim_state = &mut ctx.accounts.claim_state;
+    if claim_state.version == 0 {
+        claim_state.version = CLAIM_STATE_V2_VERSION;
+        claim_state.bump = ctx.bumps.claim_state;
+        claim_state.channel = cfg.key();
+        claim_state.wallet = ctx.accounts.claimer.key();
+        claim_state.claimed_total = 0;
+        claim_state.last_claim_seq = 0;
+    } else {
+        require!(claim_state.channel == cfg.key(), OracleError::InvalidClaimState);
+        require!(claim_state.wallet == ctx.accounts.claimer.key(), OracleError::InvalidClaimState);
+    }
+
+    if cumulative_total <= claim_state.claimed_total {
+        return Ok(());
+    }
+
+    let delta = cumulative_total
+        .checked_sub(claim_state.claimed_total)
+        .ok_or(OracleError::MathOverflow)?;
+
+    let creator_fee_bps = cfg.creator_fee_bps;
+    let (user_amount, creator_amount) = if creator_fee_bps > 0 {
+        let creator_cut = (delta as u128)
+            .checked_mul(creator_fee_bps as u128)
+            .ok_or(OracleError::MathOverflow)?
+            .checked_div(10000)
+            .ok_or(OracleError::MathOverflow)? as u64;
+        let user_cut = delta.checked_sub(creator_cut).ok_or(OracleError::MathOverflow)?;
+        (user_cut, creator_cut)
+    } else {
+        (delta, 0u64)
+    };
+
+    let seeds: &[&[u8]] = &[
+        PROTOCOL_SEED,
+        protocol_state.mint.as_ref(),
+        &[protocol_state.bump],
+    ];
+    let signer = &[seeds];
+
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.treasury_ata.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let authority = ctx.accounts.protocol_state.to_account_info();
+
+    if user_amount > 0 {
+        let to = ctx.accounts.claimer_ata.to_account_info();
+        crate::transfer_checked_with_remaining(
+            &token_program,
+            &from,
+            &mint,
+            &to,
+            &authority,
+            user_amount,
+            ctx.accounts.mint.decimals,
+            signer,
+            ctx.remaining_accounts,
+        )?;
+    }
+
+    if creator_amount > 0 {
+        if let Some(creator_ata) = &ctx.accounts.creator_ata {
+            let to = creator_ata.to_account_info();
+            crate::transfer_checked_with_remaining(
+                &token_program,
+                &from,
+                &mint,
+                &to,
+                &authority,
+                creator_amount,
+                ctx.accounts.mint.decimals,
+                signer,
+                ctx.remaining_accounts,
+            )?;
+        } else {
+            return Err(OracleError::MissingCreatorAta.into());
+        }
+    }
+
+    claim_state.claimed_total = cumulative_total;
+    claim_state.last_claim_seq = root_seq;
+
+    emit!(CumulativeRewardsClaimedV3 {
+        channel: cfg.key(),
+        claimer: ctx.accounts.claimer.key(),
+        user_amount,
+        creator_amount,
+        cumulative_total,
+        root_seq,
+        stake_snapshot,
+        current_stake: user_stake.amount,
+    });
+
+    Ok(())
+}
+
+// =============================================================================
+// SPONSORED CLAIM V3 - With Stake Snapshot Binding (Anti-Gaming)
+// =============================================================================
+
+#[derive(Accounts)]
+#[instruction(channel: String)]
+pub struct ClaimCumulativeSponsoredV3<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    /// CHECK: Authorization via merkle proof + stake verification.
+    pub claimer: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), &subject_id_bytes(&channel)],
+        bump = channel_config.bump,
+    )]
+    pub channel_config: Box<Account<'info, ChannelConfigV2>>,
+
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = ClaimStateV2::LEN,
+        seeds = [CLAIM_STATE_V2_SEED, channel_config.key().as_ref(), claimer.key().as_ref()],
+        bump,
+    )]
+    pub claim_state: Box<Account<'info, ClaimStateV2>>,
+
+    /// User's stake position - verified to have >= stake_snapshot amount
+    #[account(
+        seeds = [CHANNEL_USER_STAKE_SEED, channel_config.key().as_ref(), claimer.key().as_ref()],
+        bump = user_channel_stake.bump,
+    )]
+    pub user_channel_stake: Box<Account<'info, UserChannelStake>>,
+
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = protocol_state,
+        associated_token::token_program = token_program
+    )]
+    pub treasury_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        init_if_needed,
+        payer = payer,
+        associated_token::mint = mint,
+        associated_token::authority = claimer,
+        associated_token::token_program = token_program
+    )]
+    pub claimer_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// CHECK: Wallet of the creator, verified by channel_config
+    #[account(address = channel_config.creator_wallet)]
+    pub creator_wallet: UncheckedAccount<'info>,
+
+    #[account(
+        init_if_needed,
+        payer = payer,
+        associated_token::mint = mint,
+        associated_token::authority = creator_wallet,
+        associated_token::token_program = token_program
+    )]
+    pub creator_ata: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn claim_cumulative_sponsored_v3<'info>(
+    ctx: Context<'_, '_, '_, 'info, ClaimCumulativeSponsoredV3<'info>>,
+    channel: String,
+    root_seq: u64,
+    cumulative_total: u64,
+    stake_snapshot: u64,
+    proof: Vec<[u8; 32]>,
+) -> Result<()> {
+    validate_channel(&channel)?;
+
+    let protocol_state = &ctx.accounts.protocol_state;
+    let cfg = &ctx.accounts.channel_config;
+    let user_stake = &ctx.accounts.user_channel_stake;
+
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
+
+    require_keys_eq!(
+        ctx.accounts.mint.key(),
+        protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+
+    let subject_id = derive_subject_id(&channel);
+
+    require!(cfg.version == CHANNEL_CONFIG_V2_VERSION, OracleError::InvalidChannelState);
+    require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
+    require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
+
+    // SECURITY: Prevent "Boost Gaming"
+    require!(
+        user_stake.amount >= stake_snapshot,
+        OracleError::StakeSnapshotMismatch
+    );
+
+    require!(
+        cfg.creator_fee_bps == 0 || ctx.accounts.creator_ata.is_some(),
+        OracleError::MissingCreatorAta
+    );
+
+    let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
+    let entry = cfg.roots[idx];
+    require!(entry.seq == root_seq, OracleError::RootTooOldOrMissing);
+
+    let leaf = compute_cumulative_leaf_v3(
+        &cfg.key(),
+        &protocol_state.mint,
+        root_seq,
+        &ctx.accounts.claimer.key(),
+        cumulative_total,
+        stake_snapshot,
+    );
+    require!(verify_proof(&proof, leaf, entry.root), OracleError::InvalidProof);
+
+    let claim_state = &mut ctx.accounts.claim_state;
+    if claim_state.version == 0 {
+        claim_state.version = CLAIM_STATE_V2_VERSION;
+        claim_state.bump = ctx.bumps.claim_state;
+        claim_state.channel = cfg.key();
+        claim_state.wallet = ctx.accounts.claimer.key();
+        claim_state.claimed_total = 0;
+        claim_state.last_claim_seq = 0;
+    } else {
+        require!(claim_state.channel == cfg.key(), OracleError::InvalidClaimState);
+        require!(claim_state.wallet == ctx.accounts.claimer.key(), OracleError::InvalidClaimState);
+    }
+
+    if cumulative_total <= claim_state.claimed_total {
+        return Ok(());
+    }
+
+    let delta = cumulative_total
+        .checked_sub(claim_state.claimed_total)
+        .ok_or(OracleError::MathOverflow)?;
+
+    let creator_fee_bps = cfg.creator_fee_bps;
+    let (user_amount, creator_amount) = if creator_fee_bps > 0 {
+        let creator_cut = (delta as u128)
+            .checked_mul(creator_fee_bps as u128)
+            .ok_or(OracleError::MathOverflow)?
+            .checked_div(10000)
+            .ok_or(OracleError::MathOverflow)? as u64;
+        let user_cut = delta.checked_sub(creator_cut).ok_or(OracleError::MathOverflow)?;
+        (user_cut, creator_cut)
+    } else {
+        (delta, 0u64)
+    };
+
+    let seeds: &[&[u8]] = &[
+        PROTOCOL_SEED,
+        protocol_state.mint.as_ref(),
+        &[protocol_state.bump],
+    ];
+    let signer = &[seeds];
+
+    let token_program = ctx.accounts.token_program.to_account_info();
+    let from = ctx.accounts.treasury_ata.to_account_info();
+    let mint = ctx.accounts.mint.to_account_info();
+    let authority = ctx.accounts.protocol_state.to_account_info();
+
+    if user_amount > 0 {
+        let to = ctx.accounts.claimer_ata.to_account_info();
+        crate::transfer_checked_with_remaining(
+            &token_program,
+            &from,
+            &mint,
+            &to,
+            &authority,
+            user_amount,
+            ctx.accounts.mint.decimals,
+            signer,
+            ctx.remaining_accounts,
+        )?;
+    }
+
+    if creator_amount > 0 {
+        if let Some(creator_ata) = &ctx.accounts.creator_ata {
+            let to = creator_ata.to_account_info();
+            crate::transfer_checked_with_remaining(
+                &token_program,
+                &from,
+                &mint,
+                &to,
+                &authority,
+                creator_amount,
+                ctx.accounts.mint.decimals,
+                signer,
+                ctx.remaining_accounts,
+            )?;
+        } else {
+            return Err(OracleError::MissingCreatorAta.into());
+        }
+    }
+
+    claim_state.claimed_total = cumulative_total;
+    claim_state.last_claim_seq = root_seq;
+
+    emit!(CumulativeRewardsClaimedV3 {
+        channel: cfg.key(),
+        claimer: ctx.accounts.claimer.key(),
+        user_amount,
+        creator_amount,
+        cumulative_total,
+        root_seq,
+        stake_snapshot,
+        current_stake: user_stake.amount,
     });
 
     Ok(())

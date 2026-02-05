@@ -114,6 +114,35 @@ pub mod token_2022 {
         instructions::cumulative::claim_cumulative_sponsored(ctx, channel, root_seq, cumulative_total, proof)
     }
 
+    // -------------------------------------------------------------------------
+    // Cumulative Roots (V3) - With Stake Snapshot Binding (Anti-Gaming)
+    // -------------------------------------------------------------------------
+
+    /// V3 cumulative claim with stake snapshot verification.
+    /// Prevents "boost gaming" where users unstake after snapshot.
+    pub fn claim_cumulative_v3<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimCumulativeV3<'info>>,
+        channel: String,
+        root_seq: u64,
+        cumulative_total: u64,
+        stake_snapshot: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::cumulative::claim_cumulative_v3(ctx, channel, root_seq, cumulative_total, stake_snapshot, proof)
+    }
+
+    /// V3 sponsored claim with stake snapshot verification.
+    pub fn claim_cumulative_sponsored_v3<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimCumulativeSponsoredV3<'info>>,
+        channel: String,
+        root_seq: u64,
+        cumulative_total: u64,
+        stake_snapshot: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::cumulative::claim_cumulative_sponsored_v3(ctx, channel, root_seq, cumulative_total, stake_snapshot, proof)
+    }
+
     /// Migrate existing ChannelConfigV2 accounts to add creator_wallet fields.
     pub fn migrate_channel_config_v2(
         ctx: Context<MigrateChannelConfigV2>,

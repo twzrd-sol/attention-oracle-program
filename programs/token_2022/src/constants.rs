@@ -26,6 +26,9 @@ pub const CUMULATIVE_ROOT_HISTORY: usize = 4;
 /// Domain separation for cumulative V2 leaf hashing
 pub const CUMULATIVE_V2_DOMAIN: &[u8] = b"TWZRD:CUMULATIVE_V2";
 
+/// Domain separation for cumulative V3 leaf hashing (includes stake_snapshot)
+pub const CUMULATIVE_V3_DOMAIN: &[u8] = b"TWZRD:CUMULATIVE_V3";
+
 // =============================================================================
 // ECONOMICS & FEES
 // =============================================================================

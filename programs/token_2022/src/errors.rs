@@ -174,6 +174,12 @@ pub enum OracleError {
 
     #[msg("Pool must be shut down before closing")]
     PoolNotShutdown,
+
+    // =========================================================================
+    // V3 CLAIMS (STAKE SNAPSHOT)
+    // =========================================================================
+    #[msg("Stake snapshot mismatch - user has unstaked below snapshot amount")]
+    StakeSnapshotMismatch,
 }
 
 // =============================================================================
