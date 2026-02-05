@@ -9,13 +9,70 @@
 //! - ClaimExceedsAvailableRewards principal protection
 //! - Boost multiplier tier correctness
 
-use solana_sdk::pubkey::Pubkey;
+use anchor_lang::prelude::AccountSerialize;
+use litesvm::LiteSVM;
+use sha2::{Digest, Sha256};
+use solana_sdk::{
+    account::Account,
+    instruction::{AccountMeta, Instruction},
+    message::Message,
+    program_option::COption,
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
+use solana_system_interface::program as system_program;
+use spl_token_2022::state::{Account as TokenAccountState, AccountState, Mint as TokenMint};
+use std::path::Path;
 
 // Import program types and functions via the crate's public API
 use token_2022::{
     calculate_boost_bps, calculate_pending_rewards, calculate_reward_debt, update_pool_rewards,
-    ChannelStakePool, UserChannelStake, BOOST_PRECISION, REWARD_PRECISION, SLOTS_PER_DAY,
+    ChannelConfigV2, ChannelStakePool, ProtocolState, RootEntry, UserChannelStake,
+    BOOST_PRECISION, CHANNEL_CONFIG_V2_VERSION, CHANNEL_STAKE_POOL_SEED, CUMULATIVE_ROOT_HISTORY,
+    MIN_RUNWAY_SLOTS, PROTOCOL_SEED, REWARD_PRECISION, SLOTS_PER_DAY,
 };
+
+// Program ID (must match declared_id! in lib.rs)
+fn program_id() -> Pubkey {
+    "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+        .parse()
+        .unwrap()
+}
+
+/// Compute Anchor discriminator for an instruction
+fn compute_discriminator(name: &str) -> [u8; 8] {
+    let preimage = format!("global:{}", name);
+    let hash = Sha256::digest(preimage.as_bytes());
+    let mut disc = [0u8; 8];
+    disc.copy_from_slice(&hash[..8]);
+    disc
+}
+
+/// Helper to load the compiled program
+fn load_program(svm: &mut LiteSVM) -> Result<(), Box<dyn std::error::Error>> {
+    let program_path = Path::new("../../target/deploy/token_2022.so");
+
+    if !program_path.exists() {
+        return Err(format!(
+            "Program not found at {:?}. Run `anchor build` first.",
+            program_path
+                .canonicalize()
+                .unwrap_or(program_path.to_path_buf())
+        )
+        .into());
+    }
+
+    let program_bytes = std::fs::read(program_path)?;
+    svm.add_program(program_id(), &program_bytes)?;
+    Ok(())
+}
+
+fn serialize_anchor<T: AccountSerialize>(account: &T, len: usize) -> Vec<u8> {
+    let mut data = vec![0u8; len];
+    account.try_serialize(&mut data.as_mut_slice()).unwrap();
+    data
+}
 
 // ============================================================================
 // Helpers
@@ -778,4 +835,308 @@ fn test_shutdown_stops_accrual() {
         pool.acc_reward_per_share, acc_before_shutdown,
         "No rewards should accrue after shutdown"
     );
+}
+
+// ============================================================================
+// Part 8: Admin Guardrails (Runway + Close Pool)
+// ============================================================================
+
+fn runway_check(new_rate: u64, vault_balance: u64, total_staked: u64) -> Result<(), &'static str> {
+    if new_rate == 0 {
+        return Ok(());
+    }
+
+    let available_rewards = vault_balance.saturating_sub(total_staked) as u128;
+    let required_runway = (new_rate as u128).saturating_mul(MIN_RUNWAY_SLOTS as u128);
+
+    if available_rewards >= required_runway {
+        Ok(())
+    } else {
+        Err("InsufficientTreasuryFunding")
+    }
+}
+
+#[test]
+fn test_runway_check_fails_when_underfunded() {
+    let new_rate = 1_000u64;
+    let total_staked = 10_000_000_000u64;
+    let vault_balance = total_staked + (MIN_RUNWAY_SLOTS / 2) * new_rate;
+
+    let result = runway_check(new_rate, vault_balance, total_staked);
+    assert_eq!(result, Err("InsufficientTreasuryFunding"));
+}
+
+#[test]
+fn test_runway_check_passes_when_funded() {
+    let new_rate = 1_000u64;
+    let total_staked = 10_000_000_000u64;
+    let vault_balance = total_staked + (MIN_RUNWAY_SLOTS * new_rate);
+
+    let result = runway_check(new_rate, vault_balance, total_staked);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_runway_check_skips_when_rate_zero() {
+    let result = runway_check(0, 0, 10_000_000_000);
+    assert!(result.is_ok());
+}
+
+fn close_pool_guard(
+    is_shutdown: bool,
+    staker_count: u64,
+    total_staked: u64,
+    total_weighted: u64,
+) -> Result<(), &'static str> {
+    if !is_shutdown {
+        return Err("PoolNotShutdown");
+    }
+    if staker_count > 0 || total_staked > 0 || total_weighted > 0 {
+        return Err("StakePoolNotEmpty");
+    }
+    Ok(())
+}
+
+#[test]
+fn test_close_pool_requires_shutdown() {
+    let result = close_pool_guard(false, 0, 0, 0);
+    assert_eq!(result, Err("PoolNotShutdown"));
+}
+
+#[test]
+fn test_close_pool_requires_zero_stakers() {
+    let result = close_pool_guard(true, 1, 0, 0);
+    assert_eq!(result, Err("StakePoolNotEmpty"));
+}
+
+#[test]
+fn test_close_pool_requires_zero_total_staked() {
+    let result = close_pool_guard(true, 0, 1, 0);
+    assert_eq!(result, Err("StakePoolNotEmpty"));
+}
+
+#[test]
+fn test_close_pool_requires_zero_total_weighted() {
+    let result = close_pool_guard(true, 0, 0, 1);
+    assert_eq!(result, Err("StakePoolNotEmpty"));
+}
+
+#[test]
+fn test_close_pool_allows_empty_shutdown_pool() {
+    let result = close_pool_guard(true, 0, 0, 0);
+    assert!(result.is_ok());
+}
+
+// ============================================================================
+// Part 9: Close Pool Integration (LiteSVM)
+// ============================================================================
+
+#[test]
+fn test_close_stake_pool_fails_when_not_shutdown() {
+    let mut svm = LiteSVM::new();
+
+    // Load program (skip if not built)
+    if load_program(&mut svm).is_err() {
+        println!("Skipping test - program not compiled");
+        return;
+    }
+
+    let admin = Keypair::new();
+    svm.airdrop(&admin.pubkey(), 10_000_000_000).unwrap();
+
+    // Create mint + PDAs
+    let mint = Keypair::new();
+    let (protocol_state, protocol_bump) =
+        Pubkey::find_program_address(&[PROTOCOL_SEED, mint.pubkey().as_ref()], &program_id());
+
+    // Channel config can be any account; stake pool PDA derives from it
+    let channel_config = Pubkey::new_unique();
+    let (stake_pool, stake_bump) =
+        Pubkey::find_program_address(&[CHANNEL_STAKE_POOL_SEED, channel_config.as_ref()], &program_id());
+
+    let vault = Pubkey::new_unique();
+    let destination = Pubkey::new_unique();
+
+    // Protocol state account
+    let protocol_state_data = ProtocolState {
+        is_initialized: true,
+        version: 1,
+        admin: admin.pubkey(),
+        publisher: Pubkey::new_unique(),
+        treasury: Pubkey::new_unique(),
+        mint: mint.pubkey(),
+        paused: false,
+        require_receipt: false,
+        bump: protocol_bump,
+    };
+    let protocol_bytes = serialize_anchor(&protocol_state_data, ProtocolState::LEN);
+    let protocol_lamports = svm.minimum_balance_for_rent_exemption(protocol_bytes.len());
+    svm.set_account(
+        protocol_state,
+        Account {
+            lamports: protocol_lamports,
+            data: protocol_bytes,
+            owner: program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    // Channel config account (minimal valid struct)
+    let roots = [RootEntry::default(); CUMULATIVE_ROOT_HISTORY];
+    let channel_config_data = ChannelConfigV2 {
+        version: CHANNEL_CONFIG_V2_VERSION,
+        bump: 0,
+        mint: mint.pubkey(),
+        subject: Pubkey::new_unique(),
+        authority: admin.pubkey(),
+        latest_root_seq: 0,
+        cutover_epoch: 0,
+        creator_wallet: admin.pubkey(),
+        creator_fee_bps: 0,
+        _padding: [0u8; 6],
+        roots,
+    };
+    let channel_bytes = serialize_anchor(&channel_config_data, ChannelConfigV2::LEN);
+    let channel_lamports = svm.minimum_balance_for_rent_exemption(channel_bytes.len());
+    svm.set_account(
+        channel_config,
+        Account {
+            lamports: channel_lamports,
+            data: channel_bytes,
+            owner: program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    // Stake pool account (NOT shutdown)
+    let stake_pool_data = ChannelStakePool {
+        bump: stake_bump,
+        channel: channel_config,
+        mint: mint.pubkey(),
+        vault,
+        total_staked: 0,
+        total_weighted: 0,
+        staker_count: 0,
+        acc_reward_per_share: 0,
+        last_reward_slot: 0,
+        reward_per_slot: 0,
+        is_shutdown: false, // critical: should cause failure
+    };
+    let stake_pool_bytes = serialize_anchor(&stake_pool_data, ChannelStakePool::LEN);
+    let stake_pool_lamports = svm.minimum_balance_for_rent_exemption(stake_pool_bytes.len());
+    svm.set_account(
+        stake_pool,
+        Account {
+            lamports: stake_pool_lamports,
+            data: stake_pool_bytes,
+            owner: program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    // Mint account
+    let mint_state = TokenMint {
+        mint_authority: COption::Some(admin.pubkey()),
+        supply: 0,
+        decimals: 9,
+        is_initialized: true,
+        freeze_authority: COption::None,
+    };
+    let mut mint_bytes = vec![0u8; TokenMint::LEN];
+    TokenMint::pack(mint_state, &mut mint_bytes).unwrap();
+    let mint_lamports = svm.minimum_balance_for_rent_exemption(mint_bytes.len());
+    svm.set_account(
+        mint.pubkey(),
+        Account {
+            lamports: mint_lamports,
+            data: mint_bytes,
+            owner: spl_token_2022::id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    // Vault token account (owned by stake_pool PDA)
+    let vault_state = TokenAccountState {
+        mint: mint.pubkey(),
+        owner: stake_pool,
+        amount: 0,
+        delegate: COption::None,
+        state: AccountState::Initialized,
+        is_native: COption::None,
+        delegated_amount: 0,
+        close_authority: COption::None,
+    };
+    let mut vault_bytes = vec![0u8; TokenAccountState::LEN];
+    TokenAccountState::pack(vault_state, &mut vault_bytes).unwrap();
+    let vault_lamports = svm.minimum_balance_for_rent_exemption(vault_bytes.len());
+    svm.set_account(
+        vault,
+        Account {
+            lamports: vault_lamports,
+            data: vault_bytes,
+            owner: spl_token_2022::id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    // Destination token account (owned by admin)
+    let dest_state = TokenAccountState {
+        mint: mint.pubkey(),
+        owner: admin.pubkey(),
+        amount: 0,
+        delegate: COption::None,
+        state: AccountState::Initialized,
+        is_native: COption::None,
+        delegated_amount: 0,
+        close_authority: COption::None,
+    };
+    let mut dest_bytes = vec![0u8; TokenAccountState::LEN];
+    TokenAccountState::pack(dest_state, &mut dest_bytes).unwrap();
+    let dest_lamports = svm.minimum_balance_for_rent_exemption(dest_bytes.len());
+    svm.set_account(
+        destination,
+        Account {
+            lamports: dest_lamports,
+            data: dest_bytes,
+            owner: spl_token_2022::id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+
+    // Build close_stake_pool instruction (no args)
+    let disc = compute_discriminator("close_stake_pool");
+    let ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(admin.pubkey(), true),
+            AccountMeta::new_readonly(protocol_state, false),
+            AccountMeta::new_readonly(channel_config, false),
+            AccountMeta::new(stake_pool, false),
+            AccountMeta::new(vault, false),
+            AccountMeta::new(mint.pubkey(), false),
+            AccountMeta::new(destination, false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        data: disc.to_vec(),
+    };
+
+    let blockhash = svm.latest_blockhash();
+    let message = Message::new(&[ix], Some(&admin.pubkey()));
+    let tx = Transaction::new(&[&admin], message, blockhash);
+
+    let result = svm.send_transaction(tx);
+    assert!(result.is_err(), "Expected failure when pool is not shutdown");
 }

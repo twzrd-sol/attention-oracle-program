@@ -993,3 +993,47 @@ fn test_bounty_calculation_matches_constants() {
     // 10,000 CCM * 0.001 = 10 CCM
     assert_eq!(bounty, 10_000_000_000u64, "10 bps = 0.1% of rewards");
 }
+
+// =========================================================================
+// REWARD CLAIM PRECHECK (UNDERFUNDED GUARD)
+// =========================================================================
+
+/// Mirrors the new precheck gate for reward claims: only attempt a CPI claim
+/// when the vault has enough excess (vault_balance - total_staked).
+fn claim_precheck(pending: u64, vault_balance: u64, total_staked: u64) -> bool {
+    if pending == 0 {
+        return false;
+    }
+    let excess = vault_balance.saturating_sub(total_staked);
+    pending <= excess
+}
+
+#[test]
+fn test_claim_precheck_fails_when_underfunded() {
+    let should_claim = claim_precheck(
+        500_000_000,    // pending
+        10_100_000_000, // vault
+        10_000_000_000, // total_staked (excess = 0.1 CCM)
+    );
+    assert!(!should_claim, "Underfunded rewards should skip claim CPI");
+}
+
+#[test]
+fn test_claim_precheck_succeeds_when_funded() {
+    let should_claim = claim_precheck(
+        500_000_000,    // pending
+        10_600_000_000, // vault (excess = 0.6 CCM)
+        10_000_000_000, // total_staked
+    );
+    assert!(should_claim, "Sufficient excess should allow claim CPI");
+}
+
+#[test]
+fn test_claim_precheck_skips_when_no_pending() {
+    let should_claim = claim_precheck(
+        0,
+        10_600_000_000,
+        10_000_000_000,
+    );
+    assert!(!should_claim, "Zero pending rewards should skip claim CPI");
+}

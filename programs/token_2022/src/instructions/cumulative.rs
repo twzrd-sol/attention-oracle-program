@@ -735,6 +735,10 @@ pub fn claim_cumulative_v3<'info>(
     // SECURITY: Enforce proof freshness to prevent stale-stake attacks
     let clock = Clock::get()?;
     require!(
+        snapshot_slot <= clock.slot,
+        OracleError::ProofExpired
+    );
+    require!(
         clock.slot.saturating_sub(snapshot_slot) <= MAX_PROOF_AGE_SLOTS,
         OracleError::ProofExpired
     );
@@ -974,6 +978,10 @@ pub fn claim_cumulative_sponsored_v3<'info>(
 
     // SECURITY: Enforce proof freshness to prevent stale-stake attacks
     let clock = Clock::get()?;
+    require!(
+        snapshot_slot <= clock.slot,
+        OracleError::ProofExpired
+    );
     require!(
         clock.slot.saturating_sub(snapshot_slot) <= MAX_PROOF_AGE_SLOTS,
         OracleError::ProofExpired
