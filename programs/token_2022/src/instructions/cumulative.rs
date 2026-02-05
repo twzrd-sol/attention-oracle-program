@@ -5,7 +5,8 @@ use anchor_spl::{
 };
 
 use crate::constants::{
-    CHANNEL_CONFIG_V2_SEED, CHANNEL_USER_STAKE_SEED, CLAIM_STATE_V2_SEED, CUMULATIVE_ROOT_HISTORY, PROTOCOL_SEED,
+    CHANNEL_CONFIG_V2_SEED, CHANNEL_USER_STAKE_SEED, CLAIM_STATE_V2_SEED, CUMULATIVE_ROOT_HISTORY,
+    MAX_PROOF_AGE_SLOTS, PROTOCOL_SEED,
 };
 use crate::errors::OracleError;
 use crate::events::{ChannelClosed, CumulativeRewardsClaimed, CumulativeRewardsClaimedV3, CreatorFeeUpdated, RootSeqRecovered};
@@ -731,6 +732,13 @@ pub fn claim_cumulative_v3<'info>(
         OracleError::StakeSnapshotMismatch
     );
 
+    // SECURITY: Enforce proof freshness to prevent stale-stake attacks
+    let clock = Clock::get()?;
+    require!(
+        clock.slot.saturating_sub(snapshot_slot) <= MAX_PROOF_AGE_SLOTS,
+        OracleError::ProofExpired
+    );
+
     require!(
         cfg.creator_fee_bps == 0 || ctx.accounts.creator_ata.is_some(),
         OracleError::MissingCreatorAta
@@ -962,6 +970,13 @@ pub fn claim_cumulative_sponsored_v3<'info>(
     require!(
         user_stake.amount >= stake_snapshot,
         OracleError::StakeSnapshotMismatch
+    );
+
+    // SECURITY: Enforce proof freshness to prevent stale-stake attacks
+    let clock = Clock::get()?;
+    require!(
+        clock.slot.saturating_sub(snapshot_slot) <= MAX_PROOF_AGE_SLOTS,
+        OracleError::ProofExpired
     );
 
     require!(

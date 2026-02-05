@@ -46,6 +46,18 @@ pub const TREASURY_FEE_BASIS_POINTS: u16 = 5; // 0.05%
 pub const CREATOR_FEE_BASIS_POINTS: u16 = 5; // 0.05%
 
 // =============================================================================
+// PROOF EXPIRY
+// =============================================================================
+
+/// Maximum proof age in slots (~6-7 minutes at 400ms/slot)
+/// Prevents stale-stake attacks where attacker:
+/// 1. Stakes to boost rewards at snapshot time
+/// 2. Waits for proof generation
+/// 3. Unstakes before claim
+/// 4. Claims with old proof after re-staking minimum
+pub const MAX_PROOF_AGE_SLOTS: u64 = 1000;
+
+// =============================================================================
 // STAKING
 // =============================================================================
 
