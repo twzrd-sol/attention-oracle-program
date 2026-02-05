@@ -1181,3 +1181,145 @@ fn test_injected_capital_available_for_withdrawals() {
     // with 10 CCM remaining for next compound cycle
     assert_eq!(vault.pending_deposits, 160_000_000_000);
 }
+
+// =========================================================================
+// EMERGENCY TIMEOUT TESTS (Oracle Unresponsive)
+// =========================================================================
+
+/// ~7 days in slots at 400ms/slot = 1,500,000 slots
+const EMERGENCY_TIMEOUT_SLOTS: u64 = 1_500_000;
+
+/// Check if Oracle is stale (no compound in EMERGENCY_TIMEOUT_SLOTS)
+fn is_oracle_stale(vault: &ChannelVault, current_slot: u64) -> bool {
+    let slots_since_compound = current_slot.saturating_sub(vault.last_compound_slot);
+    slots_since_compound >= EMERGENCY_TIMEOUT_SLOTS
+}
+
+/// Calculate emergency withdraw payout (80% after 20% penalty)
+fn calculate_emergency_payout(ccm_requested: u64) -> u64 {
+    let return_bps = BPS_DENOMINATOR - EMERGENCY_PENALTY_BPS;
+    (ccm_requested as u128 * return_bps as u128 / BPS_DENOMINATOR as u128) as u64
+}
+
+#[test]
+fn test_oracle_staleness_detection_fresh() {
+    let mut vault = make_vault();
+    vault.last_compound_slot = 100_000_000;
+
+    // Current slot is 500k slots later (~2.3 days)
+    let current_slot = 100_500_000;
+    assert!(!is_oracle_stale(&vault, current_slot), "Oracle should not be stale after 2.3 days");
+}
+
+#[test]
+fn test_oracle_staleness_detection_stale() {
+    let mut vault = make_vault();
+    vault.last_compound_slot = 100_000_000;
+
+    // Current slot is 1.5M slots later (~7 days)
+    let current_slot = 100_000_000 + EMERGENCY_TIMEOUT_SLOTS;
+    assert!(is_oracle_stale(&vault, current_slot), "Oracle should be stale after 7 days");
+}
+
+#[test]
+fn test_oracle_staleness_detection_just_under() {
+    let mut vault = make_vault();
+    vault.last_compound_slot = 100_000_000;
+
+    // Current slot is 1 slot under timeout
+    let current_slot = 100_000_000 + EMERGENCY_TIMEOUT_SLOTS - 1;
+    assert!(!is_oracle_stale(&vault, current_slot), "Oracle should not be stale 1 slot before timeout");
+}
+
+#[test]
+fn test_emergency_timeout_payout_calculation() {
+    // 1000 CCM withdrawal request
+    let ccm_requested = 1_000_000_000_000u64;
+
+    // User should receive 80% = 800 CCM
+    let ccm_returned = calculate_emergency_payout(ccm_requested);
+    assert_eq!(ccm_returned, 800_000_000_000u64);
+
+    // 20% penalty = 200 CCM stays in vault buffer
+    let penalty = ccm_requested - ccm_returned;
+    assert_eq!(penalty, 200_000_000_000u64);
+}
+
+#[test]
+fn test_emergency_timeout_small_amount() {
+    // Small amount: 10 CCM
+    let ccm_requested = 10_000_000_000u64;
+    let ccm_returned = calculate_emergency_payout(ccm_requested);
+
+    // 10 * 0.8 = 8 CCM
+    assert_eq!(ccm_returned, 8_000_000_000u64);
+}
+
+#[test]
+fn test_emergency_timeout_minimum_viable() {
+    // 1 lamport request (edge case)
+    let ccm_requested = 1u64;
+    let ccm_returned = calculate_emergency_payout(ccm_requested);
+
+    // 1 * 8000 / 10000 = 0 (integer division)
+    assert_eq!(ccm_returned, 0u64, "Sub-lamport amounts round to 0");
+}
+
+#[test]
+fn test_emergency_timeout_does_not_require_oracle() {
+    // Key property: emergency timeout withdraw doesn't check Oracle state at all
+    // It only checks vault.last_compound_slot vs current_slot
+
+    let mut vault = make_vault();
+    vault.last_compound_slot = 100_000_000;
+    vault.total_staked = 1_000_000_000_000;  // 1000 CCM "in Oracle"
+    vault.pending_deposits = 500_000_000_000; // 500 CCM in buffer
+    vault.pending_withdrawals = 200_000_000_000; // 200 CCM queued
+    vault.total_shares = 1_500_000_000_000;
+
+    // Oracle goes stale
+    let current_slot = 100_000_000 + EMERGENCY_TIMEOUT_SLOTS;
+    assert!(is_oracle_stale(&vault, current_slot));
+
+    // Even though total_staked is 1000 CCM, emergency withdraw only uses buffer
+    // User's 200 CCM request gets 160 CCM (80%) from the 500 CCM buffer
+    let withdrawal_request_amount = 200_000_000_000u64;
+    let payout = calculate_emergency_payout(withdrawal_request_amount);
+    assert_eq!(payout, 160_000_000_000u64);
+
+    // Buffer (500) is enough to cover payout (160)
+    assert!(vault.pending_deposits >= payout);
+}
+
+#[test]
+fn test_emergency_timeout_penalty_stays_in_vault() {
+    // Verify penalty accounting: penalty stays in buffer, benefits remaining shareholders
+
+    let mut vault = make_vault();
+    vault.last_compound_slot = 0;
+    vault.pending_deposits = 1_000_000_000_000; // 1000 CCM in buffer
+    vault.pending_withdrawals = 500_000_000_000; // 500 CCM queued
+    vault.total_shares = 1_000_000_000_000;
+
+    let current_slot = EMERGENCY_TIMEOUT_SLOTS; // Oracle is stale
+
+    // User with 500 CCM pending withdrawal does emergency exit
+    let ccm_requested = 500_000_000_000u64;
+    let ccm_returned = calculate_emergency_payout(ccm_requested);
+    assert_eq!(ccm_returned, 400_000_000_000u64); // 80%
+
+    let penalty = ccm_requested - ccm_returned; // 100 CCM
+
+    // Simulate the vault state update:
+    // pending_withdrawals decreases by FULL requested (500)
+    // pending_deposits decreases by RETURNED (400)
+    // The 100 CCM penalty implicitly stays in buffer
+
+    vault.pending_withdrawals -= ccm_requested;
+    vault.pending_deposits -= ccm_returned;
+
+    // Buffer started at 1000, paid out 400, left with 600
+    // (penalty 100 stays, plus the remaining 500)
+    assert_eq!(vault.pending_deposits, 600_000_000_000);
+    assert_eq!(vault.pending_withdrawals, 0);
+}

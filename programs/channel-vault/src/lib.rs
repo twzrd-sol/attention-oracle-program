@@ -86,6 +86,19 @@ pub mod channel_vault {
         instructions::redeem::admin_emergency_unstake(ctx)
     }
 
+    /// Emergency withdrawal when Oracle is unresponsive (no compound in 7+ days).
+    ///
+    /// For users with pending WithdrawRequests who cannot complete normally
+    /// because the Oracle is dead/frozen. Pays from buffer with 20% penalty.
+    /// This is a last-resort exit that requires no Oracle cooperation.
+    pub fn emergency_timeout_withdraw(
+        ctx: Context<EmergencyTimeoutWithdraw>,
+        request_id: u64,
+        min_ccm_amount: u64,
+    ) -> Result<()> {
+        instructions::redeem::emergency_timeout_withdraw(ctx, request_id, min_ccm_amount)
+    }
+
     // -------------------------------------------------------------------------
     // Permissionless Operations
     // -------------------------------------------------------------------------

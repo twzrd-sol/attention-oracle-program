@@ -77,6 +77,18 @@ pub const BPS_DENOMINATOR: u64 = 10_000;
 pub const COMPOUND_BOUNTY_BPS: u64 = 10; // 0.10%
 
 // =============================================================================
+// EMERGENCY TIMEOUT
+// =============================================================================
+
+/// Slots before emergency withdraw timeout activates.
+/// If no compound has occurred in this window, Oracle is considered dead/frozen.
+/// Users can then emergency withdraw from buffer without Oracle cooperation.
+///
+/// ~7 days at 400ms/slot = 7 * 24 * 60 * 60 / 0.4 = 1,512,000 slots
+/// Using 1,500,000 for round number (~6.9 days)
+pub const EMERGENCY_TIMEOUT_SLOTS: u64 = 1_500_000;
+
+// =============================================================================
 // EXTERNAL PROGRAMS
 // =============================================================================
 
