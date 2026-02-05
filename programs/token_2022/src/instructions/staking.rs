@@ -1663,7 +1663,10 @@ pub struct CloseStakePool<'info> {
     pub vault: InterfaceAccount<'info, TokenAccount>,
 
     /// CCM mint (needed for transfer_checked and withheld fee withdrawal).
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = mint.key() == stake_pool.mint @ OracleError::InvalidMint,
+    )]
     pub mint: InterfaceAccount<'info, Mint>,
 
     /// Destination for remaining reward tokens (treasury ATA, admin ATA, etc.).

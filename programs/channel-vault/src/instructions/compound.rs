@@ -43,11 +43,20 @@ fn has_claimable_rewards(
     oracle_stake_pool: &ChannelStakePool,
     oracle_user_stake_info: &AccountInfo,
     current_slot: u64,
+    oracle_vault_balance: u64,
 ) -> bool {
     let pool = oracle_stake_pool;
 
     // Fast path: no rewards ever configured
     if pool.acc_reward_per_share == 0 && pool.reward_per_slot == 0 {
+        return false;
+    }
+
+    // Ensure there are spendable rewards beyond principal.
+    // This mirrors claim_channel_rewards' excess check to avoid CPI failure.
+    let excess_rewards = oracle_vault_balance
+        .saturating_sub(pool.total_staked) as u128;
+    if excess_rewards == 0 {
         return false;
     }
 
@@ -91,7 +100,7 @@ fn has_claimable_rewards(
         .saturating_sub(us.reward_debt)
         .saturating_add(us.pending_rewards as u128);
 
-    pending > 0
+    pending > 0 && pending <= excess_rewards
 }
 
 #[derive(Accounts)]
@@ -250,6 +259,7 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
             &ctx.accounts.oracle_stake_pool,
             &ctx.accounts.oracle_user_stake.to_account_info(),
             clock.slot,
+            ctx.accounts.oracle_vault.amount,
         ) {
             msg!("Claiming pending rewards before unstake...");
 
