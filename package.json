@@ -49,5 +49,22 @@
     "overrides": {
       "diff": "4.0.4"
     }
-  }
+  },
+  "description": "Open-source Solana infrastructure for verifiable, engagement-based reward distribution.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/twzrd-sol/attention-oracle-program.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/twzrd-sol/attention-oracle-program/issues"
+  },
+  "homepage": "https://github.com/twzrd-sol/attention-oracle-program#readme"
 }
