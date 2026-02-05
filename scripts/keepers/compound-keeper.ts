@@ -31,6 +31,7 @@ import {
 import {
   TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { readFileSync } from "fs";
 
@@ -147,6 +148,13 @@ async function main() {
         });
 
         const accounts = deriveCompoundAccounts(channelConfig, CCM_MINT);
+        const payerCcmAta = getAssociatedTokenAddressSync(
+          CCM_MINT,
+          payerKeypair.publicKey,
+          false,
+          TOKEN_2022_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID,
+        );
 
         const builder = vaultProgram.methods
           .compound()
@@ -156,6 +164,7 @@ async function main() {
             vaultOraclePosition: accounts.vaultOraclePosition,
             vaultCcmBuffer: accounts.vaultCcmBuffer,
             ccmMint: accounts.ccmMint,
+            payerCcmAta,
             oracleProgram: accounts.oracleProgram,
             oracleProtocol: accounts.oracleProtocol,
             oracleChannelConfig: accounts.oracleChannelConfig,
