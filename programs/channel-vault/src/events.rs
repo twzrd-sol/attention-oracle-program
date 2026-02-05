@@ -187,3 +187,19 @@ pub struct CapitalInjected {
     pub is_solvent: bool,
     pub timestamp: i64,
 }
+
+/// Emitted when user withdraws via emergency timeout (Oracle unresponsive).
+/// This is a last-resort exit when the Oracle hasn't compounded for 7+ days.
+#[event]
+pub struct EmergencyTimeoutWithdrawn {
+    pub user: Pubkey,
+    pub vault: Pubkey,
+    pub request_id: u64,
+    /// Original CCM amount from withdrawal request
+    pub ccm_requested: u64,
+    /// CCM returned after 20% penalty
+    pub ccm_returned: u64,
+    /// Slots since last compound (staleness indicator)
+    pub slots_since_compound: u64,
+    pub timestamp: i64,
+}

@@ -965,3 +965,184 @@ pub fn admin_emergency_unstake<'info>(
 
     Ok(())
 }
+
+// =============================================================================
+// EMERGENCY TIMEOUT WITHDRAW (Oracle Unresponsive)
+// =============================================================================
+
+/// Emergency withdrawal when Oracle has been unresponsive for EMERGENCY_TIMEOUT_SLOTS.
+/// Allows users with pending WithdrawRequests to exit from buffer with 20% penalty.
+/// This bypasses Oracle entirely - used when Oracle is dead/frozen.
+#[derive(Accounts)]
+#[instruction(request_id: u64)]
+pub struct EmergencyTimeoutWithdraw<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, vault.channel_config.as_ref()],
+        bump = vault.bump,
+    )]
+    pub vault: Box<Account<'info, ChannelVault>>,
+
+    /// Withdraw request to emergency complete
+    #[account(
+        mut,
+        close = user,
+        seeds = [
+            WITHDRAW_REQUEST_SEED,
+            vault.key().as_ref(),
+            user.key().as_ref(),
+            &request_id.to_le_bytes()
+        ],
+        bump = withdraw_request.bump,
+        constraint = withdraw_request.user == user.key() @ VaultError::Unauthorized,
+        constraint = !withdraw_request.completed @ VaultError::WithdrawAlreadyCompleted,
+    )]
+    pub withdraw_request: Box<Account<'info, WithdrawRequest>>,
+
+    /// CCM mint
+    #[account(address = vault.ccm_mint)]
+    pub ccm_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// Vault's CCM buffer
+    #[account(
+        mut,
+        seeds = [VAULT_CCM_BUFFER_SEED, vault.key().as_ref()],
+        bump,
+    )]
+    pub vault_ccm_buffer: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// User's CCM token account
+    #[account(
+        mut,
+        constraint = user_ccm.owner == user.key() @ VaultError::Unauthorized,
+        constraint = user_ccm.mint == ccm_mint.key() @ VaultError::InvalidMint,
+    )]
+    pub user_ccm: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        constraint = token_2022_program.key() == TOKEN_2022_PROGRAM_ID @ VaultError::InvalidTokenProgram,
+    )]
+    pub token_2022_program: Interface<'info, TokenInterface>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// Emergency withdrawal when Oracle is unresponsive (no compound in 7+ days).
+///
+/// This is a last-resort exit path that:
+/// 1. Only activates after EMERGENCY_TIMEOUT_SLOTS since last compound
+/// 2. Pays from vault buffer (no Oracle interaction needed)
+/// 3. Applies 20% penalty (same as instant redeem)
+/// 4. Closes the original WithdrawRequest
+///
+/// Rationale: If the Oracle hasn't compounded for a week, it's likely dead.
+/// Users shouldn't be trapped forever waiting for a frozen Oracle.
+pub fn emergency_timeout_withdraw(
+    ctx: Context<EmergencyTimeoutWithdraw>,
+    _request_id: u64,
+    min_ccm_amount: u64,
+) -> Result<()> {
+    use crate::constants::{BPS_DENOMINATOR, EMERGENCY_PENALTY_BPS, EMERGENCY_TIMEOUT_SLOTS};
+    use crate::events::EmergencyTimeoutWithdrawn;
+
+    let request = &ctx.accounts.withdraw_request;
+    let vault = &ctx.accounts.vault;
+    let clock = Clock::get()?;
+
+    // Check Oracle staleness: has it been EMERGENCY_TIMEOUT_SLOTS since last compound?
+    let slots_since_compound = clock.slot.saturating_sub(vault.last_compound_slot);
+    require!(
+        slots_since_compound >= EMERGENCY_TIMEOUT_SLOTS,
+        VaultError::OracleStakeNotLocked  // Reusing error - Oracle not stale enough
+    );
+
+    let ccm_requested = request.ccm_amount;
+    let channel_config_key = vault.channel_config;
+    let vault_bump = vault.bump;
+
+    // Apply 20% penalty: user receives 80%
+    let penalty_bps = EMERGENCY_PENALTY_BPS;
+    let return_bps = BPS_DENOMINATOR.saturating_sub(penalty_bps);
+    let ccm_returned = (ccm_requested as u128)
+        .checked_mul(return_bps as u128)
+        .ok_or(VaultError::MathOverflow)?
+        .checked_div(BPS_DENOMINATOR as u128)
+        .ok_or(VaultError::MathOverflow)? as u64;
+
+    // Slippage protection
+    require!(ccm_returned >= min_ccm_amount, VaultError::SlippageExceeded);
+
+    // Check buffer has enough funds
+    // Note: We're paying from buffer, which may include pending_deposits.
+    // In a true emergency (Oracle dead), we prioritize user exit over accounting purity.
+    let buffer_balance = ctx.accounts.vault_ccm_buffer.amount;
+    require!(buffer_balance >= ccm_returned, VaultError::InsufficientVaultBalance);
+
+    // Transfer CCM to user (80% of requested)
+    let signer_seeds: &[&[&[u8]]] = &[&[
+        VAULT_SEED,
+        channel_config_key.as_ref(),
+        &[vault_bump],
+    ]];
+
+    let transfer_ctx = CpiContext::new_with_signer(
+        ctx.accounts.token_2022_program.to_account_info(),
+        TransferChecked {
+            from: ctx.accounts.vault_ccm_buffer.to_account_info(),
+            mint: ctx.accounts.ccm_mint.to_account_info(),
+            to: ctx.accounts.user_ccm.to_account_info(),
+            authority: ctx.accounts.vault.to_account_info(),
+        },
+        signer_seeds,
+    );
+    anchor_spl::token_interface::transfer_checked(
+        transfer_ctx,
+        ccm_returned,
+        ctx.accounts.ccm_mint.decimals,
+    )?;
+
+    // Update vault state
+    let vault = &mut ctx.accounts.vault;
+
+    // Reduce pending_withdrawals by the FULL requested amount (not penalized)
+    // The penalty stays in the vault buffer as implicit reserve
+    vault.pending_withdrawals = vault
+        .pending_withdrawals
+        .checked_sub(ccm_requested)
+        .ok_or(VaultError::MathOverflow)?;
+
+    // Reduce pending_deposits by what we actually sent
+    // (In emergency mode, we're paying from buffer which came from pending_deposits)
+    if vault.pending_deposits >= ccm_returned {
+        vault.pending_deposits = vault
+            .pending_deposits
+            .checked_sub(ccm_returned)
+            .ok_or(VaultError::MathOverflow)?;
+    } else {
+        // If pending_deposits is less than ccm_returned, zero it out
+        // This can happen if buffer has stale total_staked returns
+        vault.pending_deposits = 0;
+    }
+
+    emit!(EmergencyTimeoutWithdrawn {
+        user: ctx.accounts.user.key(),
+        vault: vault.key(),
+        request_id: request.request_id,
+        ccm_requested,
+        ccm_returned,
+        slots_since_compound,
+        timestamp: clock.unix_timestamp,
+    });
+
+    msg!(
+        "EMERGENCY TIMEOUT WITHDRAW: {} CCM requested, {} returned (20% penalty), Oracle stale for {} slots",
+        ccm_requested,
+        ccm_returned,
+        slots_since_compound
+    );
+
+    Ok(())
+}
