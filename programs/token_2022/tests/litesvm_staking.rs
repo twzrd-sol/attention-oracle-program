@@ -17,6 +17,7 @@ use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     message::Message,
     program_option::COption,
+    program_pack::Pack,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
     transaction::Transaction,
@@ -29,9 +30,12 @@ use std::path::Path;
 use token_2022::{
     calculate_boost_bps, calculate_pending_rewards, calculate_reward_debt, update_pool_rewards,
     ChannelConfigV2, ChannelStakePool, ProtocolState, RootEntry, UserChannelStake,
-    BOOST_PRECISION, CHANNEL_CONFIG_V2_VERSION, CHANNEL_STAKE_POOL_SEED, CUMULATIVE_ROOT_HISTORY,
+    BOOST_PRECISION, CHANNEL_STAKE_POOL_SEED, CUMULATIVE_ROOT_HISTORY,
     MIN_RUNWAY_SLOTS, PROTOCOL_SEED, REWARD_PRECISION, SLOTS_PER_DAY,
 };
+
+// Local constant matching cumulative.rs internal value
+const CHANNEL_CONFIG_V2_VERSION: u8 = 1;
 
 // Program ID (must match declared_id! in lib.rs)
 fn program_id() -> Pubkey {
