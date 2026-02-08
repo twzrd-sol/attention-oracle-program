@@ -9,7 +9,7 @@ use crate::constants::{
     STAKE_VAULT_SEED,
 };
 use crate::errors::OracleError;
-use crate::events::{ChannelStaked, ChannelUnstaked, ChannelEmergencyUnstaked, PoolClosed};
+use crate::events::{ChannelStaked, ChannelUnstaked, ChannelEmergencyUnstaked, PoolClosed, PoolRecovered};
 use crate::state::{ChannelConfigV2, ChannelStakePool, ProtocolState, UserChannelStake};
 use anchor_lang::prelude::*;
 use anchor_spl::{
@@ -1605,6 +1605,62 @@ pub fn admin_shutdown_pool(ctx: Context<AdminShutdownPool>, reason: String) -> R
         pool.total_staked,
         old_rate,
         reason
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// ADMIN RECOVER POOL (Emergency: Unset Shutdown Without State Loss)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct AdminRecoverPool<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    /// Protocol state (for authority check)
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = payer.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// Stake pool to recover
+    #[account(
+        mut,
+        seeds = [CHANNEL_STAKE_POOL_SEED, channel_config.key().as_ref()],
+        bump,
+    )]
+    pub stake_pool: Account<'info, ChannelStakePool>,
+
+    /// Channel config (for seed derivation)
+    pub channel_config: Account<'info, ChannelConfigV2>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn admin_recover_pool(ctx: Context<AdminRecoverPool>) -> Result<()> {
+    let pool = &mut ctx.accounts.stake_pool;
+
+    // Simply unset shutdown flag, preserve all other state
+    let was_shutdown = pool.is_shutdown;
+    pool.is_shutdown = false;
+
+    emit!(PoolRecovered {
+        pool: pool.key(),
+        channel: pool.channel,
+        total_staked: pool.total_staked,
+        staker_count: pool.staker_count,
+        was_shutdown,
+    });
+
+    msg!(
+        "Pool {} recovered from shutdown: total_staked={}, stakers={}",
+        pool.channel,
+        pool.total_staked,
+        pool.staker_count
     );
 
     Ok(())

@@ -164,3 +164,13 @@ pub struct PoolClosed {
     pub tokens_recovered: u64,
     pub timestamp: i64,
 }
+
+/// Emitted when admin recovers a shutdown pool without state loss.
+#[event]
+pub struct PoolRecovered {
+    pub pool: Pubkey,
+    pub channel: Pubkey,
+    pub total_staked: u64,
+    pub staker_count: u64,
+    pub was_shutdown: bool,
+}
