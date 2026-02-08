@@ -10,11 +10,16 @@ bytecode is tagged (or mainnet is upgraded to a verifiable build of a tagged rel
 
 | Program | Program ID | Last Deployed Slot | On-Chain Executable Hash | Verification |
 |--------|-----------|--------------------|--------------------------|-------------|
-| token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `398209178` (`2026-02-06`) | `acb30157bb26641a09c8e6136bb00355b3163e729f544a068874085f818c74dc` | Pending (Squads proposal #48) |
+| token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `398836086` (`2026-02-08`) | `9b911dcc2f93f4f6091e738ab97739e10fad728ba759d51aaa9279257c23c047` | Verified |
 | channel_vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | `398835029` (`2026-02-08`) | `acc2f64f7c0ab2f21298717d64d427c163fd0ba74d7bb376fd1d680f69b8c732` | Verified |
 
-Verification commit: `b1a9fee688f6c7b1f00624816b80e1e295ce4f70`
-Channel Vault redeployed (verifiable build) at slot `398835029`.
+Verification commits:
+- token_2022: `430ccc60c2ee614b964e429aee9403cc95f45115`
+- channel_vault: `b1a9fee688f6c7b1f00624816b80e1e295ce4f70`
+
+Latest verifications:
+- token_2022 verified with `solana-verify verify-from-repo` (tx `KPmfuW67sKqKw9QPyfVDrsFw7i2okjXmFZwe6fY3DktLmFJs9cfyqz2pvCR9j45KSPByhKea33RGPzvEmrAbxnW`)
+- channel_vault verified with `solana-verify verify-from-repo` (tx `2vMLAcXvn9rVPnJbM19exLjWsREQhMfR4bHrR9rPSjQcAepmT1VXX6ZuQ2xoJjz4RQgNLjiJWpLfPMKy1MZnKFLg`)
 
 Update this table whenever a new deployment occurs.
 

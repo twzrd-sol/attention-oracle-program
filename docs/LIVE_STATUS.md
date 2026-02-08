@@ -2,7 +2,7 @@
 
 This document tracks **on-chain deployment facts** and the current **verification status** for the programs in this repository.
 
-**Last updated:** 2026-01-27
+**Last updated:** 2026-02-08
 
 ---
 
@@ -11,6 +11,7 @@ This document tracks **on-chain deployment facts** and the current **verificatio
 | Program | Status | Program ID |
 |---------|--------|------------|
 | token_2022 | 🟢 Active | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` |
+| channel_vault | 🟢 Active | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` |
 
 ---
 
@@ -27,6 +28,17 @@ spl-token display --program-2022 -u mainnet-beta -v <MINT_ADDRESS>
 ## token_2022 (Active)
 
 **Program ID:** `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
+
+| Property | Value |
+|----------|-------|
+| Status | 🟢 Active on mainnet |
+| Upgrade Authority | See `DEPLOYMENTS.md` |
+
+---
+
+## channel_vault (Active)
+
+**Program ID:** `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ`
 
 | Property | Value |
 |----------|-------|

@@ -68,8 +68,10 @@ solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-b
 |------|---------|------|--------|-------------|
 | 2025-12-31 | token_2022 | 390,464,000 | — | Initial mainnet deployment |
 | 2026-01-25 | token_2022 | 395,779,276 | — | Verified deployment |
-| 2026-02-06 | token_2022 | 398,209,178 | — | Latest AO deployment |
+| 2026-02-06 | token_2022 | 398,209,178 | — | Pre-verifiable AO deployment |
+| 2026-02-08 | token_2022 | 398,836,086 | `430ccc6` | Verified deployment (Squads proposal #48) |
 | 2026-02-08 | channel_vault | 398,811,120 | `b1a9fee` | ExchangeRateOracle PDA + auto-update on compound |
+| 2026-02-08 | channel_vault | 398,835,029 | `b1a9fee` | Redeploy verifiable build (verified on-chain) |
 
 ## Release Process
 
