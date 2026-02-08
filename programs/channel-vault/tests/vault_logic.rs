@@ -1323,3 +1323,138 @@ fn test_emergency_timeout_penalty_stays_in_vault() {
     assert_eq!(vault.pending_deposits, 600_000_000_000);
     assert_eq!(vault.pending_withdrawals, 0);
 }
+
+// =========================================================================
+// EXCHANGE RATE ORACLE TESTS
+// =========================================================================
+
+use channel_vault::ExchangeRateOracle;
+
+fn make_oracle(vault: &ChannelVault) -> ExchangeRateOracle {
+    ExchangeRateOracle {
+        bump: 254,
+        vault: Pubkey::new_unique(),
+        version: ExchangeRateOracle::VERSION,
+        current_rate: 0,
+        total_ccm_assets: 0,
+        total_vlofi_shares: 0,
+        last_update_slot: 0,
+        last_update_timestamp: 0,
+        compound_count: 0,
+        _reserved: [0u8; 80],
+    }
+}
+
+#[test]
+fn test_oracle_update_empty_vault() {
+    let vault = make_vault();
+    let mut oracle = make_oracle(&vault);
+
+    oracle.update_from_vault(&vault, 100_000, 1_700_000_000).unwrap();
+
+    // Empty vault: 0 shares → 1:1 rate
+    assert_eq!(oracle.current_rate, 1_000_000_000);
+    assert_eq!(oracle.total_ccm_assets, 0);
+    assert_eq!(oracle.total_vlofi_shares, 0);
+    assert_eq!(oracle.last_update_slot, 100_000);
+    assert_eq!(oracle.last_update_timestamp, 1_700_000_000);
+    assert_eq!(oracle.compound_count, 0);
+}
+
+#[test]
+fn test_oracle_update_after_deposit() {
+    let mut vault = make_vault();
+    simulate_deposit(&mut vault, 1_000_000_000_000); // 1000 CCM
+
+    let mut oracle = make_oracle(&vault);
+    oracle.update_from_vault(&vault, 200_000, 1_700_001_000).unwrap();
+
+    // 1000 CCM backing 1000 shares → 1:1 rate
+    assert_eq!(oracle.current_rate, 1_000_000_000);
+    assert_eq!(oracle.total_ccm_assets, 1_000_000_000_000);
+    assert_eq!(oracle.total_vlofi_shares, 1_000_000_000_000);
+}
+
+#[test]
+fn test_oracle_rate_matches_vault_exchange_rate() {
+    let mut vault = make_vault();
+    simulate_deposit(&mut vault, 1_000_000_000_000);
+    simulate_compound(&mut vault);
+    vault.total_staked += 100_000_000_000; // +100 CCM rewards
+
+    let vault_rate = vault.exchange_rate().unwrap();
+
+    let mut oracle = make_oracle(&vault);
+    oracle.update_from_vault(&vault, 300_000, 1_700_002_000).unwrap();
+
+    // Oracle rate (u128) should match vault rate (u64) exactly
+    assert_eq!(oracle.current_rate, vault_rate as u128,
+        "Oracle rate must match vault.exchange_rate()");
+}
+
+#[test]
+fn test_oracle_rate_increases_monotonically_with_rewards() {
+    let mut vault = make_vault();
+    simulate_deposit(&mut vault, 1_000_000_000_000);
+    simulate_compound(&mut vault);
+
+    let mut oracle = make_oracle(&vault);
+    oracle.update_from_vault(&vault, 100_000, 1_700_000_000).unwrap();
+    let rate_1 = oracle.current_rate;
+
+    // Add rewards
+    vault.total_staked += 50_000_000_000;
+    vault.compound_count += 1;
+    oracle.update_from_vault(&vault, 200_000, 1_700_001_000).unwrap();
+    let rate_2 = oracle.current_rate;
+
+    // More rewards
+    vault.total_staked += 50_000_000_000;
+    vault.compound_count += 1;
+    oracle.update_from_vault(&vault, 300_000, 1_700_002_000).unwrap();
+    let rate_3 = oracle.current_rate;
+
+    assert!(rate_2 > rate_1, "Rate should increase after first rewards");
+    assert!(rate_3 > rate_2, "Rate should increase after second rewards");
+}
+
+#[test]
+fn test_oracle_compound_count_syncs() {
+    let mut vault = make_vault();
+    simulate_deposit(&mut vault, 1_000_000_000_000);
+
+    vault.compound_count = 42;
+
+    let mut oracle = make_oracle(&vault);
+    oracle.update_from_vault(&vault, 100_000, 1_700_000_000).unwrap();
+
+    assert_eq!(oracle.compound_count, 42);
+}
+
+#[test]
+fn test_oracle_update_insolvent_vault_errors() {
+    let mut vault = make_vault();
+    vault.total_shares = 100;
+    vault.pending_withdrawals = 1_000; // Insolvent
+
+    let mut oracle = make_oracle(&vault);
+    let result = oracle.update_from_vault(&vault, 100_000, 1_700_000_000);
+
+    assert!(result.is_err(), "Oracle update should fail on insolvent vault");
+}
+
+#[test]
+fn test_oracle_large_values_no_overflow() {
+    let mut vault = make_vault();
+    // 10 billion CCM staked, 10 billion shares
+    vault.total_staked = 10_000_000_000_000_000_000; // 10B CCM
+    vault.total_shares = 10_000_000_000_000_000_000;
+
+    let mut oracle = make_oracle(&vault);
+    let result = oracle.update_from_vault(&vault, 500_000, 1_700_003_000);
+
+    assert!(result.is_ok(), "Should handle large values without overflow");
+    assert_eq!(oracle.current_rate, 1_000_000_000); // 1:1
+}
+
+// TODO(human): implement test_oracle_consistency_across_vault_operations

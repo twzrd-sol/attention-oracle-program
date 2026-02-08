@@ -106,7 +106,7 @@ pub mod channel_vault {
     /// Compound pending deposits into Oracle stake.
     /// Anyone can call this (keeper incentive).
     pub fn compound<'info>(
-        ctx: Context<'_, '_, '_, 'info, Compound<'info>>,
+        ctx: Context<'_, '_, 'info, 'info, Compound<'info>>,
     ) -> Result<()> {
         instructions::compound::handler(ctx)
     }
@@ -175,5 +175,15 @@ pub mod channel_vault {
     /// to reconcile with on-chain Oracle state.
     pub fn migrate_oracle_position(ctx: Context<MigrateOraclePosition>) -> Result<()> {
         instructions::migrate_oracle_position::handler(ctx)
+    }
+
+    // -------------------------------------------------------------------------
+    // Exchange Rate Oracle
+    // -------------------------------------------------------------------------
+
+    /// Initialize the exchange rate oracle PDA for a vault.
+    /// One-time setup, admin-only. After init, compound() updates it automatically.
+    pub fn initialize_exchange_rate(ctx: Context<InitializeExchangeRate>) -> Result<()> {
+        instructions::exchange_rate::initialize_exchange_rate(ctx)
     }
 }

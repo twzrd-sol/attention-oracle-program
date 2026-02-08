@@ -21,8 +21,8 @@ use crate::constants::{
     VAULT_SEED,
 };
 use crate::errors::VaultError;
-use crate::events::{Compounded, CompoundBountyPaid};
-use crate::state::{ChannelVault, VaultOraclePosition};
+use crate::events::{Compounded, CompoundBountyPaid, ExchangeRateUpdated};
+use crate::state::{ChannelVault, ExchangeRateOracle, VaultOraclePosition};
 
 // Import Oracle types, CPI, and state for pre-check
 use token_2022::{
@@ -214,7 +214,66 @@ pub struct Compound<'info> {
     pub rent: Sysvar<'info, Rent>,
 }
 
-pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Result<()> {
+/// Update the ExchangeRateOracle if provided as a remaining account.
+/// Extracted to its own function to avoid exceeding the SBF 4KB stack frame
+/// limit in the compound handler. Derives vault_key and program_id internally
+/// to minimize the caller's stack footprint.
+#[inline(never)]
+fn maybe_update_exchange_rate_oracle<'a>(
+    vault: &ChannelVault,
+    remaining_accounts: &'a [AccountInfo<'a>],
+) -> Result<()> {
+    let oracle_info = match remaining_accounts.first() {
+        Some(info) => info,
+        None => return Ok(()),
+    };
+
+    let program_id = &crate::id();
+
+    // Re-derive vault PDA key from stored seeds (avoids passing Pubkey on caller stack)
+    let vault_key = Pubkey::create_program_address(
+        &[VAULT_SEED, vault.channel_config.as_ref(), &[vault.bump]],
+        program_id,
+    ).map_err(|_| error!(VaultError::MathOverflow))?;
+
+    let expected_oracle = Pubkey::find_program_address(
+        &[crate::constants::EXCHANGE_RATE_SEED, vault_key.as_ref()],
+        program_id,
+    ).0;
+
+    if oracle_info.key() != expected_oracle
+        || !oracle_info.is_writable
+        || oracle_info.owner != program_id
+    {
+        return Ok(());
+    }
+
+    let mut oracle_account: Account<ExchangeRateOracle> =
+        Account::try_from(oracle_info)?;
+
+    if oracle_account.vault != vault_key {
+        return Ok(());
+    }
+
+    let clock = Clock::get()?;
+    oracle_account.update_from_vault(vault, clock.slot, clock.unix_timestamp)?;
+
+    emit!(ExchangeRateUpdated {
+        vault: vault_key,
+        current_rate: oracle_account.current_rate,
+        total_ccm_assets: oracle_account.total_ccm_assets,
+        total_vlofi_shares: oracle_account.total_vlofi_shares,
+        compound_count: vault.compound_count,
+        slot: clock.slot,
+        timestamp: clock.unix_timestamp,
+    });
+
+    oracle_account.exit(program_id)?;
+
+    Ok(())
+}
+
+pub fn handler<'info>(ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -> Result<()> {
     let vault = &ctx.accounts.vault;
     let position = &ctx.accounts.vault_oracle_position;
     let clock = Clock::get()?;
@@ -429,6 +488,10 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, Compound<'info>>) -> Resul
     position.oracle_user_stake = ctx.accounts.oracle_user_stake.key();
     position.oracle_nft_mint = ctx.accounts.oracle_nft_mint.key();
     position.oracle_nft_ata = ctx.accounts.vault_nft_ata.key();
+
+    // Update exchange rate oracle if provided as remaining account.
+    // Best-effort: oracle update failure must never block compounding.
+    let _ = maybe_update_exchange_rate_oracle(vault, ctx.remaining_accounts);
 
     emit!(Compounded {
         vault: vault.key(),
