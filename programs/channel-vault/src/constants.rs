@@ -21,6 +21,9 @@ pub const VAULT_ORACLE_POSITION_SEED: &[u8] = b"vault_oracle";
 /// Seed for withdraw requests: ["withdraw", vault, user, request_id]
 pub const WITHDRAW_REQUEST_SEED: &[u8] = b"withdraw";
 
+/// Seed for exchange rate oracle: ["exchange_rate", vault]
+pub const EXCHANGE_RATE_SEED: &[u8] = b"exchange_rate";
+
 // =============================================================================
 // STAKING PARAMETERS
 // =============================================================================

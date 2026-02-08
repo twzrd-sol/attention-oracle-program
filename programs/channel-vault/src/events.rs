@@ -203,3 +203,19 @@ pub struct EmergencyTimeoutWithdrawn {
     pub slots_since_compound: u64,
     pub timestamp: i64,
 }
+
+/// Emitted when exchange rate oracle is updated (on every compound).
+#[event]
+pub struct ExchangeRateUpdated {
+    pub vault: Pubkey,
+    /// CCM per vLOFI, 9-decimal fixed point (u128)
+    pub current_rate: u128,
+    /// Total CCM net assets
+    pub total_ccm_assets: u128,
+    /// Total vLOFI shares outstanding
+    pub total_vlofi_shares: u128,
+    /// Compound count at update
+    pub compound_count: u64,
+    pub slot: u64,
+    pub timestamp: i64,
+}

@@ -307,3 +307,94 @@ impl UserVaultState {
         + 8   // total_deposited
         + 8;  // total_redeemed
 }
+
+// =============================================================================
+// EXCHANGE RATE ORACLE
+// =============================================================================
+
+/// Public, verifiable exchange rate feed for vLOFI pricing.
+/// Seeds: ["exchange_rate", vault]
+///
+/// External protocols (Kamino, marginfi, Switchboard, frontends) read this
+/// account via `getAccountInfo` — no CPI needed. Self-contained: consumers
+/// can verify `current_rate == (total_ccm_assets * 1e9) / total_vlofi_shares`
+/// without loading the full ChannelVault account.
+#[account]
+pub struct ExchangeRateOracle {
+    /// PDA bump seed
+    pub bump: u8,
+    /// The vault this oracle belongs to — binds the PDA and allows
+    /// consumers to verify they're reading the correct one.
+    pub vault: Pubkey,
+    /// Version for future upgrades (start at 1). Allows adding fields
+    /// to reserved space and detecting layout.
+    pub version: u8,
+    /// Canonical exchange rate: CCM per vLOFI, fixed-point with 9 decimals.
+    /// Computed as `(total_ccm_assets * 1e9) / total_vlofi_shares`.
+    /// A value of 1_000_000_000 means 1 vLOFI = 1 CCM.
+    pub current_rate: u128,
+    /// Total CCM currently backing the vault (staked + pending + reserve - pending_withdrawals).
+    /// This is net_assets() at the moment of update.
+    pub total_ccm_assets: u128,
+    /// Total vLOFI shares outstanding.
+    pub total_vlofi_shares: u128,
+    /// Slot when this oracle was last updated — critical for staleness checks.
+    pub last_update_slot: u64,
+    /// Clock unix timestamp when last updated — useful for off-chain indexing
+    /// and future TWAP calculations.
+    pub last_update_timestamp: i64,
+    /// Number of compounds executed (monotonic, for health monitoring).
+    pub compound_count: u64,
+    /// Reserved space for future extensions (TWAP, secondary rates, flags).
+    pub _reserved: [u8; 80],
+}
+
+impl ExchangeRateOracle {
+    pub const LEN: usize = 8   // discriminator
+        + 1   // bump
+        + 32  // vault
+        + 1   // version
+        + 16  // current_rate (u128)
+        + 16  // total_ccm_assets (u128)
+        + 16  // total_vlofi_shares (u128)
+        + 8   // last_update_slot
+        + 8   // last_update_timestamp
+        + 8   // compound_count
+        + 80; // _reserved
+}
+
+impl ExchangeRateOracle {
+    pub const VERSION: u8 = 1;
+
+    /// Update the oracle from current vault state.
+    pub fn update_from_vault(
+        &mut self,
+        vault: &ChannelVault,
+        slot: u64,
+        timestamp: i64,
+    ) -> Result<()> {
+        let net_assets = vault.net_assets()?;
+        let total_shares = vault.total_shares;
+
+        // Compute rate: (net_assets * 1e9) / total_shares
+        // Uses u128 throughout to prevent overflow
+        let rate = if total_shares == 0 {
+            1_000_000_000u128 // 1:1 when no shares exist
+        } else {
+            (net_assets as u128)
+                .checked_mul(1_000_000_000)
+                .ok_or(VaultError::MathOverflow)?
+                .checked_div(total_shares as u128)
+                .ok_or(VaultError::MathOverflow)?
+        };
+
+        self.current_rate = rate;
+        self.total_ccm_assets = net_assets as u128;
+        self.total_vlofi_shares = total_shares as u128;
+        self.last_update_slot = slot;
+        self.last_update_timestamp = timestamp;
+        self.compound_count = vault.compound_count;
+
+        Ok(())
+    }
+}
