@@ -39,6 +39,7 @@ use token_2022::{
 ///
 /// We must validate BEFORE the CPI because Solana CPI errors propagate
 /// immediately through the runtime — they cannot be caught by the caller.
+#[inline(never)]
 fn has_claimable_rewards(
     oracle_stake_pool: &ChannelStakePool,
     oracle_user_stake_info: &AccountInfo,
@@ -273,21 +274,190 @@ fn maybe_update_exchange_rate_oracle<'a>(
     Ok(())
 }
 
-pub fn handler<'info>(ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -> Result<()> {
-    let vault = &ctx.accounts.vault;
-    let position = &ctx.accounts.vault_oracle_position;
+// ---------------------------------------------------------------------------
+// CPI helpers — each gets its own stack frame via #[inline(never)] to stay
+// within SBF's 4096-byte-per-frame limit.  The handler orchestrates them
+// sequentially so frames are reused, not stacked.
+// ---------------------------------------------------------------------------
+
+/// Claim pending Oracle rewards into vault_ccm_buffer.
+/// Returns the CCM amount claimed.
+#[inline(never)]
+fn do_claim_rewards<'info>(
+    accs: &mut Compound<'info>,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<u64> {
+    msg!("Claiming pending rewards before unstake...");
+    let buffer_before = accs.vault_ccm_buffer.amount;
+
+    let claim_accounts = ClaimChannelRewards {
+        user: accs.vault.to_account_info(),
+        channel_config: accs.oracle_channel_config.to_account_info(),
+        mint: accs.ccm_mint.to_account_info(),
+        stake_pool: accs.oracle_stake_pool.to_account_info(),
+        user_stake: accs.oracle_user_stake.to_account_info(),
+        vault: accs.oracle_vault.to_account_info(),
+        user_token_account: accs.vault_ccm_buffer.to_account_info(),
+        token_program: accs.token_2022_program.to_account_info(),
+    };
+
+    let claim_ctx = CpiContext::new_with_signer(
+        accs.oracle_program.to_account_info(),
+        claim_accounts,
+        signer_seeds,
+    );
+
+    token_2022::cpi::claim_channel_rewards(claim_ctx)?;
+
+    accs.vault_ccm_buffer.reload()?;
+    let buffer_after = accs.vault_ccm_buffer.amount;
+    let claimed = buffer_after.saturating_sub(buffer_before);
+    msg!("Claimed {} CCM in rewards", claimed);
+    Ok(claimed)
+}
+
+/// Unstake from Oracle, returning actual CCM received (net of transfer fees).
+#[inline(never)]
+fn do_unstake<'info>(
+    accs: &mut Compound<'info>,
+    signer_seeds: &[&[&[u8]]],
+    stake_amount: u64,
+) -> Result<u64> {
+    msg!("Unstaking {} CCM from Oracle", stake_amount);
+
+    accs.vault_ccm_buffer.reload()?;
+    let buffer_before = accs.vault_ccm_buffer.amount;
+
+    let unstake_accounts = UnstakeChannel {
+        user: accs.vault.to_account_info(),
+        channel_config: accs.oracle_channel_config.to_account_info(),
+        mint: accs.ccm_mint.to_account_info(),
+        stake_pool: accs.oracle_stake_pool.to_account_info(),
+        user_stake: accs.oracle_user_stake.to_account_info(),
+        vault: accs.oracle_vault.to_account_info(),
+        user_token_account: accs.vault_ccm_buffer.to_account_info(),
+        nft_mint: accs.oracle_nft_mint.to_account_info(),
+        nft_ata: accs.vault_nft_ata.to_account_info(),
+        token_program: accs.token_2022_program.to_account_info(),
+        associated_token_program: accs.associated_token_program.to_account_info(),
+    };
+
+    let unstake_ctx = CpiContext::new_with_signer(
+        accs.oracle_program.to_account_info(),
+        unstake_accounts,
+        signer_seeds,
+    );
+
+    token_2022::cpi::unstake_channel(unstake_ctx)?;
+
+    // Measure actual received (net of transfer fees).
+    // Using stake_amount directly would cause phantom inflation since
+    // the Oracle holds less due to inbound transfer fee.
+    accs.vault_ccm_buffer.reload()?;
+    let unstaked_received = accs.vault_ccm_buffer.amount
+        .checked_sub(buffer_before)
+        .ok_or(VaultError::MathOverflow)?;
+
+    msg!("Unstaked {} CCM from Oracle (actual received)", unstaked_received);
+    Ok(unstaked_received)
+}
+
+/// Pay compound bounty to keeper from claimed rewards.
+/// Returns bounty amount paid (0 if none).
+#[inline(never)]
+fn do_pay_bounty<'info>(
+    accs: &Compound<'info>,
+    signer_seeds: &[&[&[u8]]],
+    rewards_claimed: u64,
+    clock_timestamp: i64,
+) -> Result<u64> {
+    let bounty_paid = (rewards_claimed as u128)
+        .checked_mul(COMPOUND_BOUNTY_BPS as u128)
+        .ok_or(VaultError::MathOverflow)?
+        .checked_div(BPS_DENOMINATOR as u128)
+        .ok_or(VaultError::MathOverflow)? as u64;
+
+    if bounty_paid == 0 {
+        return Ok(0);
+    }
+
+    let bounty_ctx = CpiContext::new_with_signer(
+        accs.token_2022_program.to_account_info(),
+        TransferChecked {
+            from: accs.vault_ccm_buffer.to_account_info(),
+            mint: accs.ccm_mint.to_account_info(),
+            to: accs.payer_ccm_ata.to_account_info(),
+            authority: accs.vault.to_account_info(),
+        },
+        signer_seeds,
+    );
+    anchor_spl::token_interface::transfer_checked(
+        bounty_ctx,
+        bounty_paid,
+        accs.ccm_mint.decimals,
+    )?;
+
+    emit!(CompoundBountyPaid {
+        vault: accs.vault.key(),
+        caller: accs.payer.key(),
+        ccm_amount: bounty_paid,
+        timestamp: clock_timestamp,
+    });
+
+    Ok(bounty_paid)
+}
+
+/// Stake CCM into Oracle with lock duration.
+#[inline(never)]
+fn do_stake<'info>(
+    accs: &Compound<'info>,
+    signer_seeds: &[&[&[u8]]],
+    amount: u64,
+    lock_slots: u64,
+) -> Result<()> {
+    msg!("Staking {} CCM in Oracle with {} slot lock", amount, lock_slots);
+
+    let stake_accounts = StakeChannel {
+        user: accs.vault.to_account_info(),
+        payer: accs.payer.to_account_info(),
+        protocol_state: accs.oracle_protocol.to_account_info(),
+        channel_config: accs.oracle_channel_config.to_account_info(),
+        mint: accs.ccm_mint.to_account_info(),
+        stake_pool: accs.oracle_stake_pool.to_account_info(),
+        user_stake: accs.oracle_user_stake.to_account_info(),
+        vault: accs.oracle_vault.to_account_info(),
+        user_token_account: accs.vault_ccm_buffer.to_account_info(),
+        nft_mint: accs.oracle_nft_mint.to_account_info(),
+        nft_ata: accs.vault_nft_ata.to_account_info(),
+        token_program: accs.token_2022_program.to_account_info(),
+        associated_token_program: accs.associated_token_program.to_account_info(),
+        system_program: accs.system_program.to_account_info(),
+        rent: accs.rent.to_account_info(),
+    };
+
+    let stake_ctx = CpiContext::new_with_signer(
+        accs.oracle_program.to_account_info(),
+        stake_accounts,
+        signer_seeds,
+    );
+
+    token_2022::cpi::stake_channel(stake_ctx, amount, lock_slots)
+}
+
+pub fn handler<'info>(mut ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -> Result<()> {
     let clock = Clock::get()?;
 
-    // Check if there's anything to compound
-    let pending = vault.pending_deposits;
-    let reserved_for_withdrawals = vault.pending_withdrawals;
+    // Read state into locals — frees ctx.accounts for sequential CPI borrows
+    let pending = ctx.accounts.vault.pending_deposits;
+    let reserved_for_withdrawals = ctx.accounts.vault.pending_withdrawals;
     let stakeable_pending = pending.saturating_sub(reserved_for_withdrawals);
+    let is_active = ctx.accounts.vault_oracle_position.is_active;
 
-    // Need either stakeable pending deposits OR an active position to roll over
-    require!(stakeable_pending > 0 || position.is_active, VaultError::NothingToCompound);
+    require!(stakeable_pending > 0 || is_active, VaultError::NothingToCompound);
 
-    let channel_config_key = vault.channel_config;
-    let vault_bump = vault.bump;
+    let channel_config_key = ctx.accounts.vault.channel_config;
+    let vault_bump = ctx.accounts.vault.bump;
+    let lock_duration_slots = ctx.accounts.vault.lock_duration_slots;
 
     // Vault signer seeds
     let signer_seeds: &[&[&[u8]]] = &[&[
@@ -296,102 +466,33 @@ pub fn handler<'info>(ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -> Re
         &[vault_bump],
     ]];
 
-    // Start with stakeable pending (reserve stays in buffer for withdrawals)
     let mut amount_to_stake = stakeable_pending;
-
-    // Track rewards claimed for event
     let mut rewards_claimed: u64 = 0;
 
-    // If there's an active position, we need to check if lock expired
-    if position.is_active {
-        // Check lock status
-        if position.lock_end_slot > clock.slot {
-            // Lock not expired - can't compound yet
-            msg!("Oracle stake still locked until slot {}", position.lock_end_slot);
+    // If there's an active position, roll over: claim → unstake → re-stake
+    if is_active {
+        let lock_end = ctx.accounts.vault_oracle_position.lock_end_slot;
+        if lock_end > clock.slot {
+            msg!("Oracle stake still locked until slot {}", lock_end);
             return Err(VaultError::OracleStakeLocked.into());
         }
 
         // Pre-check for claimable rewards BEFORE the CPI.
-        // Solana CPI errors propagate immediately and cannot be caught,
-        // so we must validate before calling claim_channel_rewards.
+        // Solana CPI errors propagate immediately and cannot be caught.
         if has_claimable_rewards(
             &ctx.accounts.oracle_stake_pool,
             &ctx.accounts.oracle_user_stake.to_account_info(),
             clock.slot,
             ctx.accounts.oracle_vault.amount,
         ) {
-            msg!("Claiming pending rewards before unstake...");
-
-            let buffer_before = ctx.accounts.vault_ccm_buffer.amount;
-
-            let claim_accounts = ClaimChannelRewards {
-                user: ctx.accounts.vault.to_account_info(),
-                channel_config: ctx.accounts.oracle_channel_config.to_account_info(),
-                mint: ctx.accounts.ccm_mint.to_account_info(),
-                stake_pool: ctx.accounts.oracle_stake_pool.to_account_info(),
-                user_stake: ctx.accounts.oracle_user_stake.to_account_info(),
-                vault: ctx.accounts.oracle_vault.to_account_info(),
-                user_token_account: ctx.accounts.vault_ccm_buffer.to_account_info(),
-                token_program: ctx.accounts.token_2022_program.to_account_info(),
-            };
-
-            let claim_ctx = CpiContext::new_with_signer(
-                ctx.accounts.oracle_program.to_account_info(),
-                claim_accounts,
-                signer_seeds,
-            );
-
-            token_2022::cpi::claim_channel_rewards(claim_ctx)?;
-
-            ctx.accounts.vault_ccm_buffer.reload()?;
-            let buffer_after = ctx.accounts.vault_ccm_buffer.amount;
-            rewards_claimed = buffer_after.saturating_sub(buffer_before);
-            msg!("Claimed {} CCM in rewards", rewards_claimed);
+            rewards_claimed = do_claim_rewards(&mut ctx.accounts, signer_seeds)?;
         } else {
             msg!("No claimable rewards, skipping claim CPI");
         }
 
-        // Lock expired - unstake
-        msg!("Unstaking {} CCM from Oracle", position.stake_amount);
+        let stake_amount = ctx.accounts.vault_oracle_position.stake_amount;
+        let unstaked_received = do_unstake(&mut ctx.accounts, signer_seeds, stake_amount)?;
 
-        // Capture buffer balance before unstake (after any claim)
-        ctx.accounts.vault_ccm_buffer.reload()?;
-        let buffer_before_unstake = ctx.accounts.vault_ccm_buffer.amount;
-
-        let unstake_accounts = UnstakeChannel {
-            user: ctx.accounts.vault.to_account_info(),
-            channel_config: ctx.accounts.oracle_channel_config.to_account_info(),
-            mint: ctx.accounts.ccm_mint.to_account_info(),
-            stake_pool: ctx.accounts.oracle_stake_pool.to_account_info(),
-            user_stake: ctx.accounts.oracle_user_stake.to_account_info(),
-            vault: ctx.accounts.oracle_vault.to_account_info(),
-            user_token_account: ctx.accounts.vault_ccm_buffer.to_account_info(),
-            nft_mint: ctx.accounts.oracle_nft_mint.to_account_info(),
-            nft_ata: ctx.accounts.vault_nft_ata.to_account_info(),
-            token_program: ctx.accounts.token_2022_program.to_account_info(),
-            associated_token_program: ctx.accounts.associated_token_program.to_account_info(),
-        };
-
-        let unstake_ctx = CpiContext::new_with_signer(
-            ctx.accounts.oracle_program.to_account_info(),
-            unstake_accounts,
-            signer_seeds,
-        );
-
-        token_2022::cpi::unstake_channel(unstake_ctx)?;
-
-        // Measure actual received from Oracle (net of transfer fees)
-        // Using position.stake_amount here would cause phantom inflation:
-        // the Oracle holds less than what we recorded due to inbound transfer fee,
-        // so the return is smaller than position.stake_amount.
-        ctx.accounts.vault_ccm_buffer.reload()?;
-        let unstaked_received = ctx.accounts.vault_ccm_buffer.amount
-            .checked_sub(buffer_before_unstake)
-            .ok_or(VaultError::MathOverflow)?;
-
-        msg!("Unstaked {} CCM from Oracle (actual received)", unstaked_received);
-
-        // Add actual unstaked amount + claimed rewards to what we'll re-stake
         amount_to_stake = amount_to_stake
             .checked_add(unstaked_received)
             .ok_or(VaultError::MathOverflow)?
@@ -399,80 +500,25 @@ pub fn handler<'info>(ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -> Re
             .ok_or(VaultError::MathOverflow)?;
     }
 
-    // Now stake the total amount
     // Pay keeper bounty from claimed rewards only (never from principal)
     if rewards_claimed > 0 && COMPOUND_BOUNTY_BPS > 0 {
-        let bounty_paid = (rewards_claimed as u128)
-            .checked_mul(COMPOUND_BOUNTY_BPS as u128)
-            .ok_or(VaultError::MathOverflow)?
-            .checked_div(BPS_DENOMINATOR as u128)
-            .ok_or(VaultError::MathOverflow)? as u64;
-
+        let bounty_paid = do_pay_bounty(
+            &ctx.accounts, signer_seeds, rewards_claimed, clock.unix_timestamp,
+        )?;
         if bounty_paid > 0 {
-            let bounty_ctx = CpiContext::new_with_signer(
-                ctx.accounts.token_2022_program.to_account_info(),
-                TransferChecked {
-                    from: ctx.accounts.vault_ccm_buffer.to_account_info(),
-                    mint: ctx.accounts.ccm_mint.to_account_info(),
-                    to: ctx.accounts.payer_ccm_ata.to_account_info(),
-                    authority: ctx.accounts.vault.to_account_info(),
-                },
-                signer_seeds,
-            );
-            anchor_spl::token_interface::transfer_checked(
-                bounty_ctx,
-                bounty_paid,
-                ctx.accounts.ccm_mint.decimals,
-            )?;
-
             amount_to_stake = amount_to_stake
                 .checked_sub(bounty_paid)
                 .ok_or(VaultError::MathOverflow)?;
-
-            emit!(CompoundBountyPaid {
-                vault: vault.key(),
-                caller: ctx.accounts.payer.key(),
-                ccm_amount: bounty_paid,
-                timestamp: clock.unix_timestamp,
-            });
         }
     }
 
     if amount_to_stake > 0 {
-        msg!("Staking {} CCM in Oracle with {} slot lock", amount_to_stake, vault.lock_duration_slots);
-
-        let stake_accounts = StakeChannel {
-            user: ctx.accounts.vault.to_account_info(),
-            payer: ctx.accounts.payer.to_account_info(),
-            protocol_state: ctx.accounts.oracle_protocol.to_account_info(),
-            channel_config: ctx.accounts.oracle_channel_config.to_account_info(),
-            mint: ctx.accounts.ccm_mint.to_account_info(),
-            stake_pool: ctx.accounts.oracle_stake_pool.to_account_info(),
-            user_stake: ctx.accounts.oracle_user_stake.to_account_info(),
-            vault: ctx.accounts.oracle_vault.to_account_info(),
-            user_token_account: ctx.accounts.vault_ccm_buffer.to_account_info(),
-            nft_mint: ctx.accounts.oracle_nft_mint.to_account_info(),
-            nft_ata: ctx.accounts.vault_nft_ata.to_account_info(),
-            token_program: ctx.accounts.token_2022_program.to_account_info(),
-            associated_token_program: ctx.accounts.associated_token_program.to_account_info(),
-            system_program: ctx.accounts.system_program.to_account_info(),
-            rent: ctx.accounts.rent.to_account_info(),
-        };
-
-        let stake_ctx = CpiContext::new_with_signer(
-            ctx.accounts.oracle_program.to_account_info(),
-            stake_accounts,
-            signer_seeds,
-        );
-
-        token_2022::cpi::stake_channel(stake_ctx, amount_to_stake, vault.lock_duration_slots)?;
+        do_stake(&ctx.accounts, signer_seeds, amount_to_stake, lock_duration_slots)?;
     }
 
     // Update vault state
     let vault = &mut ctx.accounts.vault;
     vault.total_staked = amount_to_stake;
-    // Reduce pending_deposits by what we staked
-    // Remaining in buffer = pending_withdrawals (reserved) + emergency_reserve
     vault.pending_deposits = vault
         .pending_deposits
         .checked_sub(stakeable_pending)
@@ -484,7 +530,7 @@ pub fn handler<'info>(ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -> Re
     let position = &mut ctx.accounts.vault_oracle_position;
     position.is_active = amount_to_stake > 0;
     position.stake_amount = amount_to_stake;
-    position.lock_end_slot = clock.slot.saturating_add(vault.lock_duration_slots);
+    position.lock_end_slot = clock.slot.saturating_add(lock_duration_slots);
     position.oracle_user_stake = ctx.accounts.oracle_user_stake.key();
     position.oracle_nft_mint = ctx.accounts.oracle_nft_mint.key();
     position.oracle_nft_ata = ctx.accounts.vault_nft_ata.key();

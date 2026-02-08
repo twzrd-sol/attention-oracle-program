@@ -278,6 +278,12 @@ pub mod token_2022 {
         instructions::staking::admin_shutdown_pool(ctx, reason)
     }
 
+    /// Admin: Recover a shutdown pool without state loss.
+    /// Unsets the shutdown flag, preserving all staking data and rewards.
+    pub fn admin_recover_pool(ctx: Context<AdminRecoverPool>) -> Result<()> {
+        instructions::staking::admin_recover_pool(ctx)
+    }
+
     /// Admin: Close a fully-emptied shutdown pool, recovering remaining
     /// reward tokens and rent. Requires: is_shutdown, 0 stakers, 0 staked.
     pub fn close_stake_pool(ctx: Context<CloseStakePool>) -> Result<()> {
