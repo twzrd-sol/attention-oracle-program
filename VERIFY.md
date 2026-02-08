@@ -10,10 +10,11 @@ bytecode is tagged (or mainnet is upgraded to a verifiable build of a tagged rel
 
 | Program | Program ID | Last Deployed Slot | On-Chain Executable Hash | Verification |
 |--------|-----------|--------------------|--------------------------|-------------|
-| token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `398209178` (`2026-02-06`) | `acb30157bb26641a09c8e6136bb00355b3163e729f544a068874085f818c74dc` | Pending (build running) |
-| channel_vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | `398811120` (`2026-02-08`) | `1e3e17b12c5d9447edf3b6609f16b00f7a1e251af89882f9793a93b4f40c1c7f` | Pending (build running) |
+| token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `398209178` (`2026-02-06`) | `acb30157bb26641a09c8e6136bb00355b3163e729f544a068874085f818c74dc` | Pending (Squads proposal #48) |
+| channel_vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | `398835029` (`2026-02-08`) | `acc2f64f7c0ab2f21298717d64d427c163fd0ba74d7bb376fd1d680f69b8c732` | Verified |
 
 Verification commit: `b1a9fee688f6c7b1f00624816b80e1e295ce4f70`
+Channel Vault redeployed (verifiable build) at slot `398835029`.
 
 Update this table whenever a new deployment occurs.
 
