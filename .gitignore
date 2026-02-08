@@ -37,8 +37,6 @@ private_twzrd/
 workers/
 
 # Environment files (never commit secrets)
-.env
-.env.*.local
 .env*
 **/.env*
 !.env.example

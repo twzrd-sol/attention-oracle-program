@@ -1,6 +1,6 @@
 # Program Verification
 
-This repo contains the `token_2022` upgradeable program deployed on Solana mainnet.
+This repo contains the `token_2022` (Attention Oracle) and `channel_vault` programs deployed on Solana mainnet.
 
 Verification is intentionally treated as a first-class status item. When the repo commit that matches the deployed
 bytecode is tagged (or mainnet is upgraded to a verifiable build of a tagged release), verification is **Verified**
@@ -10,7 +10,10 @@ bytecode is tagged (or mainnet is upgraded to a verifiable build of a tagged rel
 
 | Program | Program ID | Last Deployed Slot | On-Chain Executable Hash | Verification |
 |--------|-----------|--------------------|--------------------------|-------------|
-| token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `395779276` (`2026-01-25T06:14:40Z`) | `34d097682eadf09986cebdc25579c9c3aa30125f605cb7e0aa5751787bb5d4db` | Verified |
+| token_2022 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `398209178` (`2026-02-06`) | `acb30157bb26641a09c8e6136bb00355b3163e729f544a068874085f818c74dc` | Pending (build running) |
+| channel_vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | `398811120` (`2026-02-08`) | `1e3e17b12c5d9447edf3b6609f16b00f7a1e251af89882f9793a93b4f40c1c7f` | Pending (build running) |
+
+Verification commit: `b1a9fee688f6c7b1f00624816b80e1e295ce4f70`
 
 Update this table whenever a new deployment occurs.
 
@@ -30,13 +33,17 @@ default RPC via `solana config set --url https://api.mainnet-beta.solana.com`).
 Anchor verifiable builds (recommended for this repo):
 
 ```bash
+# AO program
 anchor build --verifiable --program-name token_2022 --no-idl
+# Channel Vault
+anchor build --verifiable --program-name channel_vault --no-idl
 ```
 
 Hash the local verifiable artifacts:
 
 ```bash
 solana-verify get-executable-hash target/verifiable/token_2022.so
+solana-verify get-executable-hash target/verifiable/channel_vault.so
 ```
 
 ### 3) Verify a specific commit directly from GitHub

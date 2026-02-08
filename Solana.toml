@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 
 [programs.mainnet]
 GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop = "programs"
+5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ = "programs"
 
 [build]
 solana_version = "2.3.0"

@@ -7,7 +7,7 @@ This document records public program IDs, upgrade authority, and release policy 
 | Cluster | Program | Program ID | Program Data Account | Status |
 |---------|---------|------------|---------------------|--------|
 | mainnet-beta | Attention Oracle (Token-2022) | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `5GyaaVmzRr2r9KcUuzt9SxBVq9ubTT5m3pH9Lzy3Kh4L` | Active |
-| mainnet-beta | Channel Vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | — | Active |
+| mainnet-beta | Channel Vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | `2ubXWFAJFCnBqJ1vYCsf4q8SYRcqf5DaTfkC6wASK5SQ` | Active |
 | devnet       | Attention Oracle (Token-2022) | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | — | Active |
 
 Program IDs are sourced from `Anchor.toml`. Update this table when IDs change.
@@ -38,10 +38,10 @@ For a continuously updated snapshot (last deployed slot, hash, and verification)
 
 ## Upgrade Authority
 
-| Program | Upgrade Authority |
-|---------|-------------------|
-| Attention Oracle | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` |
-| Channel Vault | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` |
+| Program | Upgrade Authority | Type |
+|---------|-------------------|------|
+| Attention Oracle | `2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW` | Squads V4 vault PDA (3-of-5 multisig `BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ`) |
+| Channel Vault | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` | Single signer (id.json) — transfers to Squads after Phase 2 |
 
 To verify on-chain:
 ```bash
@@ -52,19 +52,24 @@ solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-b
 
 1. **Programs are upgradeable.** The upgrade authority can deploy new bytecode at any time.
 2. **No timelock.** Upgrades take effect immediately upon transaction confirmation.
-3. **Single signer.** The upgrade authority is a single keypair (not a multisig).
+3. **Attention Oracle: Squads V4 multisig (3-of-5).** Requires 3 member approvals to deploy.
+4. **Channel Vault: Single signer.** Intentional — composability upgrades pending. Transfers to Squads after Phase 2.
 
-### Planned Improvements
+### Governance Progress
 
-- [ ] Transfer upgrade authority to a multisig (e.g., Squads)
+- [x] Transfer AO upgrade authority to Squads V4 multisig
+- [ ] Transfer Channel Vault upgrade authority to Squads (after Phase 2)
 - [ ] Implement governance timelock for upgrades
-- [ ] Publish verified builds for each release
+- [x] Publish verified builds (see VERIFY.md)
 
 ## Deployment History
 
-| Date | Program | Slot | Description |
-|------|---------|------|-------------|
-| 2025-12-31 | token_2022 | 390464000 | Current mainnet deployment |
+| Date | Program | Slot | Commit | Description |
+|------|---------|------|--------|-------------|
+| 2025-12-31 | token_2022 | 390,464,000 | — | Initial mainnet deployment |
+| 2026-01-25 | token_2022 | 395,779,276 | — | Verified deployment |
+| 2026-02-06 | token_2022 | 398,209,178 | — | Latest AO deployment |
+| 2026-02-08 | channel_vault | 398,811,120 | `b1a9fee` | ExchangeRateOracle PDA + auto-update on compound |
 
 ## Release Process
 
