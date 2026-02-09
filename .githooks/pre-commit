@@ -18,7 +18,7 @@ failures=()
 md_violations=()
 for f in "${files[@]}"; do
   case "$f" in
-    SECURITY.md|VERIFY.md|PRIVACY.md|README.md|DEPLOYMENTS.md|INTEGRATION.md|docs/LIVE_STATUS.md|docs/TREASURY.md|docs/SECURITY_AUDIT.md|docs/specs/transfer-fee-capture.md) ;;  # allowed
+    SECURITY.md|VERIFY.md|PRIVACY.md|README.md|DEPLOYMENTS.md|INTEGRATION.md|CLAUDE.md|docs/LIVE_STATUS.md|docs/TREASURY.md|docs/SECURITY_AUDIT.md|docs/specs/transfer-fee-capture.md) ;;  # allowed
     *.md|*.MD) md_violations+=("$f");;
   esac
 done
