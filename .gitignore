@@ -16,6 +16,8 @@ package-lock.json
 !README.md
 !DEPLOYMENTS.md
 !INTEGRATION.md
+!UPGRADE_AUTHORITY.md
+!END_TO_END_REVIEW.md
 !docs/LIVE_STATUS.md
 !docs/TREASURY.md
 !docs/SECURITY_AUDIT.md
