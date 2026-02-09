@@ -11,7 +11,7 @@
 
 A comprehensive review of both on-chain programs in the Attention Oracle Protocol was conducted. The audit covers the Oracle program (`token_2022`) — cumulative claims, channel staking, governance, and transfer-fee management — and the Vault program (`channel_vault`) — an ERC4626-style liquid staking wrapper with compound, redeem, and emergency reserve mechanics.
 
-**Conclusion:** No critical or high-severity vulnerabilities were identified. Two medium-severity items remain open; one has been mitigated via Squads multisig (see [Open Items](#open-items)). Both programs enforce strict access control, checked arithmetic, PDA validation, and pause/shutdown controls. Admin governance has transitioned from single-key to Squads v4 multisig (Phase 2 complete).
+**Conclusion:** No critical or high-severity vulnerabilities were identified. Two medium-severity items remain open (reward rate underfunding, emergency unstake forfeiture). Open Item #3 (Immediate Admin Transfer) has been **closed** — both programs transferred to Squads v4 multisig (3-of-5 threshold) on February 8, 2026; timelock deferred in favor of emergency response capability. Both programs enforce strict access control, checked arithmetic, PDA validation, and pause/shutdown controls.
 
 **Test coverage:** 89 tests across 3 test suites (36 vault + 31 staking + 22 cumulative), all passing.
 
@@ -339,36 +339,36 @@ const trustedAuthorities = [
 
 ### 3. Immediate Admin Transfer
 
-**Severity:** Medium | **Status:** Mitigated via Squads Multisig configuration
+**Severity:** Medium | **Status:** Closed via Squads v4 multisig (3-of-5 threshold)
 
 `update_admin` executes immediately without a timelock. A compromised admin key can transfer authority in a single transaction.
 
 * **Impact:** Attacker with admin key gains full control immediately.
-* **Mitigation:** Operational controls via Squads Multisig. On-chain timelock would require program upgrade.
+* **Mitigation:** Both programs (`token_2022` and `channel-vault`) transferred to Squads v4 multisig on February 8, 2026. The 3-of-5 approval threshold ensures no single compromised key can execute `update_admin` or any other admin operation.
+* **Timelock:** Evaluated and **deferred**. The 3/5 threshold provides sufficient protection against unilateral admin actions. A blanket time delay would impair emergency response — the protocol cannot pause quickly during an active exploit if every admin transaction requires a waiting period.
 
-#### Squads Multisig Configuration (Recommended)
+#### Squads Multisig Configuration
 
-The following Squads configuration provides equivalent protection to an on-chain timelock:
+The following Squads v4 configuration is live:
 
-1. **Enable Time Delay on Vault**
-   - Navigate to Squads UI > Settings > Time Lock
-   - Set execution delay to **24-48 hours** for all transactions
-   - This creates a window for team members to review and potentially reject malicious proposals
-
-2. **Configure Approval Threshold**
-   - Set threshold to **3/5** (or higher) for admin operations
+1. **Approval Threshold**
+   - Threshold set to **3/5** for all admin operations
    - Ensures no single compromised key can execute `update_admin`
-   - Add trusted team members as vault members with appropriate permissions
+   - Trusted team members added as vault members with appropriate permissions
+
+2. **Time Delay**
+   - Time delay is optional and **not recommended** for protocols requiring emergency pause capability
+   - A blanket execution delay would prevent rapid response to exploits (e.g., pausing the protocol, shutting down compromised pools)
+   - The 3-of-5 threshold provides equivalent protection against unilateral malicious action without sacrificing incident response speed
 
 3. **Squads UI Configuration Steps**
    - Create or select your multisig vault at [v4.squads.so](https://v4.squads.so)
    - Go to **Settings** > **Multisig Settings**
    - Under **Threshold**, set to 3 of 5 signers minimum
-   - Under **Time Lock**, enable and set delay to 24-48 hours
    - Transfer program admin authority to the Squads vault address
    - Test with a non-critical transaction before transferring admin
 
-**Note:** On-chain timelock enforcement (two-step transfer with delay) is planned for a future program upgrade but requires redeployment. The Squads operational controls provide equivalent security for the current deployment.
+**Note:** On-chain timelock enforcement (two-step transfer with delay) was evaluated and deferred. The 3-of-5 multisig threshold provides strong protection while preserving the ability to respond to emergencies without delay.
 
 ---
 
@@ -430,9 +430,9 @@ All 89 tests pass on commit `cff6981`.
 
 ## Recommendations
 
-1. ~~**Multisig Transition:**~~ **COMPLETED** (commit `4e30207`) — Admin authority migrated to Squads v4 multisig. See Open Item #3 for operational timelock configuration.
+1. ~~**Multisig Transition:**~~ **COMPLETED** (February 8, 2026) — Both programs (`token_2022` and `channel-vault`) transferred to Squads v4 multisig with 3-of-5 threshold.
 
-2. **Timelock on Admin Transfer:** Configure Squads time delay (24-48h) for operational timelock. On-chain timelock would require program upgrade.
+2. ~~**Timelock on Admin Transfer:**~~ **CLOSED** — Deferred. The 3/5 multisig threshold provides sufficient protection against unilateral admin actions. A blanket time delay would delay emergency pause capability, which is unacceptable for incident response.
 
 3. **Reward Rate Validation:** Add off-chain monitoring to alert when `reward_per_slot * slots_remaining > treasury_balance`. Consider an on-chain check in a future program upgrade.
 
