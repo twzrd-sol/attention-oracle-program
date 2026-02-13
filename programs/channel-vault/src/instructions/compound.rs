@@ -407,6 +407,19 @@ fn do_pay_bounty<'info>(
     Ok(bounty_paid)
 }
 
+/// Read the actual staked amount from the Oracle's UserChannelStake after CPI.
+/// Accounts for Token-2022 transfer fees that reduce the amount AO received.
+/// The gross amount sent != net amount recorded — this function returns AO's truth.
+#[inline(never)]
+fn read_oracle_stake_amount(oracle_user_stake_info: &AccountInfo) -> Result<u64> {
+    let data = oracle_user_stake_info.try_borrow_data()
+        .map_err(|_| error!(VaultError::InvalidOracleAccount))?;
+    let mut slice: &[u8] = &data;
+    let stake = UserChannelStake::try_deserialize(&mut slice)
+        .map_err(|_| error!(VaultError::InvalidOracleAccount))?;
+    Ok(stake.amount)
+}
+
 /// Stake CCM into Oracle with lock duration.
 #[inline(never)]
 fn do_stake<'info>(
@@ -516,9 +529,19 @@ pub fn handler<'info>(mut ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -
         do_stake(&ctx.accounts, signer_seeds, amount_to_stake, lock_duration_slots)?;
     }
 
+    // Read actual staked amount from AO (net of Token-2022 transfer fee).
+    // amount_to_stake is the gross amount sent; AO receives ~0.5% less.
+    // Using AO's recorded amount prevents phantom NAV inflation that would
+    // cause withdrawal failures when the vault tries to unstake more than AO holds.
+    let actual_staked = if amount_to_stake > 0 {
+        read_oracle_stake_amount(&ctx.accounts.oracle_user_stake.to_account_info())?
+    } else {
+        0
+    };
+
     // Update vault state
     let vault = &mut ctx.accounts.vault;
-    vault.total_staked = amount_to_stake;
+    vault.total_staked = actual_staked;
     vault.pending_deposits = vault
         .pending_deposits
         .checked_sub(stakeable_pending)
@@ -528,8 +551,8 @@ pub fn handler<'info>(mut ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -
 
     // Update position state
     let position = &mut ctx.accounts.vault_oracle_position;
-    position.is_active = amount_to_stake > 0;
-    position.stake_amount = amount_to_stake;
+    position.is_active = actual_staked > 0;
+    position.stake_amount = actual_staked;
     position.lock_end_slot = clock.slot.saturating_add(lock_duration_slots);
     position.oracle_user_stake = ctx.accounts.oracle_user_stake.key();
     position.oracle_nft_mint = ctx.accounts.oracle_nft_mint.key();
