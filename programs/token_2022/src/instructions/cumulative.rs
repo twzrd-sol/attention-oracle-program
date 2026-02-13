@@ -9,7 +9,7 @@ use crate::constants::{
     MAX_PROOF_AGE_SLOTS, PROTOCOL_SEED,
 };
 use crate::errors::OracleError;
-use crate::events::{ChannelClosed, CumulativeRewardsClaimed, CumulativeRewardsClaimedV3, CreatorFeeUpdated, RootSeqRecovered};
+use crate::events::{ChannelClosed, CumulativeRewardsClaimed, CumulativeRewardsClaimedV3, CreatorFeeUpdated, CutoverEpochUpdated, RootSeqRecovered};
 use crate::merkle_proof::{compute_cumulative_leaf, compute_cumulative_leaf_v3, verify_proof};
 use crate::state::{ChannelConfigV2, ClaimStateV2, ProtocolState, RootEntry, UserChannelStake};
 
@@ -1351,6 +1351,64 @@ pub fn update_channel_creator_fee(
         "Updated creator fee: {} -> {} bps",
         old_fee,
         new_creator_fee_bps
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// UPDATE CHANNEL CUTOVER EPOCH (V2 SUNSET)
+// =============================================================================
+
+/// Set the cutover_epoch on a ChannelConfigV2 to enforce V2 sunset.
+/// Once the Solana epoch reaches cutover_epoch, V2 claims are disabled;
+/// users must migrate to V3 (stake-snapshot-bound) claims.
+///
+/// Set cutover_epoch = 0 to re-enable V2 claims (escape hatch).
+#[derive(Accounts)]
+#[instruction(channel: String)]
+pub struct UpdateChannelCutoverEpoch<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        mut,
+        seeds = [CHANNEL_CONFIG_V2_SEED, protocol_state.mint.as_ref(), &subject_id_bytes(&channel)],
+        bump = channel_config.bump,
+    )]
+    pub channel_config: Account<'info, ChannelConfigV2>,
+}
+
+pub fn update_channel_cutover_epoch(
+    ctx: Context<UpdateChannelCutoverEpoch>,
+    channel: String,
+    new_cutover_epoch: u64,
+) -> Result<()> {
+    validate_channel(&channel)?;
+
+    let cfg = &mut ctx.accounts.channel_config;
+    let old_epoch = cfg.cutover_epoch;
+    cfg.cutover_epoch = new_cutover_epoch;
+
+    emit!(CutoverEpochUpdated {
+        admin: ctx.accounts.admin.key(),
+        channel_config: ctx.accounts.channel_config.key(),
+        old_epoch,
+        new_epoch: new_cutover_epoch,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
+    msg!(
+        "Updated cutover epoch: {} -> {}",
+        old_epoch,
+        new_cutover_epoch
     );
 
     Ok(())

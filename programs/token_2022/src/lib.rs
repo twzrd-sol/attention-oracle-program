@@ -164,6 +164,16 @@ pub mod token_2022 {
         instructions::cumulative::update_channel_creator_fee(ctx, channel, new_creator_fee_bps)
     }
 
+    /// Admin-only: Set the cutover epoch for V2 sunset enforcement.
+    /// Once reached, V2 claims are disabled and users must use V3.
+    pub fn update_channel_cutover_epoch(
+        ctx: Context<UpdateChannelCutoverEpoch>,
+        channel: String,
+        new_cutover_epoch: u64,
+    ) -> Result<()> {
+        instructions::cumulative::update_channel_cutover_epoch(ctx, channel, new_cutover_epoch)
+    }
+
     /// Admin-only: Recover from skipped root sequence to unbrick a channel.
     pub fn admin_recover_root_seq(
         ctx: Context<AdminRecoverRootSeq>,

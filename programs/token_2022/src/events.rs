@@ -68,6 +68,16 @@ pub struct CreatorFeeUpdated {
     pub timestamp: i64,
 }
 
+/// Emitted when admin updates the V2 cutover epoch on a channel.
+#[event]
+pub struct CutoverEpochUpdated {
+    pub admin: Pubkey,
+    pub channel_config: Pubkey,
+    pub old_epoch: u64,
+    pub new_epoch: u64,
+    pub timestamp: i64,
+}
+
 /// Emitted when admin manually sets root sequence.
 #[event]
 pub struct RootSeqRecovered {
