@@ -186,6 +186,9 @@ pub enum OracleError {
 
     #[msg("Proof has expired - snapshot_slot is too old")]
     ProofExpired,
+
+    #[msg("V2 claims are disabled after cutover epoch - use V3")]
+    V2ClaimsDisabled,
 }
 
 // =============================================================================

@@ -276,6 +276,17 @@ pub fn claim_cumulative<'info>(
     require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
     require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
 
+    // Enforce V2 sunset: once cutover_epoch is reached, V2 claims are disabled.
+    // This moves the security guarantee from "trust the publisher" to "trust the code",
+    // preventing V2 claims that bypass V3's stake-snapshot anti-gaming checks.
+    if cfg.cutover_epoch > 0 {
+        let clock = Clock::get()?;
+        require!(
+            clock.epoch < cfg.cutover_epoch,
+            OracleError::V2ClaimsDisabled
+        );
+    }
+
     // FIX: Early validation - fail fast if creator fee is set but ATA is missing
     require!(
         cfg.creator_fee_bps == 0 || ctx.accounts.creator_ata.is_some(),
@@ -497,6 +508,15 @@ pub fn claim_cumulative_sponsored<'info>(
     require!(cfg.version == CHANNEL_CONFIG_V2_VERSION, OracleError::InvalidChannelState);
     require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
     require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
+
+    // Enforce V2 sunset: once cutover_epoch is reached, V2 claims are disabled.
+    if cfg.cutover_epoch > 0 {
+        let clock = Clock::get()?;
+        require!(
+            clock.epoch < cfg.cutover_epoch,
+            OracleError::V2ClaimsDisabled
+        );
+    }
 
     // FIX: Early validation - fail fast if creator fee is set but ATA is missing
     require!(
