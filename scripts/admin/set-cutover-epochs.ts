@@ -24,7 +24,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Connection, PublicKey, Keypair, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
-import { CHANNELS } from "../keepers/lib/channels.js";
+import { CHANNELS, oracleChannelName } from "../keepers/lib/channels.js";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -107,10 +107,9 @@ async function main() {
         continue;
       }
 
-      // Extract channel name from the on-chain channel string.
-      // The PDA uses subject_id_bytes(channel) which is sha256(channel)[..32].
-      // We pass the channel name string that was used at init time.
-      const channelName = channel.name;
+      // The Oracle program derives ChannelConfigV2 PDAs from the original channel string,
+      // not the dash-safe registry name.
+      const channelName = oracleChannelName(channel);
 
       if (execute && adminKeypair) {
         const ix = await oracleProgram.methods

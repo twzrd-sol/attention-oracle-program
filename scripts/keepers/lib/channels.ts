@@ -138,3 +138,19 @@ export const CHANNELS: ChannelEntry[] = [
     withdrawQueueSlots: 9_000,
   },
 ];
+
+/**
+ * Derive the on-chain Oracle "channel" string used in ChannelConfigV2 PDA seeds.
+ *
+ * Important: `ChannelEntry.name` is a dash-safe identifier (env var / log friendly),
+ * but the Oracle program derives PDAs from the original channel string (e.g. "audio:999:3h").
+ *
+ * If this mapping breaks, cutover epoch admin scripts will fail their PDA seed checks.
+ */
+export function oracleChannelName(entry: ChannelEntry): string {
+  const m = entry.name.match(/^audio-(\d+)-(3h|12h)$/);
+  if (m) return `audio:${m[1]}:${m[2]}`;
+  throw new Error(
+    `Unsupported channel name format: ${entry.name} (expected audio-<id>-<tier>)`,
+  );
+}
