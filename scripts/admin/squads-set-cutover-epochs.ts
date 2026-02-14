@@ -2,7 +2,7 @@
  * squads-set-cutover-epochs.ts
  *
  * Batch-creates Squads V4 proposals to call update_channel_cutover_epoch on
- * all 14 active channels.  Auto-approves with the 2 local member keypairs;
+ * all configured channels. Auto-approves with the 2 local member keypairs;
  * the 3rd approver batch-approves in the Squads UI (or CLI) to reach 3/5.
  *
  * Follows the same pattern as set-withdraw-queue.ts.
