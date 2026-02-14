@@ -1,5 +1,9 @@
 /**
- * Transfer admin authority for Oracle + all 16 Channel Vaults → Squads multisig.
+ * Transfer admin authority for Oracle + all configured Channel Vaults → Squads multisig.
+ *
+ * Vault list is loaded from the env-driven channel registry:
+ *   - TWZRD_CHANNELS_JSON (preferred)
+ *   - TWZRD_CHANNELS_PATH
  *
  * This is IRREVERSIBLE. Once transferred, only the Squads multisig can
  * modify admin state or transfer admin again.
@@ -21,6 +25,7 @@
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { AnchorProvider, Program, Wallet } from "@coral-xyz/anchor";
 import { requireScriptEnv } from "../script-guard";
+import { CHANNELS } from "../keepers/lib/channels.js";
 import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -43,26 +48,6 @@ const SQUADS_VAULT = new PublicKey("2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW
 
 const PROTOCOL_SEED = Buffer.from("protocol");
 const VAULT_SEED = Buffer.from("vault");
-
-// Channel registry — all 16 channel configs
-const CHANNELS = [
-  { name: "vault-01", channelConfig: "J3HAT4NbL6REyyNqbW1BDGF9BXXc3FYuQ1fr6NbCQaoW" },
-  { name: "vault-02", channelConfig: "dJvatt5bga4ak64ghTLEtxs1jxfLX4TNoZuvfiDCcGy" },
-  { name: "vault-03", channelConfig: "2TWM1H1gHWrA6Ta6A9tH3E1TTTRbPpmSL2Xg7KdHwxCM" },
-  { name: "vault-04", channelConfig: "GZL7vAo9vxdNbsmrreVueVd1Xm9oWmatkQauFcxhq8qP" },
-  { name: "vault-05", channelConfig: "84SxXryEL2dFT5rno9F1SGBAFvvkEDyp3wNQZyxT3hQ9" },
-  { name: "vault-06", channelConfig: "7g1qkWgZkbhZNFgbEzxxvYxCJHt4NMb3fwE2RHyrygDL" },
-  { name: "vault-07", channelConfig: "DqoM3QcGPbUD2Hic1fxsSLqZY1CaSDkiaNaas2ufZUpb" },
-  { name: "vault-08", channelConfig: "EADvLuoe6ZXTfVBpVEKAMSfnFr1oZuHMxiButLVMnHuE" },
-  { name: "vault-09", channelConfig: "HEa4KgAyuvRZPyAsUPmVTRXiTRuxVEkkGbmtEeybzGB9" },
-  { name: "vault-10", channelConfig: "9G1MvnVq3dX6UwGFvhTC9bDArNt9TyvS5UimffTL1BAJ" },
-  { name: "vault-11", channelConfig: "Dg84d5BkSYxKSix9m6YgbLz1L7mEsSH81Svp24watxEC" },
-  { name: "vault-12", channelConfig: "GdrV9DjKZFePZadxuQANKEBvVaB7rM8aEhMEzMHWrFJE" },
-  { name: "vault-13", channelConfig: "8LCSiL2a4FjTAveMMn8SjLVxrYecWSfFDH48sdhzdbv" },
-  { name: "vault-14", channelConfig: "GxzK9iqyFJf3TRJG5XAQJD3eJtgKCivzkQtj7iPKrUsG" },
-  { name: "vault-15", channelConfig: "4JawzmsofxVCim7eDtFPCMwiP21NMcAQqsZRPT7k9uL1" },
-  { name: "vault-16", channelConfig: "2uGQDJMsGy3undJCT9NazdJXjSoCcXd71vgkvYzMt3eR" },
-];
 
 // ---------------------------------------------------------------------------
 // Admin byte parsers (match verify-admin-state.ts)

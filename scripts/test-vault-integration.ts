@@ -26,15 +26,9 @@
  *   RPC_URL="..." KEYPAIR=~/.config/solana/id.json \
  *     npx ts-node scripts/test-vault-integration.ts redeem <vault_name> <amount_vlofi>
  *
- * Example:
- *   # Deposit 10 CCM to TWZRD 247 vault
- *   npx ts-node scripts/test-vault-integration.ts deposit "TWZRD 247" 10
- *
- *   # Check status
- *   npx ts-node scripts/test-vault-integration.ts status "TWZRD 247"
- *
- *   # Redeem all shares
- *   npx ts-node scripts/test-vault-integration.ts redeem "TWZRD 247" 10.5
+ * Note:
+ *   vault_name can be either ChannelEntry.name or ChannelEntry.label from
+ *   TWZRD_CHANNELS_JSON / TWZRD_CHANNELS_PATH (see scripts/keepers/lib/channels.ts).
  */
 
 import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
@@ -46,6 +40,7 @@ import {
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import * as fs from "fs";
+import { CHANNELS } from "./keepers/lib/channels.js";
 
 // ============================================================================
 // Constants
@@ -58,25 +53,12 @@ const VAULT_SEED = Buffer.from("vault");
 const VLOFI_MINT_SEED = Buffer.from("vlofi");
 const CCM_BUFFER_SEED = Buffer.from("vault_ccm");
 
-// All 16 vaults
-const VAULTS = [
-  { name: "Lofi 3h", channelConfig: "J3HAT4NbL6REyyNqbW1BDGF9BXXc3FYuQ1fr6NbCQaoW" },
-  { name: "Lofi 6h", channelConfig: "dJvatt5bga4ak64ghTLEtxs1jxfLX4TNoZuvfiDCcGy" },
-  { name: "Lofi 9h", channelConfig: "2TWM1H1gHWrA6Ta6A9tH3E1TTTRbPpmSL2Xg7KdHwxCM" },
-  { name: "Lofi 12h", channelConfig: "GZL7vAo9vxdNbsmrreVueVd1Xm9oWmatkQauFcxhq8qP" },
-  { name: "TWZRD 247", channelConfig: "84SxXryEL2dFT5rno9F1SGBAFvvkEDyp3wNQZyxT3hQ9" },
-  { name: "TWZRD 1999", channelConfig: "7g1qkWgZkbhZNFgbEzxxvYxCJHt4NMb3fwE2RHyrygDL" },
-  { name: "TWZRD 415", channelConfig: "DqoM3QcGPbUD2Hic1fxsSLqZY1CaSDkiaNaas2ufZUpb" },
-  { name: "TWZRD 3121", channelConfig: "EADvLuoe6ZXTfVBpVEKAMSfnFr1oZuHMxiButLVMnHuE" },
-  { name: "TWZRD 69", channelConfig: "HEa4KgAyuvRZPyAsUPmVTRXiTRuxVEkkGbmtEeybzGB9" },
-  { name: "999", channelConfig: "9G1MvnVq3dX6UwGFvhTC9bDArNt9TyvS5UimffTL1BAJ" },
-  { name: "212", channelConfig: "Dg84d5BkSYxKSix9m6YgbLz1L7mEsSH81Svp24watxEC" },
-  { name: "247", channelConfig: "GdrV9DjKZFePZadxuQANKEBvVaB7rM8aEhMEzMHWrFJE" },
-  { name: "1999", channelConfig: "8LCSiL2a4FjTAveMMn8SjLVxrYecWSfFDH48sdhzdbv" },
-  { name: "415", channelConfig: "GxzK9iqyFJf3TRJG5XAQJD3eJtgKCivzkQtj7iPKrUsG" },
-  { name: "3121", channelConfig: "4JawzmsofxVCim7eDtFPCMwiP21NMcAQqsZRPT7k9uL1" },
-  { name: "69", channelConfig: "2uGQDJMsGy3undJCT9NazdJXjSoCcXd71vgkvYzMt3eR" },
-];
+// Vault registry (env-driven; see scripts/keepers/lib/channels.ts)
+const VAULTS = CHANNELS.map((ch) => ({
+  name: ch.name,
+  label: ch.label,
+  channelConfig: ch.channelConfig,
+}));
 
 const CCM_DECIMALS = 9;
 
@@ -98,14 +80,31 @@ function formatCCM(lamports: bigint | BN | number): string {
   });
 }
 
-function findVault(name: string) {
-  const vault = VAULTS.find(v => v.name.toLowerCase() === name.toLowerCase());
-  if (!vault) {
-    console.error(`Vault not found: ${name}`);
-    console.error(`Available vaults: ${VAULTS.map(v => v.name).join(", ")}`);
-    process.exit(1);
+function normalize(s: string): string {
+  return s.trim().toLowerCase();
+}
+
+function findVault(query: string) {
+  const q = normalize(query);
+  const byNameOrLabel = VAULTS.find((v) =>
+    normalize(v.name) === q || normalize(v.label) === q
+  );
+  if (byNameOrLabel) return byNameOrLabel;
+
+  // channelConfig is a base58 pubkey and is case-sensitive; treat it as a PublicKey.
+  try {
+    const pk = new PublicKey(query.trim()).toBase58();
+    const byPubkey = VAULTS.find((v) => v.channelConfig === pk);
+    if (byPubkey) return byPubkey;
+  } catch {
+    // ignore
   }
-  return vault;
+
+  console.error(`Vault not found: ${query}`);
+  console.error(
+    `Available vaults: ${VAULTS.map((v) => `${v.name} (${v.label})`).join(", ")}`,
+  );
+  process.exit(1);
 }
 
 // ============================================================================
@@ -131,7 +130,7 @@ async function checkStatus(
   );
 
   console.log("=".repeat(60));
-  console.log(`  Vault Status: ${vaultConfig.name}`);
+  console.log(`  Vault Status: ${vaultConfig.label} (${vaultConfig.name})`);
   console.log("=".repeat(60));
   console.log(`  Vault:    ${vault.toBase58()}`);
   console.log(`  vLOFI:    ${vlofiMint.toBase58()}`);
@@ -216,7 +215,7 @@ async function deposit(
   const userVlofi = getAssociatedTokenAddressSync(vlofiMint, user.publicKey, false, TOKEN_PROGRAM_ID);
 
   console.log("=".repeat(60));
-  console.log(`  Deposit to ${vaultConfig.name}`);
+  console.log(`  Deposit to ${vaultConfig.label} (${vaultConfig.name})`);
   console.log("=".repeat(60));
   console.log(`  User:     ${user.publicKey.toBase58()}`);
   console.log(`  Amount:   ${amountCcm} CCM`);
@@ -324,7 +323,7 @@ async function redeem(
   const userVlofi = getAssociatedTokenAddressSync(vlofiMint, user.publicKey, false, TOKEN_PROGRAM_ID);
 
   console.log("=".repeat(60));
-  console.log(`  Redeem from ${vaultConfig.name}`);
+  console.log(`  Redeem from ${vaultConfig.label} (${vaultConfig.name})`);
   console.log("=".repeat(60));
   console.log(`  User:     ${user.publicKey.toBase58()}`);
   console.log(`  Amount:   ${amountVlofi} vLOFI`);

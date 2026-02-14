@@ -1,7 +1,7 @@
 /**
  * Verify Channel Vault Deployment State
  *
- * Comprehensive verification of all 16 channel vaults on mainnet:
+ * Comprehensive verification of configured channel vaults on mainnet:
  *   - Vault account exists & owned by vault program
  *   - vLOFI mint exists with correct authority
  *   - Metadata exists & readable
@@ -10,17 +10,17 @@
  *   - Oracle position tracking
  *
  * Usage:
- *   RPC_URL="https://..." npx ts-node scripts/verify-mainnet-vaults.ts
- *   RPC_URL="https://..." npx ts-node scripts/verify-mainnet-vaults.ts --json
+ *   TWZRD_CHANNELS_JSON='[...]' RPC_URL="https://..." npx ts-node scripts/verify-mainnet-vaults.ts
+ *   TWZRD_CHANNELS_JSON='[...]' RPC_URL="https://..." npx ts-node scripts/verify-mainnet-vaults.ts --json
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
 import { Program, AnchorProvider, Wallet } from "@coral-xyz/anchor";
 import { Keypair } from "@solana/web3.js";
+import { CHANNELS } from "./keepers/lib/channels.js";
 
 // Constants
 const VAULT_PROGRAM_ID = new PublicKey("5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ");
-const ORACLE_PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 const CCM_MINT = new PublicKey("Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM");
 const SQUADS_VAULT = new PublicKey("2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW");
 const METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
@@ -28,27 +28,13 @@ const METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt
 const VAULT_SEED = Buffer.from("vault");
 const VLOFI_MINT_SEED = Buffer.from("vlofi");
 const METADATA_SEED = Buffer.from("metadata");
-const ORACLE_POSITION_SEED = Buffer.from("oracle_position");
+const VAULT_ORACLE_POSITION_SEED = Buffer.from("vault_oracle");
 
-// All 16 channel vaults
-const VAULTS = [
-  { label: "vLOFI Lofi 3h",     channelConfig: "J3HAT4NbL6REyyNqbW1BDGF9BXXc3FYuQ1fr6NbCQaoW" },
-  { label: "vLOFI Lofi 6h",     channelConfig: "dJvatt5bga4ak64ghTLEtxs1jxfLX4TNoZuvfiDCcGy" },
-  { label: "vLOFI Lofi 9h",     channelConfig: "2TWM1H1gHWrA6Ta6A9tH3E1TTTRbPpmSL2Xg7KdHwxCM" },
-  { label: "vLOFI Lofi 12h",    channelConfig: "GZL7vAo9vxdNbsmrreVueVd1Xm9oWmatkQauFcxhq8qP" },
-  { label: "vLOFI TWZRD 247",   channelConfig: "84SxXryEL2dFT5rno9F1SGBAFvvkEDyp3wNQZyxT3hQ9" },
-  { label: "vLOFI TWZRD 1999",  channelConfig: "7g1qkWgZkbhZNFgbEzxxvYxCJHt4NMb3fwE2RHyrygDL" },
-  { label: "vLOFI TWZRD 415",   channelConfig: "DqoM3QcGPbUD2Hic1fxsSLqZY1CaSDkiaNaas2ufZUpb" },
-  { label: "vLOFI TWZRD 3121",  channelConfig: "EADvLuoe6ZXTfVBpVEKAMSfnFr1oZuHMxiButLVMnHuE" },
-  { label: "vLOFI TWZRD 69",    channelConfig: "HEa4KgAyuvRZPyAsUPmVTRXiTRuxVEkkGbmtEeybzGB9" },
-  { label: "vLOFI 999",         channelConfig: "9G1MvnVq3dX6UwGFvhTC9bDArNt9TyvS5UimffTL1BAJ" },
-  { label: "vLOFI 212",         channelConfig: "Dg84d5BkSYxKSix9m6YgbLz1L7mEsSH81Svp24watxEC" },
-  { label: "vLOFI 247",         channelConfig: "GdrV9DjKZFePZadxuQANKEBvVaB7rM8aEhMEzMHWrFJE" },
-  { label: "vLOFI 1999",        channelConfig: "8LCSiL2a4FjTAveMMn8SjLVxrYecWSfFDH48sdhzdbv" },
-  { label: "vLOFI 415",         channelConfig: "GxzK9iqyFJf3TRJG5XAQJD3eJtgKCivzkQtj7iPKrUsG" },
-  { label: "vLOFI 3121",        channelConfig: "4JawzmsofxVCim7eDtFPCMwiP21NMcAQqsZRPT7k9uL1" },
-  { label: "vLOFI 69",          channelConfig: "2uGQDJMsGy3undJCT9NazdJXjSoCcXd71vgkvYzMt3eR" },
-];
+// Vault registry (env-driven; see scripts/keepers/lib/channels.ts)
+const VAULTS = CHANNELS.map((ch) => ({
+  label: ch.label,
+  channelConfig: ch.channelConfig,
+}));
 
 interface VaultStatus {
   label: string;
@@ -56,7 +42,7 @@ interface VaultStatus {
   vault: string;
   vlofiMint: string;
   metadata: string;
-  oraclePosition: string;
+  vaultOraclePosition: string;
   exists: boolean;
   owner?: string;
   admin?: string;
@@ -67,7 +53,7 @@ interface VaultStatus {
   metadataExists?: boolean;
   metadataName?: string;
   metadataSymbol?: string;
-  oraclePositionExists?: boolean;
+  vaultOraclePositionExists?: boolean;
   errors: string[];
 }
 
@@ -99,9 +85,9 @@ async function verifyVault(
     [METADATA_SEED, METADATA_PROGRAM_ID.toBuffer(), vlofiMint.toBuffer()],
     METADATA_PROGRAM_ID,
   );
-  const [oraclePosition] = PublicKey.findProgramAddressSync(
-    [ORACLE_POSITION_SEED, vault.toBuffer()],
-    ORACLE_PROGRAM_ID,
+  const [vaultOraclePosition] = PublicKey.findProgramAddressSync(
+    [VAULT_ORACLE_POSITION_SEED, vault.toBuffer()],
+    VAULT_PROGRAM_ID,
   );
 
   const status: VaultStatus = {
@@ -110,7 +96,7 @@ async function verifyVault(
     vault: vault.toBase58(),
     vlofiMint: vlofiMint.toBase58(),
     metadata: metadata.toBase58(),
-    oraclePosition: oraclePosition.toBase58(),
+    vaultOraclePosition: vaultOraclePosition.toBase58(),
     exists: false,
     errors,
   };
@@ -206,12 +192,9 @@ async function verifyVault(
     errors.push("Metadata account not found");
   }
 
-  // Check oracle position (non-blocking — initialized lazily on first compound)
-  const oraclePositionInfo = await connection.getAccountInfo(oraclePosition);
-  status.oraclePositionExists = oraclePositionInfo !== null;
-
-  // Oracle position not existing is expected for vaults that haven't been compounded yet
-  // This doesn't block deposits — it's created via Oracle CPI on first compound
+  // Check VaultOraclePosition (may be missing on legacy vaults that need migrate_oracle_position)
+  const vaultOraclePositionInfo = await connection.getAccountInfo(vaultOraclePosition);
+  status.vaultOraclePositionExists = vaultOraclePositionInfo !== null;
 
   // Check vLOFI mint
   const vlofiMintInfo = await connection.getAccountInfo(vlofiMint);
@@ -304,7 +287,7 @@ async function main() {
         console.log(`   Exchange: ${status.exchangeRate}`);
         console.log(`   vLOFI:    ${status.vlofiSupply} (supply)`);
         console.log(`   Metadata: ${status.metadataExists ? `✓ ${status.metadataName} (${status.metadataSymbol})` : "✗"}`);
-        console.log(`   Oracle:   ${status.oraclePositionExists ? "✓" : "✗"}`);
+        console.log(`   VaultOracle: ${status.vaultOraclePositionExists ? "✓" : "✗"}`);
       }
 
       if (status.errors.length > 0) {
