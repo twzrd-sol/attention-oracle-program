@@ -1309,7 +1309,9 @@ pub struct EmergencyUnstakeChannel<'info> {
     /// Channel config
     pub channel_config: Box<Account<'info, ChannelConfigV2>>,
 
-    /// Token mint (CCM)
+    /// Token mint (CCM) — must be mut because emergency unstake burns penalty tokens,
+    /// which decrements mint supply. Without mut, the burn CPI fails with PrivilegeEscalation.
+    #[account(mut)]
     pub mint: Box<InterfaceAccount<'info, Mint>>,
 
     /// Stake pool
