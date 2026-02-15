@@ -12,9 +12,10 @@ This protocol enables:
 The protocol consists of Anchor-based programs designed for the **Solana Token-2022** standard.
 
 ### Core Components
-* **`token_2022` (Main Program):** Handles cumulative Merkle claims, channel configuration, and fee harvesting logic.
-* **Data Oracles:** Off-chain publishers submit Merkle roots representing verified user engagement (e.g., "Attention").
-* **Treasury Management:** Logic to sweep withheld transfer fees to a designated destination.
+* **`token_2022` (Attention Oracle):** Merkle-based cumulative reward claims (V2), channel configuration, publisher controls, and transfer fee harvesting.
+* **`channel_vault` (Staking Vault):** Liquid staking wrapper — deposits, withdrawals, auto-compound of transfer fees, and an on-chain ExchangeRateOracle.
+* **Data Oracles:** Off-chain publishers submit Merkle roots representing verified user engagement.
+* **Treasury Management:** Permissionless sweeping of withheld Token-2022 transfer fees to the protocol treasury.
 
 ## Trust Model & Upgrades
 
@@ -35,17 +36,34 @@ These programs are **upgradeable**. Integrators and users should verify the secu
 Ensure you have the [Solana Tool Suite](https://docs.solanalabs.com/cli/install) and [Anchor](https://www.anchor-lang.com/) installed.
 
 ```bash
-# Build the program
+# Build the programs
 anchor build
 
-# Verify against mainnet (Docker required)
+# Verifiable build (required for mainnet deployment — uses Docker)
+anchor build --verifiable --program-name token_2022
+anchor build --verifiable --program-name channel_vault
+
+# Verify against mainnet
 ./verify.sh
+```
+
+### Testing
+
+The repo uses [LiteSVM](https://github.com/LiteSVM/litesvm) for fast, deterministic program tests — no validator required.
+
+```bash
+# Rust unit + integration tests (LiteSVM)
+cargo test -p channel-vault --lib              # 57 vault tests
+cargo test -p attention-oracle-token-2022      # Cumulative claim tests
+
+# TypeScript integration tests
+./scripts/anchor-test-safe.sh
 ```
 
 ### Testing Safety (Important)
 
-`Anchor.toml` currently targets **mainnet**. Running `anchor test` will deploy by default.
-Use one of the following to avoid accidental mainnet deployments:
+`Anchor.toml` targets **mainnet**. Running `anchor test` directly will attempt to deploy.
+Always use one of the following:
 
 ```bash
 # Guarded runner (blocks mainnet unless explicitly allowed)

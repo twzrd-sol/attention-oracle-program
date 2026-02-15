@@ -22,6 +22,7 @@ package-lock.json
 !docs/SECURITY_AUDIT.md
 !docs/PRODUCTION_READINESS.md
 !docs/specs/transfer-fee-capture.md
+!.claude/skills/*.md
 
 # Next.js output
 .next/
@@ -172,7 +173,8 @@ apps/_archive/
 !scripts/dev-doctor.sh
 schema_dump*.sql
 
-.claude/
+.claude/*
+!.claude/skills/
 GILL_MIGRATION_DIRECTIVE.md
 
 # Financial models (private)

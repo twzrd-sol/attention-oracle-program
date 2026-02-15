@@ -41,7 +41,7 @@ For a continuously updated snapshot (last deployed slot, hash, and verification)
 | Program | Upgrade Authority | Type |
 |---------|-------------------|------|
 | Attention Oracle | `2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW` | Squads V4 vault PDA (3-of-5 multisig `BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ`) |
-| Channel Vault | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` | Single signer (id.json) — transfers to Squads after Phase 2 |
+| Channel Vault | `2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW` | Squads V4 vault PDA (3-of-5 multisig `BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ`) |
 
 To verify on-chain:
 ```bash
@@ -52,13 +52,12 @@ solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-b
 
 1. **Programs are upgradeable.** The upgrade authority can deploy new bytecode at any time.
 2. **No timelock.** Upgrades take effect immediately upon transaction confirmation.
-3. **Attention Oracle: Squads V4 multisig (3-of-5).** Requires 3 member approvals to deploy.
-4. **Channel Vault: Single signer.** Intentional — composability upgrades pending. Transfers to Squads after Phase 2.
+3. **Squads V4 multisig (3-of-5).** Both programs require 3 member approvals to deploy.
 
 ### Governance Progress
 
 - [x] Transfer AO upgrade authority to Squads V4 multisig
-- [ ] Transfer Channel Vault upgrade authority to Squads (after Phase 2)
+- [x] Transfer Channel Vault upgrade authority to Squads V4 multisig (slot 398,873,040)
 - [ ] Implement governance timelock for upgrades
 - [x] Publish verified builds (see VERIFY.md)
 
@@ -72,6 +71,7 @@ solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-b
 | 2026-02-08 | token_2022 | 398,836,086 | `430ccc6` | Verified deployment (Squads proposal #48) |
 | 2026-02-08 | channel_vault | 398,811,120 | `b1a9fee` | ExchangeRateOracle PDA + auto-update on compound |
 | 2026-02-08 | channel_vault | 398,835,029 | `b1a9fee` | Redeploy verifiable build (verified on-chain) |
+| 2026-02-08 | channel_vault | 398,873,040 | — | Transfer upgrade authority to Squads V4 vault PDA |
 
 ## Release Process
 
