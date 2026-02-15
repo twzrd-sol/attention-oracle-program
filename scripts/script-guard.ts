@@ -3,6 +3,16 @@ import path from "path";
 
 const ALLOWED_CLUSTERS = new Set(["localnet", "devnet", "testnet", "mainnet-beta"]);
 
+/** Env vars checked for RPC endpoint, in priority order. */
+const RPC_ENV_VARS = [
+  "RPC_URL",
+  "ANCHOR_PROVIDER_URL",
+  "AO_RPC_URL",
+  "SOLANA_RPC_URL",
+  "SOLANA_RPC",
+  "SOLANA_URL",
+] as const;
+
 function normalizeCluster(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return trimmed;
@@ -17,6 +27,15 @@ function expandHome(p: string): string {
     return path.join(home, p.slice(1));
   }
   return p;
+}
+
+/** Resolve RPC URL from env vars in priority order. */
+function resolveRpcUrl(): string {
+  for (const key of RPC_ENV_VARS) {
+    const val = process.env[key];
+    if (val && val.trim()) return val.trim();
+  }
+  return "";
 }
 
 export type ScriptEnv = {
@@ -52,19 +71,11 @@ export function requireScriptEnv(): ScriptEnv {
     process.exit(2);
   }
 
-  const rpcUrl =
-    process.env.RPC_URL ||
-    process.env.ANCHOR_PROVIDER_URL ||
-    process.env.AO_RPC_URL ||
-    process.env.SYNDICA_RPC ||
-    process.env.SOLANA_RPC ||
-    process.env.SOLANA_URL ||
-    "";
-
-  if (!rpcUrl.trim()) {
-    console.error("❌ Missing RPC URL. Set RPC_URL or ANCHOR_PROVIDER_URL");
+  const rpcUrl = resolveRpcUrl();
+  if (!rpcUrl) {
+    console.error(`❌ Missing RPC URL. Set one of: ${RPC_ENV_VARS.join(", ")}`);
     process.exit(2);
   }
 
-  return { cluster, rpcUrl: rpcUrl.trim(), keypairPath };
+  return { cluster, rpcUrl, keypairPath };
 }

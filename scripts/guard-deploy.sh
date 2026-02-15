@@ -1,47 +1,102 @@
 #!/usr/bin/env bash
+# guard-deploy.sh — Pre-flight checks for mainnet program deployments.
+# Validates cluster, keypair security, and RPC availability before
+# delegating to the actual deploy command.
 set -euo pipefail
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
+# ---------------------------------------------------------------------------
+# 1. Cluster validation
+# ---------------------------------------------------------------------------
 CLUSTER=${CLUSTER:-}
 if [[ -z "${CLUSTER}" ]]; then
-  echo "Missing CLUSTER. Set CLUSTER=localnet|devnet|testnet|mainnet-beta" >&2
+  echo "❌ Missing CLUSTER. Set CLUSTER=mainnet-beta" >&2
   exit 2
 fi
-if [[ "${CLUSTER}" != "mainnet-beta" && "${CLUSTER}" != "mainnet" ]]; then
-  echo "guard-deploy is mainnet-only. Set CLUSTER=mainnet-beta" >&2
-  exit 2
-fi
+# Normalize shorthand
 if [[ "${CLUSTER}" == "mainnet" ]]; then
   CLUSTER="mainnet-beta"
 fi
+if [[ "${CLUSTER}" != "mainnet-beta" ]]; then
+  echo "❌ guard-deploy is mainnet-only. Got CLUSTER=${CLUSTER}" >&2
+  exit 2
+fi
 if [[ "${I_UNDERSTAND_MAINNET:-}" != "1" ]]; then
-  echo "Refusing mainnet without I_UNDERSTAND_MAINNET=1" >&2
+  echo "❌ Refusing mainnet without I_UNDERSTAND_MAINNET=1" >&2
   exit 2
 fi
 
+# ---------------------------------------------------------------------------
+# 2. Keypair validation
+# ---------------------------------------------------------------------------
 KEYPAIR_PATH=${KEYPAIR:-${ANCHOR_WALLET:-}}
 if [[ -z "${KEYPAIR_PATH}" ]]; then
-  echo "Missing KEYPAIR. Set KEYPAIR=/path/to/keypair.json" >&2
+  echo "❌ Missing KEYPAIR. Set KEYPAIR=/path/to/keypair.json" >&2
   exit 2
 fi
 
-if [[ "$KEYPAIR_PATH" == /* ]]; then :; else KEYPAIR_PATH="$REPO_ROOT/$KEYPAIR_PATH"; fi
-if [[ "$KEYPAIR_PATH" == $REPO_ROOT/* ]]; then
-  echo "Refusing keypair inside repo: $KEYPAIR_PATH" >&2; exit 3
+# Resolve relative paths against repo root
+if [[ "$KEYPAIR_PATH" != /* ]]; then
+  KEYPAIR_PATH="$REPO_ROOT/$KEYPAIR_PATH"
 fi
-[[ -f "$KEYPAIR_PATH" ]] || { echo "Keypair not found: $KEYPAIR_PATH" >&2; exit 4; }
 
+# Security: reject keypairs stored inside the repo tree
+if [[ "$KEYPAIR_PATH" == "$REPO_ROOT"/* ]]; then
+  echo "❌ Refusing keypair inside repo: $KEYPAIR_PATH" >&2
+  exit 3
+fi
+
+if [[ ! -f "$KEYPAIR_PATH" ]]; then
+  echo "❌ Keypair not found: $KEYPAIR_PATH" >&2
+  exit 4
+fi
+
+# Verify restrictive file permissions (owner-only)
 PERMS=$(stat -c %a "$KEYPAIR_PATH" 2>/dev/null || stat -f %Lp "$KEYPAIR_PATH")
-[[ "$PERMS" == "600" || "$PERMS" == "400" ]] || { echo "Keypair perms must be 600/400 (got $PERMS)" >&2; exit 5; }
-
-RPC=${RPC_URL:-${ANCHOR_PROVIDER_URL:-${SYNDICA_RPC:-${SOLANA_RPC:-${SOLANA_URL:-}}}}}
-if [[ -z "${RPC}" ]]; then
-  echo "Missing RPC_URL (or ANCHOR_PROVIDER_URL/SYNDICA_RPC/SOLANA_RPC/SOLANA_URL)" >&2
-  exit 6
+if [[ "$PERMS" != "600" && "$PERMS" != "400" ]]; then
+  echo "❌ Keypair perms must be 600 or 400 (got $PERMS): $KEYPAIR_PATH" >&2
+  exit 5
 fi
 
-echo "[guard] mainnet op with $KEYPAIR_PATH on $RPC"; read -p "Type DEPLOY to continue: " c; [[ "$c" == DEPLOY ]] || exit 7
+# ---------------------------------------------------------------------------
+# 3. RPC endpoint resolution (checked in priority order)
+# ---------------------------------------------------------------------------
+resolve_rpc() {
+  local -a candidates=(
+    "${RPC_URL:-}"
+    "${ANCHOR_PROVIDER_URL:-}"
+    "${AO_RPC_URL:-}"
+    "${SOLANA_RPC_URL:-}"
+    "${SOLANA_RPC:-}"
+    "${SOLANA_URL:-}"
+  )
+  for url in "${candidates[@]}"; do
+    if [[ -n "${url}" ]]; then
+      echo "${url}"
+      return 0
+    fi
+  done
+  return 1
+}
 
+RPC=$(resolve_rpc) || {
+  echo "❌ Missing RPC endpoint. Set one of: RPC_URL, ANCHOR_PROVIDER_URL, AO_RPC_URL, SOLANA_RPC_URL, SOLANA_RPC, SOLANA_URL" >&2
+  exit 6
+}
+
+# ---------------------------------------------------------------------------
+# 4. Confirmation gate
+# ---------------------------------------------------------------------------
+echo "[guard] mainnet deploy with keypair=$KEYPAIR_PATH rpc=${RPC:0:50}..."
+read -p "Type DEPLOY to continue: " confirmation
+if [[ "$confirmation" != "DEPLOY" ]]; then
+  echo "Aborted." >&2
+  exit 7
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Delegate to the wrapped command
+# ---------------------------------------------------------------------------
 shift 0
 "$@"
