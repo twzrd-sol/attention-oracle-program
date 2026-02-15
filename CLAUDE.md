@@ -44,7 +44,7 @@ programs/
 - **Solana SDK**: solana-program 2.x
 - **Token standard**: Token-2022 (NOT legacy SPL)
 - **Build**: `anchor build --verifiable` (Docker deterministic builds)
-- **Deploy**: Squads V4 proposal workflow for AO; single-signer for Channel Vault (Phase 2 pending)
+- **Deploy**: Squads V4 proposal workflow (3-of-5 multisig) for both programs
 
 ## Build & Test
 
