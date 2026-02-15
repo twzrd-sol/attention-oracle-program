@@ -390,7 +390,12 @@ pub fn complete_withdraw(
     let buffer_balance_before = ctx.accounts.vault_ccm_buffer.amount;
 
     if buffer_balance_before < ccm_amount {
-        // Need to unstake from Oracle
+        // Need to unstake from Oracle.
+        // NOTE: This CPI assumes pending rewards have already been claimed
+        // (typically via a recent keeper compound). If reward_per_slot > 0,
+        // the Oracle will reject the unstake with PendingRewardsOnUnstake.
+        // Production flows should coordinate keeper compound before user
+        // complete_withdraw when rewards are active.
         require!(position.is_active, VaultError::InsufficientVaultBalance);
         require!(
             clock.slot >= position.lock_end_slot,

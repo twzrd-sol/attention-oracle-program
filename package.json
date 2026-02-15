@@ -12,7 +12,8 @@
     "v3:init-stake-pool": "tsx scripts/initialize-stake-pool-v3.ts",
     "v3:admin-withdraw": "tsx scripts/admin-withdraw-v3.ts",
     "v3:set-metadata": "tsx scripts/set-token-metadata-v3.ts",
-    "test:activation": "tsx scripts/test-activation.ts"
+    "test:activation": "tsx scripts/test-activation.ts",
+    "test:cpi": "anchor build && cargo test -p channel-vault --test cpi_integration -- --nocapture"
   },
   "devDependencies": {
     "@codama/nodes": "^1.0.0",
