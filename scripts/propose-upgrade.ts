@@ -10,7 +10,8 @@ import {
   Connection,
   Keypair,
   PublicKey,
-  SystemProgram,
+  SYSVAR_CLOCK_PUBKEY,
+  SYSVAR_RENT_PUBKEY,
   TransactionInstruction,
   TransactionMessage,
   VersionedTransaction,
@@ -55,16 +56,23 @@ async function main() {
   console.log("Transaction Index:", transactionIndex.toString());
 
   // Create BPF Loader Upgrade instruction
-  // Instruction layout:
-  // - [0]: u32 = 3 (Upgrade instruction discriminator)
+  // Account layout: https://docs.solana.com/cli/deploy-a-program#upgrade
+  //   [0] ProgramData (writable)
+  //   [1] Program     (writable)
+  //   [2] Buffer      (writable)
+  //   [3] Spill       (writable) — receives leftover SOL from buffer
+  //   [4] Rent sysvar
+  //   [5] Clock sysvar
+  //   [6] Authority   (signer)
   const upgradeIx = new TransactionInstruction({
     programId: BPF_LOADER_UPGRADEABLE,
     keys: [
       { pubkey: PROGRAM_DATA_PUBKEY, isSigner: false, isWritable: true },
       { pubkey: PROGRAM_ID, isSigner: false, isWritable: true },
       { pubkey: BUFFER_PUBKEY, isSigner: false, isWritable: true },
-      { pubkey: payer.publicKey, isSigner: false, isWritable: true }, // spill account (receives leftover SOL)
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: payer.publicKey, isSigner: false, isWritable: true }, // spill account
+      { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+      { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
       { pubkey: vaultPda, isSigner: true, isWritable: false }, // upgrade authority
     ],
     data: Buffer.from([3, 0, 0, 0]), // Upgrade instruction discriminator (little-endian u32)
