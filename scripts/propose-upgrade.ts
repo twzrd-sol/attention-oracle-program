@@ -21,7 +21,7 @@ import * as fs from "fs";
 const RPC_URL = "https://api.mainnet-beta.solana.com";
 const MULTISIG_PUBKEY = new PublicKey("BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ");
 const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
-const BUFFER_PUBKEY = new PublicKey("4XP54FJrgabhvNxE8bTpxqcJre5PSRzfniTPr2aBM6g8");
+const BUFFER_PUBKEY = new PublicKey("9UCypJpWx2smKkJer6RiC53VomSexerXYsbB4z95s9ym");
 const PROGRAM_DATA_PUBKEY = new PublicKey("5GyaaVmzRr2r9KcUuzt9SxBVq9ubTT5m3pH9Lzy3Kh4L");
 const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
@@ -94,7 +94,7 @@ async function main() {
     vaultIndex: 0,
     ephemeralSigners: 0,
     transactionMessage: message,
-    memo: "Upgrade attention-oracle-program: V3 proof expiry enforcement",
+    memo: "Upgrade AO: fix EmergencyUnstakeChannel mint mutability for penalty burn",
   });
 
   // Create proposal
