@@ -21,9 +21,9 @@ import * as fs from "fs";
 // Configuration
 const RPC_URL = "https://api.mainnet-beta.solana.com";
 const MULTISIG_PUBKEY = new PublicKey("BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ");
-const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
-const BUFFER_PUBKEY = new PublicKey("9UCypJpWx2smKkJer6RiC53VomSexerXYsbB4z95s9ym");
-const PROGRAM_DATA_PUBKEY = new PublicKey("5GyaaVmzRr2r9KcUuzt9SxBVq9ubTT5m3pH9Lzy3Kh4L");
+const PROGRAM_ID = new PublicKey("5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ");
+const BUFFER_PUBKEY = new PublicKey("A1wiPAKUc3mdoRHrx8kCg2Dz3j7oF1nSioWwSbZSEJDd");
+const PROGRAM_DATA_PUBKEY = new PublicKey("2ubXWFAJFCnBqJ1vYCsf4q8SYRcqf5DaTfkC6wASK5SQ");
 const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
 async function main() {
@@ -102,7 +102,7 @@ async function main() {
     vaultIndex: 0,
     ephemeralSigners: 0,
     transactionMessage: message,
-    memo: "Upgrade AO: fix EmergencyUnstakeChannel mint mutability for penalty burn",
+    memo: "Upgrade Channel Vault: add security.txt for Solscan verification display",
   });
 
   // Create proposal
