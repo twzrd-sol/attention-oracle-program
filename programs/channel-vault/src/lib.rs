@@ -7,6 +7,9 @@
 
 use anchor_lang::prelude::*;
 
+#[cfg(not(feature = "no-entrypoint"))]
+use solana_security_txt::security_txt;
+
 pub mod constants;
 pub mod errors;
 pub mod events;
@@ -20,6 +23,16 @@ pub use instructions::*;
 pub use state::*;
 
 declare_id!("5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ");
+
+#[cfg(not(feature = "no-entrypoint"))]
+security_txt! {
+    name: "Channel Vault",
+    project_url: "https://github.com/twzrd-sol/attention-oracle-program",
+    contacts: "email:security@twzrd.xyz",
+    policy: "https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md",
+    preferred_languages: "en",
+    source_code: "https://github.com/twzrd-sol/attention-oracle-program"
+}
 
 #[program]
 pub mod channel_vault {
