@@ -204,6 +204,16 @@ pub struct EmergencyTimeoutWithdrawn {
     pub timestamp: i64,
 }
 
+/// Emitted when lock duration slots are updated.
+#[event]
+pub struct LockDurationSlotsUpdated {
+    pub vault: Pubkey,
+    pub admin: Pubkey,
+    pub old_lock_duration_slots: u64,
+    pub new_lock_duration_slots: u64,
+    pub timestamp: i64,
+}
+
 /// Emitted when exchange rate oracle is updated (on every compound).
 #[event]
 pub struct ExchangeRateUpdated {

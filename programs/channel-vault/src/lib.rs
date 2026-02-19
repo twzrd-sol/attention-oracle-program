@@ -157,6 +157,14 @@ pub mod channel_vault {
         instructions::admin::update_withdraw_queue_slots(ctx, new_withdraw_queue_slots)
     }
 
+    /// Update lock duration in slots (admin only).
+    pub fn update_lock_duration_slots(
+        ctx: Context<AdminAction>,
+        new_lock_duration_slots: u64,
+    ) -> Result<()> {
+        instructions::admin::update_lock_duration_slots(ctx, new_lock_duration_slots)
+    }
+
     /// Inject capital to recover from insolvency (admin only).
     ///
     /// Use when pending_withdrawals > assets, making the vault unable to honor

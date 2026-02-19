@@ -5,7 +5,7 @@ use anchor_spl::token_interface::{Mint as MintInterface, TokenAccount, TokenInte
 
 use crate::constants::{TOKEN_2022_PROGRAM_ID, VAULT_ORACLE_POSITION_SEED, VAULT_SEED};
 use crate::errors::VaultError;
-use crate::events::{AdminUpdated, CapitalInjected, OraclePositionSynced, VaultPaused, VaultResumed, WithdrawQueueSlotsUpdated};
+use crate::events::{AdminUpdated, CapitalInjected, LockDurationSlotsUpdated, OraclePositionSynced, VaultPaused, VaultResumed, WithdrawQueueSlotsUpdated};
 use crate::state::{ChannelVault, VaultOraclePosition};
 
 use token_2022::UserChannelStake;
@@ -168,6 +168,38 @@ pub fn update_withdraw_queue_slots(
         "Withdraw queue slots updated: {} -> {}",
         old_value,
         new_withdraw_queue_slots
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Update Lock Duration Slots
+// ---------------------------------------------------------------------------
+
+/// Update lock duration in slots (admin only).
+///
+/// Controls how long each compound stake is locked in the Oracle.
+/// Reducing this shortens the time before users can request withdrawals.
+pub fn update_lock_duration_slots(
+    ctx: Context<AdminAction>,
+    new_lock_duration_slots: u64,
+) -> Result<()> {
+    let vault = &mut ctx.accounts.vault;
+    let old_value = vault.lock_duration_slots;
+    vault.lock_duration_slots = new_lock_duration_slots;
+
+    emit!(LockDurationSlotsUpdated {
+        vault: vault.key(),
+        admin: ctx.accounts.admin.key(),
+        old_lock_duration_slots: old_value,
+        new_lock_duration_slots,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
+    msg!(
+        "Lock duration slots updated: {} -> {}",
+        old_value,
+        new_lock_duration_slots
     );
     Ok(())
 }
