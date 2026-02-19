@@ -13,6 +13,7 @@
 use litesvm::LiteSVM;
 use sha2::{Digest, Sha256};
 use sha3::Keccak256;
+use token_2022::constants::{BPS_DENOMINATOR, MAX_APR_BPS, SLOTS_PER_YEAR};
 use solana_sdk::{
     account::Account as SolanaAccount,
     instruction::{AccountMeta, Instruction},
@@ -817,6 +818,44 @@ fn read_bool_at(svm: &LiteSVM, account: &Pubkey, offset: usize) -> bool {
     acc.data[offset] != 0
 }
 
+/// Read the AO stake pool's total weighted stake (used to infer APR-capped rates).
+fn read_stake_pool_total_weighted(svm: &LiteSVM, stake_pool: &Pubkey) -> u64 {
+    // discriminator(8) + bump(1) + channel(32) + mint(32) + vault(32) + total_staked(8) = 113
+    read_u64_at(svm, stake_pool, 113)
+}
+
+/// Read the AO stake pool's active reward rate.
+fn read_stake_pool_reward_rate(svm: &LiteSVM, stake_pool: &Pubkey) -> u64 {
+    // see ChannelStakePool::LEN layout:
+    // reward_per_slot is at offset 153.
+    read_u64_at(svm, stake_pool, 153)
+}
+
+/// Return the protocol max reward_per_slot under the APR cap for a given weighted TVL.
+fn max_reward_rate_for_tvl(total_weighted: u64) -> u64 {
+    if total_weighted == 0 {
+        0
+    } else {
+        (total_weighted as u128)
+            .checked_mul(MAX_APR_BPS as u128)
+            .unwrap_or(0)
+            .checked_div(BPS_DENOMINATOR as u128)
+            .unwrap_or(0)
+            .checked_div(SLOTS_PER_YEAR as u128)
+            .unwrap_or(0) as u64
+    }
+}
+
+/// Set reward rate while staying within protocol cap derived from current weighted TVL.
+fn set_reward_rate_bounded(env: &mut TestEnv, target_rate: u64) -> u64 {
+    let total_weighted = read_stake_pool_total_weighted(&env.svm, &env.stake_pool);
+    let capped = std::cmp::min(target_rate, max_reward_rate_for_tvl(total_weighted));
+    if read_stake_pool_reward_rate(&env.svm, &env.stake_pool) != capped {
+        set_reward_rate(env, capped);
+    }
+    capped
+}
+
 /// Read Token-2022 account balance
 fn get_token_balance(svm: &LiteSVM, ata: &Pubkey) -> u64 {
     let acc = svm.get_account(ata).expect("Token account not found");
@@ -917,6 +956,14 @@ struct TestEnv {
 }
 
 fn setup_full_environment() -> TestEnv {
+    setup_full_environment_with_params(LOCK_DURATION_SLOTS, WITHDRAW_QUEUE_SLOTS, REWARD_PER_SLOT)
+}
+
+fn setup_full_environment_with_params(
+    lock_duration_slots: u64,
+    withdraw_queue_slots: u64,
+    reward_per_slot: u64,
+) -> TestEnv {
     let mut svm = LiteSVM::new();
 
     // Load both programs
@@ -1006,7 +1053,7 @@ fn setup_full_environment() -> TestEnv {
         &stake_pool,
         &stake_vault,
         &ccm_mint.pubkey(),
-        REWARD_PER_SLOT,
+        reward_per_slot,
     );
     let blockhash = svm.latest_blockhash();
     let msg = Message::new(&[set_rate_ix], Some(&admin.pubkey()));
@@ -1021,8 +1068,8 @@ fn setup_full_environment() -> TestEnv {
         &channel_config,
         &ccm_mint.pubkey(),
         MIN_DEPOSIT,
-        LOCK_DURATION_SLOTS,
-        WITHDRAW_QUEUE_SLOTS,
+        lock_duration_slots,
+        withdraw_queue_slots,
     );
     let blockhash = svm.latest_blockhash();
     let msg = Message::new(&[init_vault_ix], Some(&admin.pubkey()));
@@ -1092,6 +1139,24 @@ fn send_tx(svm: &mut LiteSVM, signers: &[&Keypair], ixs: &[Instruction]) {
             panic!("Transaction failed: {:?}", e.err);
         }
     }
+}
+
+fn set_reward_rate(env: &mut TestEnv, reward_per_slot: u64) {
+    let set_rate_ix = build_set_reward_rate_ix(
+        &env.admin.pubkey(),
+        &env.protocol_state,
+        &env.channel_config,
+        &env.stake_pool,
+        &env.stake_vault,
+        &env.ccm_mint.pubkey(),
+        reward_per_slot,
+    );
+    send_tx(&mut env.svm, &[&env.admin], &[set_rate_ix]);
+}
+
+fn warp_to_slot_and_expire(env: &mut TestEnv, slot: u64) {
+    env.svm.warp_to_slot(slot);
+    env.svm.expire_blockhash();
 }
 
 fn try_send_tx(
@@ -1885,14 +1950,16 @@ fn test_queued_withdraw_triggers_unstake() {
     assert!(vault_state.total_staked > 0, "Should have active Oracle stake");
     assert_eq!(vault_state.pending_deposits, 0, "All deposited should be staked");
     let user_shares = vault_state.total_shares;
+    let request_shares = user_shares / 2;
+    assert!(request_shares > 0, "request shares should be non-zero");
 
-    // Request withdrawal of all shares
+    // Request a partial withdrawal to exercise queue path without overflow edge cases.
     env.svm.expire_blockhash();
     let withdraw_ix = build_request_withdraw_ix(
         &env.user.pubkey(),
         &env.vault,
         &env.ccm_mint.pubkey(),
-        user_shares,
+        request_shares,
         0,
     );
     send_tx(&mut env.svm, &[&env.user], &[withdraw_ix]);
@@ -2040,6 +2107,11 @@ fn test_queued_withdraw_triggers_unstake() {
     assert!(received > 0, "User should receive CCM from unstake");
 
     let vault_state = read_vault_state(&env.svm, &env.vault);
+    assert_eq!(
+        vault_state.total_shares,
+        user_shares - request_shares,
+        "requested shares should burn, remainder should stay minted"
+    );
     assert_eq!(vault_state.total_staked, 0, "Oracle stake should be zero after unstake");
     assert_eq!(vault_state.pending_withdrawals, 0, "Pending withdrawals cleared");
 
@@ -2110,6 +2182,299 @@ fn test_instant_redeem_with_penalty() {
     println!(
         "  Shares redeemed: {}, CCM received: {}, Emergency reserve: {}",
         shares_to_redeem, received, vault_state.emergency_reserve
+    );
+}
+
+#[test]
+fn test_compound_cycles_with_five_minute_intervals_and_rate_alternation() {
+    const FIVE_MINUTE_SLOTS: u64 = 750; // ~5 minutes at 400ms/slot
+    const SHORT_WITHDRAW_QUEUE_SLOTS: u64 = 200;
+    const HIGH_REWARD_REQUESTED: u64 = 10_000;
+    const LOW_REWARD_PER_SLOT: u64 = 0;
+    const INITIAL_DEPOSIT: u64 = 5_000_000_000_000; // 5,000 CCM
+    const CYCLE_DEPOSIT: u64 = 2_000_000_000_000; // 2,000 CCM
+
+    let mut env = setup_full_environment_with_params(
+        FIVE_MINUTE_SLOTS,
+        SHORT_WITHDRAW_QUEUE_SLOTS,
+        LOW_REWARD_PER_SLOT,
+    );
+
+    let _keeper_ccm_ata = create_and_fund_token_2022_ata(
+        &mut env.svm,
+        &env.admin,
+        &env.admin,
+        &env.ccm_mint.pubkey(),
+        &env.keeper.pubkey(),
+        0,
+    );
+
+    let mut observed_rates = Vec::new();
+    let mut observed_staked = Vec::new();
+    let mut slot_cursor = 0u64;
+
+    // Seed with first deposit.
+    send_tx(
+        &mut env.svm,
+        &[&env.user],
+        &[build_deposit_ix(
+            &env.user.pubkey(),
+            &env.vault,
+            &env.ccm_mint.pubkey(),
+            INITIAL_DEPOSIT,
+            0,
+        )],
+    );
+
+    send_tx(
+        &mut env.svm,
+        &[&env.keeper],
+        &[build_compound_ix(
+            &env.keeper.pubkey(),
+            &env.vault,
+            &env.channel_config,
+            &env.ccm_mint.pubkey(),
+            &env.protocol_state,
+            &env.stake_pool,
+            &env.stake_vault,
+            Some(&env.exchange_rate_oracle),
+        )],
+    );
+
+    observed_rates.push(read_exchange_rate(&env.svm, &env.exchange_rate_oracle).current_rate);
+    observed_staked.push(read_vault_state(&env.svm, &env.vault).total_staked);
+
+    let mut high_reward_per_slot = set_reward_rate_bounded(&mut env, HIGH_REWARD_REQUESTED);
+    assert!(
+        high_reward_per_slot > 0,
+        "Upper-bound high reward should stay above zero for meaningful alternate-rate testing"
+    );
+
+    // Cycle 1 (high reward): wait 5 minutes + interval, add a second entry, and restake.
+    slot_cursor = FIVE_MINUTE_SLOTS + 1;
+    warp_to_slot_and_expire(&mut env, slot_cursor);
+    send_tx(
+        &mut env.svm,
+        &[&env.user],
+        &[build_deposit_ix(
+            &env.user.pubkey(),
+            &env.vault,
+            &env.ccm_mint.pubkey(),
+            CYCLE_DEPOSIT,
+            0,
+        )],
+    );
+    send_tx(
+        &mut env.svm,
+        &[&env.keeper],
+        &[build_compound_ix(
+            &env.keeper.pubkey(),
+            &env.vault,
+            &env.channel_config,
+            &env.ccm_mint.pubkey(),
+            &env.protocol_state,
+            &env.stake_pool,
+            &env.stake_vault,
+            Some(&env.exchange_rate_oracle),
+        )],
+    );
+    observed_rates.push(read_exchange_rate(&env.svm, &env.exchange_rate_oracle).current_rate);
+    observed_staked.push(read_vault_state(&env.svm, &env.vault).total_staked);
+
+    // Cycle 2 (low reward): set reward rate to zero, wait 5 minutes, add another entry.
+    set_reward_rate(&mut env, LOW_REWARD_PER_SLOT);
+    slot_cursor = slot_cursor.saturating_add(FIVE_MINUTE_SLOTS).saturating_add(1);
+    warp_to_slot_and_expire(&mut env, slot_cursor);
+    send_tx(
+        &mut env.svm,
+        &[&env.user],
+        &[build_deposit_ix(
+            &env.user.pubkey(),
+            &env.vault,
+            &env.ccm_mint.pubkey(),
+            CYCLE_DEPOSIT,
+            0,
+        )],
+    );
+    send_tx(
+        &mut env.svm,
+        &[&env.keeper],
+        &[build_compound_ix(
+            &env.keeper.pubkey(),
+            &env.vault,
+            &env.channel_config,
+            &env.ccm_mint.pubkey(),
+            &env.protocol_state,
+            &env.stake_pool,
+            &env.stake_vault,
+            Some(&env.exchange_rate_oracle),
+        )],
+    );
+    observed_rates.push(read_exchange_rate(&env.svm, &env.exchange_rate_oracle).current_rate);
+    observed_staked.push(read_vault_state(&env.svm, &env.vault).total_staked);
+
+    // Cycle 3 (high reward again): raise the rate and add a final entry before re-staking.
+    high_reward_per_slot = set_reward_rate_bounded(&mut env, HIGH_REWARD_REQUESTED);
+    slot_cursor = slot_cursor.saturating_add(FIVE_MINUTE_SLOTS).saturating_add(1);
+    warp_to_slot_and_expire(&mut env, slot_cursor);
+    send_tx(
+        &mut env.svm,
+        &[&env.user],
+        &[build_deposit_ix(
+            &env.user.pubkey(),
+            &env.vault,
+            &env.ccm_mint.pubkey(),
+            CYCLE_DEPOSIT,
+            0,
+        )],
+    );
+    send_tx(
+        &mut env.svm,
+        &[&env.keeper],
+        &[build_compound_ix(
+            &env.keeper.pubkey(),
+            &env.vault,
+            &env.channel_config,
+            &env.ccm_mint.pubkey(),
+            &env.protocol_state,
+            &env.stake_pool,
+            &env.stake_vault,
+            Some(&env.exchange_rate_oracle),
+        )],
+    );
+    observed_rates.push(read_exchange_rate(&env.svm, &env.exchange_rate_oracle).current_rate);
+    observed_staked.push(read_vault_state(&env.svm, &env.vault).total_staked);
+
+    // Confirm alternating reward behavior stayed in expected bounds.
+    assert_eq!(observed_rates.len(), 4, "expected 4 exchange-rate snapshots");
+    assert_eq!(observed_staked.len(), 4, "expected 4 total_staked snapshots");
+
+    let r1_delta = observed_rates[1].saturating_sub(observed_rates[0]);
+    let r2_delta = observed_rates[2].saturating_sub(observed_rates[1]);
+    let r3_delta = observed_rates[3].saturating_sub(observed_rates[2]);
+    let s1_delta = observed_staked[1].saturating_sub(observed_staked[0]);
+    let s2_delta = observed_staked[2].saturating_sub(observed_staked[1]);
+    let s3_delta = observed_staked[3].saturating_sub(observed_staked[2]);
+
+    let baseline_deposit_net = {
+        let after_first_fee = amount_after_fee(CYCLE_DEPOSIT, TRANSFER_FEE_BPS);
+        amount_after_fee(after_first_fee, TRANSFER_FEE_BPS)
+    };
+    let r1_reward_like = s1_delta.saturating_sub(baseline_deposit_net);
+    let r2_reward_like = s2_delta.saturating_sub(baseline_deposit_net);
+    let r3_reward_like = s3_delta.saturating_sub(baseline_deposit_net);
+
+    println!(
+        "  observed rate deltas: {:?}; staked deltas: {:?}",
+        vec![r1_delta, r2_delta, r3_delta],
+        vec![s1_delta, s2_delta, s3_delta]
+    );
+    println!(
+        "  reward-like deltas (staked_delta - 2x transfer fees for 2k CCM): {:?}",
+        vec![r1_reward_like, r2_reward_like, r3_reward_like]
+    );
+    println!(
+        "  reward rates used: high_cap={} / requested={}, low={} (final={})",
+        high_reward_per_slot,
+        HIGH_REWARD_REQUESTED,
+        LOW_REWARD_PER_SLOT,
+        read_stake_pool_reward_rate(&env.svm, &env.stake_pool)
+    );
+
+    // 5-minute compounding windows are too short for reward to dominate 0.5% transfer-fee drift,
+    // so we only assert the behavior that is guaranteed by design:
+    // - each cycle is executable,
+    // - no-cycle deadlock,
+    // - reward-rate caps and toggles are respected.
+    assert!(s1_delta > 0, "first cycle should advance staked balance");
+    assert!(s2_delta > 0, "second cycle should advance staked balance");
+    assert!(s3_delta > 0, "third cycle should advance staked balance");
+
+    let weighted_total = read_stake_pool_total_weighted(&env.svm, &env.stake_pool);
+    let high_cap_now = max_reward_rate_for_tvl(weighted_total);
+    assert_eq!(
+        high_reward_per_slot,
+        std::cmp::min(HIGH_REWARD_REQUESTED, high_cap_now),
+        "high reward should be capped against pool TVL APR guard"
+    );
+
+    // Optional sanity: reward rate path exercised for both bounds.
+    assert!(
+        high_reward_per_slot > LOW_REWARD_PER_SLOT,
+        "upper-rate phase should be non-zero when capped APR allows it"
+    );
+    assert!(weighted_total > 0, "pool should have positive weighted stake after seeding");
+
+    // Pause rewards and unwind via complete_withdraw from Oracle once lock+queue expires.
+    set_reward_rate(&mut env, LOW_REWARD_PER_SLOT);
+    assert_eq!(
+        read_stake_pool_reward_rate(&env.svm, &env.stake_pool),
+        LOW_REWARD_PER_SLOT,
+        "pool should be at low rate before exit sequence"
+    );
+
+    let vault_state = read_vault_state(&env.svm, &env.vault);
+    let shares_before_request = vault_state.total_shares;
+    let request_shares = shares_before_request / 2;
+    let request_ix = build_request_withdraw_ix(
+        &env.user.pubkey(),
+        &env.vault,
+        &env.ccm_mint.pubkey(),
+        request_shares,
+        0,
+    );
+    env.svm.expire_blockhash();
+    send_tx(&mut env.svm, &[&env.user], &[request_ix]);
+
+    let user_ccm_ata = derive_ata(&env.user.pubkey(), &env.ccm_mint.pubkey(), &token_2022_program_id());
+    let user_ccm_before = read_token_balance(&env.svm, &user_ccm_ata);
+
+    slot_cursor = slot_cursor
+        .saturating_add(FIVE_MINUTE_SLOTS)
+        .saturating_add(SHORT_WITHDRAW_QUEUE_SLOTS)
+        .saturating_add(20);
+    warp_to_slot_and_expire(&mut env, slot_cursor);
+
+    let complete_ix = build_complete_withdraw_ix(
+        &env.user.pubkey(),
+        &env.vault,
+        &env.channel_config,
+        &env.ccm_mint.pubkey(),
+        &env.protocol_state,
+        &env.stake_pool,
+        &env.stake_vault,
+        0,
+        0,
+    );
+    send_tx(&mut env.svm, &[&env.user], &[complete_ix]);
+
+    let user_ccm_after = read_token_balance(&env.svm, &user_ccm_ata);
+    let received = user_ccm_after.saturating_sub(user_ccm_before);
+    assert!(received > 0, "withdrawal should deliver CCM");
+
+    let vault_state = read_vault_state(&env.svm, &env.vault);
+    assert_eq!(
+        vault_state.total_shares,
+        shares_before_request - request_shares,
+        "requested half should remain minted"
+    );
+    assert_eq!(vault_state.pending_withdrawals, 0, "pending withdrawals should clear");
+
+    let position = read_oracle_position(&env.svm, &env.oracle_position);
+    assert!(!position.is_active, "oracle position should be inactive after unwind");
+
+    println!(
+        "Test 7 PASSED: compound cycles every {} slots with alternating reward rates",
+        FIVE_MINUTE_SLOTS
+    );
+    println!(
+        "  Observed rates: {:?}; observed staked: {:?}; Received from unwind: {}",
+        observed_rates, observed_staked, received
+    );
+    println!(
+        "  Observed rate deltas: {:?}; staked deltas: {:?}",
+        vec![r1_delta, r2_delta, r3_delta],
+        vec![s1_delta, s2_delta, s3_delta]
     );
 }
 

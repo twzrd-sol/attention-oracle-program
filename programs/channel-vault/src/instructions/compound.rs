@@ -3,7 +3,8 @@
 //! This is a permissionless instruction - anyone can call it.
 //! The compound strategy:
 //! 1. If no active position: stake all pending with 7-day lock
-//! 2. If active position and lock expired: unstake, then stake total with 7-day lock
+//! 2. If active position and lock expired: unstake then restake, reserving withdrawal
+//!    obligations in buffer so zero-penalty queue exits can settle.
 //! 3. If active position and lock not expired: wait (revert)
 
 use anchor_lang::prelude::*;
@@ -464,6 +465,8 @@ pub fn handler<'info>(mut ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -
     let pending = ctx.accounts.vault.pending_deposits;
     let reserved_for_withdrawals = ctx.accounts.vault.pending_withdrawals;
     let stakeable_pending = pending.saturating_sub(reserved_for_withdrawals);
+    // Any withdrawals above pending deposits must be reserved from existing stake.
+    let unstaked_reserve_for_withdrawals = reserved_for_withdrawals.saturating_sub(pending);
     let is_active = ctx.accounts.vault_oracle_position.is_active;
 
     require!(stakeable_pending > 0 || is_active, VaultError::NothingToCompound);
@@ -513,16 +516,23 @@ pub fn handler<'info>(mut ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -
             .ok_or(VaultError::MathOverflow)?;
     }
 
-    // Pay keeper bounty from claimed rewards only (never from principal)
+    // Pay keeper bounty from claimed rewards first, then apply withdrawal reservation.
+    // Use saturating subtraction so completed withdrawals can keep the queue liquid
+    // even when the entire restaked amount is reserved.
+    let mut bounty_paid = 0u64;
     if rewards_claimed > 0 && COMPOUND_BOUNTY_BPS > 0 {
-        let bounty_paid = do_pay_bounty(
+        bounty_paid = do_pay_bounty(
             &ctx.accounts, signer_seeds, rewards_claimed, clock.unix_timestamp,
         )?;
-        if bounty_paid > 0 {
-            amount_to_stake = amount_to_stake
-                .checked_sub(bounty_paid)
-                .ok_or(VaultError::MathOverflow)?;
-        }
+    }
+    if bounty_paid > 0 {
+        amount_to_stake = amount_to_stake.saturating_sub(bounty_paid);
+    }
+
+    // Keep queue obligations liquid for completion from buffer before re-staking.
+    // If withdrawals exceed pending deposits, hold the excess from unstaked principal.
+    if is_active && unstaked_reserve_for_withdrawals > 0 {
+        amount_to_stake = amount_to_stake.saturating_sub(unstaked_reserve_for_withdrawals);
     }
 
     if amount_to_stake > 0 {
