@@ -5,13 +5,7 @@
   "type": "module",
   "scripts": {
     "anchor:test": "bash scripts/anchor-test-safe.sh",
-    "generate-client": "node scripts/generate-client.mjs",
     "v3:config": "tsx scripts/config.ts --export",
-    "v3:gen-env": "tsx scripts/generate-env.ts",
-    "v3:init-protocol": "tsx scripts/initialize-protocol-v3.ts",
-    "v3:init-stake-pool": "tsx scripts/initialize-stake-pool-v3.ts",
-    "v3:admin-withdraw": "tsx scripts/admin-withdraw-v3.ts",
-    "v3:set-metadata": "tsx scripts/set-token-metadata-v3.ts",
     "test:activation": "tsx scripts/test-activation.ts",
     "test:cpi": "anchor build && cargo test -p channel-vault --test cpi_integration -- --nocapture"
   },
