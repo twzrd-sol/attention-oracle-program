@@ -189,6 +189,41 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
+    // Global Root (V4) — Single Root, Per-User Totals
+    // -------------------------------------------------------------------------
+
+    pub fn initialize_global_root(ctx: Context<InitializeGlobalRoot>) -> Result<()> {
+        instructions::global::initialize_global_root(ctx)
+    }
+
+    pub fn publish_global_root(
+        ctx: Context<PublishGlobalRoot>,
+        root_seq: u64,
+        root: [u8; 32],
+        dataset_hash: [u8; 32],
+    ) -> Result<()> {
+        instructions::global::publish_global_root(ctx, root_seq, root, dataset_hash)
+    }
+
+    pub fn claim_global<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimGlobal<'info>>,
+        root_seq: u64,
+        cumulative_total: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::global::claim_global(ctx, root_seq, cumulative_total, proof)
+    }
+
+    pub fn claim_global_sponsored<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimGlobalSponsored<'info>>,
+        root_seq: u64,
+        cumulative_total: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::global::claim_global_sponsored(ctx, root_seq, cumulative_total, proof)
+    }
+
+    // -------------------------------------------------------------------------
     // Token-2022 Transfer Fee Harvesting
     // -------------------------------------------------------------------------
 
@@ -196,6 +231,10 @@ pub mod token_2022 {
         ctx: Context<'_, '_, 'info, 'info, HarvestFees<'info>>,
     ) -> Result<()> {
         instructions::governance::harvest_and_distribute_fees(ctx)
+    }
+
+    pub fn withdraw_fees_from_mint(ctx: Context<WithdrawFeesFromMint>) -> Result<()> {
+        instructions::governance::withdraw_fees_from_mint(ctx)
     }
 
     // -------------------------------------------------------------------------

@@ -29,6 +29,19 @@ pub const CUMULATIVE_V2_DOMAIN: &[u8] = b"TWZRD:CUMULATIVE_V2";
 /// Domain separation for cumulative V3 leaf hashing (includes stake_snapshot)
 pub const CUMULATIVE_V3_DOMAIN: &[u8] = b"TWZRD:CUMULATIVE_V3";
 
+/// Domain separation for global V4 leaf hashing (single root, per-user totals)
+pub const GLOBAL_V4_DOMAIN: &[u8] = b"TWZRD:GLOBAL_V4";
+
+// =============================================================================
+// GLOBAL ROOT (V4 CLAIMS)
+// =============================================================================
+
+/// PDA seed for the global root config account
+pub const GLOBAL_ROOT_SEED: &[u8] = b"global_root";
+
+/// PDA seed for per-user global claim state
+pub const CLAIM_STATE_GLOBAL_SEED: &[u8] = b"claim_global";
+
 // =============================================================================
 // ECONOMICS & FEES
 // =============================================================================

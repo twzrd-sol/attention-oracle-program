@@ -189,6 +189,12 @@ pub enum OracleError {
 
     #[msg("V2 claims are disabled after cutover epoch - use V3")]
     V2ClaimsDisabled,
+
+    // =========================================================================
+    // GLOBAL ROOT (V4)
+    // =========================================================================
+    #[msg("Global root config not initialized")]
+    GlobalRootNotInitialized,
 }
 
 // =============================================================================
