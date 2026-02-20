@@ -1,5 +1,5 @@
 use anchor_lang::prelude::Pubkey;
-use crate::constants::{CUMULATIVE_V2_DOMAIN, CUMULATIVE_V3_DOMAIN};
+use crate::constants::{CUMULATIVE_V2_DOMAIN, CUMULATIVE_V3_DOMAIN, GLOBAL_V4_DOMAIN};
 use sha3::{Digest, Keccak256};
 
 pub fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
@@ -88,5 +88,27 @@ pub fn compute_cumulative_leaf_v3(
         &total,
         &stake,
         &slot,
+    ])
+}
+
+/// Computes the simple global (v4) leaf hash — per-user totals, no channel scope:
+/// keccak(domain || mint || root_seq || wallet || cumulative_total)
+///
+/// One global root serves all users. No stake snapshot or channel binding.
+/// Creator fee split is handled off-chain by the publisher.
+pub fn compute_global_leaf(
+    mint: &Pubkey,
+    root_seq: u64,
+    wallet: &Pubkey,
+    cumulative_total: u64,
+) -> [u8; 32] {
+    let seq = root_seq.to_le_bytes();
+    let total = cumulative_total.to_le_bytes();
+    keccak_hashv(&[
+        GLOBAL_V4_DOMAIN,
+        mint.as_ref(),
+        &seq,
+        wallet.as_ref(),
+        &total,
     ])
 }

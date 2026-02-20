@@ -5,7 +5,8 @@ use crate::{
 };
 use anchor_lang::prelude::*;
 use anchor_spl::token_2022_extensions::transfer_fee::{
-    withdraw_withheld_tokens_from_accounts, WithdrawWithheldTokensFromAccounts,
+    withdraw_withheld_tokens_from_accounts, withdraw_withheld_tokens_from_mint,
+    WithdrawWithheldTokensFromAccounts, WithdrawWithheldTokensFromMint,
 };
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
@@ -19,6 +20,14 @@ pub struct FeesHarvested {
     pub withheld_amount: u64,
     pub treasury_share: u64,
     pub creator_pool_share: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct FeesWithdrawnFromMint {
+    pub mint: Pubkey,
+    pub withdrawn_amount: u64,
+    pub destination: Pubkey,
     pub timestamp: i64,
 }
 
@@ -60,6 +69,9 @@ pub struct HarvestFees<'info> {
     pub treasury: InterfaceAccount<'info, TokenAccount>,
 
     /// Token-2022 program
+    #[account(
+        constraint = token_program.key() == anchor_spl::token_2022::ID @ OracleError::InvalidTokenProgram
+    )]
     pub token_program: Interface<'info, TokenInterface>,
     // remaining_accounts: source ATAs with withheld fees to harvest from
 }
@@ -160,6 +172,86 @@ pub fn harvest_and_distribute_fees<'info>(
         "Harvest complete: {} sources, {} tokens withdrawn to treasury",
         ctx.remaining_accounts.len(),
         withheld_amount
+    );
+
+    Ok(())
+}
+
+// ============================================================================
+// Mint-Level Fee Withdrawal (Token-2022 Withheld on Mint -> Treasury ATA)
+// ============================================================================
+
+#[derive(Accounts)]
+pub struct WithdrawFeesFromMint<'info> {
+    /// Permissionless crank -- anyone can trigger the CPI.
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    /// Protocol state PDA is the mint's withdraw_withheld_authority.
+    #[account(
+        seeds = [PROTOCOL_SEED, mint.key().as_ref()],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// Token-2022 mint holding aggregated withheld fees.
+    #[account(mut)]
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    /// Treasury ATA destination for withdrawn fees.
+    /// Owner must match protocol_state.treasury (fee destination owner).
+    #[account(
+        mut,
+        constraint = treasury_ata.owner == protocol_state.treasury @ OracleError::Unauthorized,
+        constraint = treasury_ata.mint == mint.key() @ OracleError::InvalidMint,
+    )]
+    pub treasury_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Token-2022 program
+    #[account(
+        constraint = token_program.key() == anchor_spl::token_2022::ID @ OracleError::InvalidTokenProgram
+    )]
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn withdraw_fees_from_mint(ctx: Context<WithdrawFeesFromMint>) -> Result<()> {
+    let ts = Clock::get()?.unix_timestamp;
+    let protocol_state = &ctx.accounts.protocol_state;
+    let mint_key = ctx.accounts.mint.key();
+
+    let treasury_before = ctx.accounts.treasury_ata.amount;
+
+    let seeds: &[&[u8]] = &[PROTOCOL_SEED, mint_key.as_ref(), &[protocol_state.bump]];
+    let signer_seeds = &[seeds];
+
+    withdraw_withheld_tokens_from_mint(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            WithdrawWithheldTokensFromMint {
+                token_program_id: ctx.accounts.token_program.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
+                destination: ctx.accounts.treasury_ata.to_account_info(),
+                authority: ctx.accounts.protocol_state.to_account_info(),
+            },
+            signer_seeds,
+        ),
+    )?;
+
+    ctx.accounts.treasury_ata.reload()?;
+    let treasury_after = ctx.accounts.treasury_ata.amount;
+    let withdrawn_amount = treasury_after.saturating_sub(treasury_before);
+
+    emit!(FeesWithdrawnFromMint {
+        mint: mint_key,
+        withdrawn_amount,
+        destination: ctx.accounts.treasury_ata.key(),
+        timestamp: ts,
+    });
+
+    msg!(
+        "Mint withdraw complete: {} tokens moved to treasury {}",
+        withdrawn_amount,
+        ctx.accounts.treasury_ata.key()
     );
 
     Ok(())

@@ -25,6 +25,52 @@ pub struct CumulativeRewardsClaimedV3 {
     pub current_stake: u64,
 }
 
+/// Global V4 root publish event (single root shared across channels/subjects).
+#[event]
+pub struct GlobalRootPublished {
+    pub mint: Pubkey,
+    pub root_seq: u64,
+    pub root: [u8; 32],
+    pub dataset_hash: [u8; 32],
+    pub publisher: Pubkey,
+    pub slot: u64,
+}
+
+/// V4 global claim event with subject + stake snapshot binding.
+#[event]
+pub struct GlobalRewardsClaimedV4 {
+    pub subject: Pubkey,
+    pub claimer: Pubkey,
+    pub user_amount: u64,
+    pub creator_amount: u64,
+    pub cumulative_total: u64,
+    pub root_seq: u64,
+    pub stake_snapshot: u64,
+    pub current_stake: u64,
+}
+
+// =============================================================================
+// GLOBAL ROOT (V4) EVENTS — Simple per-user totals
+// =============================================================================
+
+/// V4 global claim event (single root, per-user totals, no channel scope)
+#[event]
+pub struct GlobalRewardsClaimed {
+    pub claimer: Pubkey,
+    pub amount: u64,
+    pub cumulative_total: u64,
+    pub root_seq: u64,
+}
+
+/// Withheld fees withdrawn from mint to treasury
+#[event]
+pub struct MintFeesWithdrawn {
+    pub mint: Pubkey,
+    pub destination: Pubkey,
+    pub amount: u64,
+    pub timestamp: i64,
+}
+
 // =============================================================================
 // ADMIN OPERATION EVENTS
 // Emitting events for state changes enables off-chain indexing and observability.

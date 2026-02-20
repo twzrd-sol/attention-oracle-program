@@ -99,6 +99,43 @@ impl ClaimStateV2 {
 }
 
 // =============================================================================
+// GLOBAL ROOT (V4 CLAIMS)
+// =============================================================================
+
+/// Global root config for V4 claims.
+/// Stores a single root sequence shared across all subjects/channels for a mint.
+/// Seeds: ["global_root", mint]
+#[account]
+pub struct GlobalRootConfig {
+    pub version: u8,
+    pub bump: u8,
+    pub mint: Pubkey,
+    pub latest_root_seq: u64,
+    pub roots: [RootEntry; CUMULATIVE_ROOT_HISTORY],
+}
+
+impl GlobalRootConfig {
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 8 + (RootEntry::LEN * CUMULATIVE_ROOT_HISTORY);
+}
+
+/// Per-user global claim state for V4 cumulative claims.
+/// Tracks total claimed amount to enable delta-based claims.
+/// Seeds: ["claim_global", mint, wallet]
+#[account]
+pub struct ClaimStateGlobal {
+    pub version: u8,
+    pub bump: u8,
+    pub mint: Pubkey,
+    pub wallet: Pubkey,
+    pub claimed_total: u64,
+    pub last_claim_seq: u64,
+}
+
+impl ClaimStateGlobal {
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 8 + 8;
+}
+
+// =============================================================================
 // CHANNEL STAKING (TOKEN-2022 SOULBOUND NFT)
 // =============================================================================
 
