@@ -237,6 +237,14 @@ pub mod token_2022 {
         instructions::governance::withdraw_fees_from_mint(ctx)
     }
 
+    pub fn route_treasury(
+        ctx: Context<RouteTreasury>,
+        amount: u64,
+        min_reserve: u64,
+    ) -> Result<()> {
+        instructions::governance::route_treasury(ctx, amount, min_reserve)
+    }
+
     // -------------------------------------------------------------------------
     // Access Control
     // -------------------------------------------------------------------------

@@ -8,7 +8,9 @@ use anchor_spl::token_2022_extensions::transfer_fee::{
     withdraw_withheld_tokens_from_accounts, withdraw_withheld_tokens_from_mint,
     WithdrawWithheldTokensFromAccounts, WithdrawWithheldTokensFromMint,
 };
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use anchor_spl::token_interface::{
+    transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
+};
 
 // ============================================================================
 // Fee Harvesting (Token-2022 Withheld Tokens)
@@ -252,6 +254,127 @@ pub fn withdraw_fees_from_mint(ctx: Context<WithdrawFeesFromMint>) -> Result<()>
         "Mint withdraw complete: {} tokens moved to treasury {}",
         withdrawn_amount,
         ctx.accounts.treasury_ata.key()
+    );
+
+    Ok(())
+}
+
+// ============================================================================
+// Treasury Routing (Treasury ATA -> Destination ATA, e.g. Vault Buffer)
+// ============================================================================
+
+#[event]
+pub struct TreasuryRouted {
+    pub mint: Pubkey,
+    pub amount: u64,
+    pub destination: Pubkey,
+    pub treasury_remaining: u64,
+    pub timestamp: i64,
+}
+
+/// Route excess CCM from treasury to a destination (e.g. vault buffer).
+/// Admin-only. Enforces an on-chain minimum reserve to protect claim funding.
+#[derive(Accounts)]
+pub struct RouteTreasury<'info> {
+    /// Protocol admin — only admin can route treasury funds.
+    #[account(
+        mut,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub admin: Signer<'info>,
+
+    /// Protocol state PDA — token owner of the treasury ATA.
+    #[account(
+        seeds = [PROTOCOL_SEED, mint.key().as_ref()],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// Token-2022 mint (for decimals in transfer_checked).
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    /// Treasury ATA (source). Must be owned by Protocol State PDA.
+    #[account(
+        mut,
+        constraint = treasury_ata.mint == mint.key() @ OracleError::InvalidMint,
+        constraint = treasury_ata.owner == protocol_state.key() @ OracleError::Unauthorized,
+    )]
+    pub treasury_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Destination ATA (e.g. vault buffer). Must be same mint.
+    #[account(
+        mut,
+        constraint = destination_ata.mint == mint.key() @ OracleError::InvalidMint,
+    )]
+    pub destination_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Token-2022 program
+    #[account(
+        constraint = token_program.key() == anchor_spl::token_2022::ID @ OracleError::InvalidTokenProgram
+    )]
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn route_treasury(
+    ctx: Context<RouteTreasury>,
+    amount: u64,
+    min_reserve: u64,
+) -> Result<()> {
+    let ts = Clock::get()?.unix_timestamp;
+    let protocol_state = &ctx.accounts.protocol_state;
+    let mint_key = ctx.accounts.mint.key();
+
+    // Block routing while paused
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
+
+    require!(amount > 0, OracleError::InvalidInputLength);
+    require!(min_reserve > 0, OracleError::InvalidInputLength);
+
+    // Enforce minimum reserve: treasury must retain at least min_reserve after transfer
+    let treasury_balance = ctx.accounts.treasury_ata.amount;
+    let balance_after = treasury_balance
+        .checked_sub(amount)
+        .ok_or(OracleError::InsufficientTreasuryBalance)?;
+    require!(
+        balance_after >= min_reserve,
+        OracleError::InsufficientTreasuryBalance
+    );
+
+    // CPI: transfer_checked from treasury to destination, signed by Protocol State PDA
+    let seeds: &[&[u8]] = &[PROTOCOL_SEED, mint_key.as_ref(), &[protocol_state.bump]];
+    let signer_seeds = &[seeds];
+
+    transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.treasury_ata.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
+                to: ctx.accounts.destination_ata.to_account_info(),
+                authority: ctx.accounts.protocol_state.to_account_info(),
+            },
+            signer_seeds,
+        ),
+        amount,
+        ctx.accounts.mint.decimals,
+    )?;
+
+    // Reload treasury for post-transfer balance
+    ctx.accounts.treasury_ata.reload()?;
+
+    emit!(TreasuryRouted {
+        mint: mint_key,
+        amount,
+        destination: ctx.accounts.destination_ata.key(),
+        treasury_remaining: ctx.accounts.treasury_ata.amount,
+        timestamp: ts,
+    });
+
+    msg!(
+        "Treasury routed: {} tokens to {}, {} remaining",
+        amount,
+        ctx.accounts.destination_ata.key(),
+        ctx.accounts.treasury_ata.amount
     );
 
     Ok(())
