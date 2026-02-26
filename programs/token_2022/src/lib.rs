@@ -224,6 +224,68 @@ pub mod token_2022 {
     }
 
     // -------------------------------------------------------------------------
+    // Creator Markets (V1) — Oracle-Resolved Binary Markets
+    // -------------------------------------------------------------------------
+
+    pub fn create_market(
+        ctx: Context<CreateMarket>,
+        market_id: u64,
+        creator_wallet: Pubkey,
+        metric: u8,
+        target: u64,
+        resolution_root_seq: u64,
+    ) -> Result<()> {
+        instructions::markets::create_market(
+            ctx,
+            market_id,
+            creator_wallet,
+            metric,
+            target,
+            resolution_root_seq,
+        )
+    }
+
+    /// Initialize vault + YES/NO mints for a market.
+    /// Separated from create_market to reduce per-instruction compute.
+    pub fn initialize_market_tokens(ctx: Context<InitializeMarketTokens>) -> Result<()> {
+        instructions::markets::initialize_market_tokens(ctx)
+    }
+
+    /// Deposit CCM, receive YES + NO shares.
+    /// Fee-aware: mints shares for net CCM received after Token-2022 transfer fee.
+    pub fn mint_shares<'info>(
+        ctx: Context<'_, '_, '_, 'info, MintShares<'info>>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::markets::mint_shares(ctx, amount)
+    }
+
+    /// Burn equal YES + NO shares to reclaim CCM (pre-resolution only).
+    pub fn redeem_shares<'info>(
+        ctx: Context<'_, '_, '_, 'info, RedeemShares<'info>>,
+        shares: u64,
+    ) -> Result<()> {
+        instructions::markets::redeem_shares(ctx, shares)
+    }
+
+    pub fn resolve_market(
+        ctx: Context<ResolveMarket>,
+        cumulative_total: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::markets::resolve_market(ctx, cumulative_total, proof)
+    }
+
+    /// Burn winning shares to claim CCM from vault (post-resolution only).
+    /// Token-2022 transfer fee applies on exit — protocol revenue on every settlement.
+    pub fn settle<'info>(
+        ctx: Context<'_, '_, '_, 'info, Settle<'info>>,
+        shares: u64,
+    ) -> Result<()> {
+        instructions::markets::settle(ctx, shares)
+    }
+
+    // -------------------------------------------------------------------------
     // Token-2022 Transfer Fee Harvesting
     // -------------------------------------------------------------------------
 

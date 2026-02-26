@@ -195,6 +195,42 @@ pub enum OracleError {
     // =========================================================================
     #[msg("Global root config not initialized")]
     GlobalRootNotInitialized,
+
+    // =========================================================================
+    // CREATOR MARKETS
+    // =========================================================================
+    #[msg("Invalid market state")]
+    InvalidMarketState,
+
+    #[msg("Market metric is not supported")]
+    UnsupportedMarketMetric,
+
+    #[msg("Market has already been resolved")]
+    MarketAlreadyResolved,
+
+    #[msg("Market cannot be resolved yet - target root sequence is not published")]
+    MarketNotResolvableYet,
+
+    #[msg("Market tokens not initialized - call initialize_market_tokens first")]
+    MarketTokensNotInitialized,
+
+    #[msg("Market tokens already initialized")]
+    MarketTokensAlreadyInitialized,
+
+    #[msg("Zero shares minted - deposit too small after transfer fee")]
+    ZeroSharesMinted,
+
+    #[msg("Unequal YES/NO share amounts for redemption")]
+    UnequalShareAmounts,
+
+    #[msg("Market not resolved yet - cannot settle")]
+    MarketNotResolved,
+
+    #[msg("Wrong outcome token - must burn winning side to settle")]
+    WrongOutcomeToken,
+
+    #[msg("Insufficient vault balance for settlement")]
+    InsufficientVaultBalance,
 }
 
 // =============================================================================
