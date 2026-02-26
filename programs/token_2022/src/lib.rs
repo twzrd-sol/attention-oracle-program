@@ -53,7 +53,8 @@ pub mod token_2022 {
     use super::*;
 
     // -------------------------------------------------------------------------
-    // Cumulative Roots (V2) - ACTIVE CLAIM SYSTEM
+    // Cumulative Roots — Channel Infrastructure + V3 Claims
+    // V2 claims removed (sunset complete). V3 has stake-snapshot anti-gaming.
     // -------------------------------------------------------------------------
 
     pub fn initialize_channel_cumulative(
@@ -81,30 +82,6 @@ pub mod token_2022 {
     ) -> Result<()> {
         instructions::cumulative::publish_cumulative_root(ctx, channel, root_seq, root, dataset_hash)
     }
-
-    pub fn claim_cumulative<'info>(
-        ctx: Context<'_, '_, '_, 'info, ClaimCumulative<'info>>,
-        channel: String,
-        root_seq: u64,
-        cumulative_total: u64,
-        proof: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        instructions::cumulative::claim_cumulative(ctx, channel, root_seq, cumulative_total, proof)
-    }
-
-    pub fn claim_cumulative_sponsored<'info>(
-        ctx: Context<'_, '_, '_, 'info, ClaimCumulativeSponsored<'info>>,
-        channel: String,
-        root_seq: u64,
-        cumulative_total: u64,
-        proof: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        instructions::cumulative::claim_cumulative_sponsored(ctx, channel, root_seq, cumulative_total, proof)
-    }
-
-    // -------------------------------------------------------------------------
-    // Cumulative Roots (V3) - With Stake Snapshot Binding (Anti-Gaming)
-    // -------------------------------------------------------------------------
 
     /// V3 cumulative claim with stake snapshot verification.
     /// Prevents "boost gaming" where users unstake after snapshot.
@@ -140,16 +117,6 @@ pub mod token_2022 {
         new_creator_fee_bps: u16,
     ) -> Result<()> {
         instructions::cumulative::update_channel_creator_fee(ctx, channel, new_creator_fee_bps)
-    }
-
-    /// Admin-only: Set the cutover epoch for V2 sunset enforcement.
-    /// Once reached, V2 claims are disabled and users must use V3.
-    pub fn update_channel_cutover_epoch(
-        ctx: Context<UpdateChannelCutoverEpoch>,
-        channel: String,
-        new_cutover_epoch: u64,
-    ) -> Result<()> {
-        instructions::cumulative::update_channel_cutover_epoch(ctx, channel, new_cutover_epoch)
     }
 
     /// Admin-only: Recover from skipped root sequence to unbrick a channel.
@@ -279,6 +246,12 @@ pub mod token_2022 {
         instructions::markets::close_market(ctx)
     }
 
+    /// Close the YES and NO mints for a market that has 0 supply.
+    /// Returns the rentlamports back to the admin.
+    pub fn close_market_mints(ctx: Context<CloseMarketMints>, market_id: u64) -> Result<()> {
+        instructions::markets::close_market_mints(ctx, market_id)
+    }
+
     // -------------------------------------------------------------------------
     // Token-2022 Transfer Fee Harvesting
     // -------------------------------------------------------------------------
@@ -304,34 +277,6 @@ pub mod token_2022 {
     // -------------------------------------------------------------------------
     // Access Control
     // -------------------------------------------------------------------------
-
-    pub fn update_publisher(ctx: Context<UpdatePublisher>, new_publisher: Pubkey) -> Result<()> {
-        instructions::admin::update_publisher(ctx, new_publisher)
-    }
-
-    pub fn update_publisher_open(
-        ctx: Context<UpdatePublisherOpen>,
-        new_publisher: Pubkey,
-    ) -> Result<()> {
-        instructions::admin::update_publisher_open(ctx, new_publisher)
-    }
-
-    pub fn set_paused(ctx: Context<SetPaused>, paused: bool) -> Result<()> {
-        instructions::admin::set_paused(ctx, paused)
-    }
-
-    pub fn set_paused_open(ctx: Context<SetPausedOpen>, paused: bool) -> Result<()> {
-        instructions::admin::set_paused_open(ctx, paused)
-    }
-
-    pub fn update_admin_open(ctx: Context<UpdateAdminOpen>, new_admin: Pubkey) -> Result<()> {
-        instructions::admin::update_admin_open(ctx, new_admin)
-    }
-
-    pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
-        instructions::admin::update_admin(ctx, new_admin)
-    }
-
     /// Set the treasury wallet (fee destination owner).
     pub fn set_treasury(ctx: Context<SetTreasury>, new_treasury: Pubkey) -> Result<()> {
         instructions::admin::set_treasury(ctx, new_treasury)

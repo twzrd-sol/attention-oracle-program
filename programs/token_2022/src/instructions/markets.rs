@@ -11,7 +11,7 @@ use crate::constants::{
 };
 use crate::errors::OracleError;
 use crate::events::{
-    MarketClosed, MarketCreated, MarketResolved, MarketSettled, MarketSwept,
+    MarketClosed, MarketCreated, MarketMintsClosed, MarketResolved, MarketSettled, MarketSwept,
     MarketTokensInitialized, SharesMinted, SharesRedeemed,
 };
 use crate::merkle_proof::{compute_global_leaf, verify_proof};
@@ -1056,3 +1056,104 @@ pub fn close_market(ctx: Context<CloseMarket>) -> Result<()> {
 
     Ok(())
 }
+
+// =============================================================================
+// CLOSE MARKET MINTS (reclaim rent from zero-supply YES/NO mints)
+// =============================================================================
+
+#[derive(Accounts)]
+#[instruction(market_id: u64)]
+pub struct CloseMarketMints<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// YES outcome mint — supply must be 0
+    #[account(
+        mut,
+        constraint = yes_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
+    )]
+    pub yes_mint: Account<'info, anchor_spl::token::Mint>,
+
+    /// NO outcome mint — supply must be 0
+    #[account(
+        mut,
+        constraint = no_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
+    )]
+    pub no_mint: Account<'info, anchor_spl::token::Mint>,
+
+    /// Mint authority PDA (signs mint close CPI)
+    /// CHECK: PDA derived from seeds, no data stored
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_id.to_le_bytes()],
+        bump,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    /// Standard SPL token program (for closing the mints)
+    pub standard_token_program: Program<'info, anchor_spl::token::Token>,
+}
+
+pub fn close_market_mints(ctx: Context<CloseMarketMints>, market_id: u64) -> Result<()> {
+    let mint_key = ctx.accounts.protocol_state.mint;
+    let market_id_bytes = market_id.to_le_bytes();
+
+    let auth_seeds: &[&[u8]] = &[
+        MARKET_MINT_AUTHORITY_SEED,
+        mint_key.as_ref(),
+        &market_id_bytes,
+        &[ctx.bumps.mint_authority],
+    ];
+
+    // Close YES mint
+    let close_yes_ix = anchor_spl::token::spl_token::instruction::close_account(
+        ctx.accounts.standard_token_program.key,
+        &ctx.accounts.yes_mint.key(),
+        &ctx.accounts.admin.key(),
+        &ctx.accounts.mint_authority.key(),
+        &[],
+    )?;
+    anchor_lang::solana_program::program::invoke_signed(
+        &close_yes_ix,
+        &[
+            ctx.accounts.yes_mint.to_account_info(),
+            ctx.accounts.admin.to_account_info(),
+            ctx.accounts.mint_authority.to_account_info(),
+        ],
+        &[auth_seeds],
+    )?;
+
+    // Close NO mint
+    let close_no_ix = anchor_spl::token::spl_token::instruction::close_account(
+        ctx.accounts.standard_token_program.key,
+        &ctx.accounts.no_mint.key(),
+        &ctx.accounts.admin.key(),
+        &ctx.accounts.mint_authority.key(),
+        &[],
+    )?;
+    anchor_lang::solana_program::program::invoke_signed(
+        &close_no_ix,
+        &[
+            ctx.accounts.no_mint.to_account_info(),
+            ctx.accounts.admin.to_account_info(),
+            ctx.accounts.mint_authority.to_account_info(),
+        ],
+        &[auth_seeds],
+    )?;
+
+    emit!(MarketMintsClosed {
+        market_id,
+        yes_mint: ctx.accounts.yes_mint.key(),
+        no_mint: ctx.accounts.no_mint.key(),
+        admin: ctx.accounts.admin.key(),
+    });
+
+    Ok(())
+}
+
