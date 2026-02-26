@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token_2022::spl_token_2022;
 use anchor_spl::token_interface::{
     Mint as MintInterface, TokenAccount as TokenAccountInterface, TokenInterface,
 };
@@ -10,8 +11,8 @@ use crate::constants::{
 };
 use crate::errors::OracleError;
 use crate::events::{
-    MarketCreated, MarketResolved, MarketSettled, MarketSwept, MarketTokensInitialized,
-    SharesMinted, SharesRedeemed,
+    MarketClosed, MarketCreated, MarketResolved, MarketSettled, MarketSwept,
+    MarketTokensInitialized, SharesMinted, SharesRedeemed,
 };
 use crate::merkle_proof::{compute_global_leaf, verify_proof};
 use crate::state::{GlobalRootConfig, MarketState, ProtocolState};
@@ -933,6 +934,124 @@ pub fn sweep_residual<'info>(
         admin: ctx.accounts.admin.key(),
         amount_swept: residual,
         treasury: ctx.accounts.protocol_state.treasury,
+    });
+
+    Ok(())
+}
+
+// =============================================================================
+// CLOSE MARKET (reclaim rent from fully-resolved, fully-settled markets)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct CloseMarket<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = (admin.key() == protocol_state.admin
+                  || admin.key() == market_state.authority) @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        mut,
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+        constraint = market_state.resolved @ OracleError::MarketNotResolved,
+        constraint = market_state.tokens_initialized @ OracleError::MarketTokensNotInitialized,
+        close = admin,
+    )]
+    pub market_state: Account<'info, MarketState>,
+
+    /// Market vault (Token-2022 ATA holding CCM collateral — must be empty)
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::token_program = token_program,
+        constraint = vault.key() == market_state.vault @ OracleError::InvalidMarketState,
+        constraint = vault.amount == 0 @ OracleError::VaultNotEmpty,
+    )]
+    pub vault: InterfaceAccount<'info, TokenAccountInterface>,
+
+    /// CCM mint (Token-2022) — needed for vault close CPI
+    #[account(
+        constraint = ccm_mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub ccm_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// YES outcome mint — supply must be 0 (all shares burned/settled)
+    #[account(
+        constraint = yes_mint.key() == market_state.yes_mint @ OracleError::InvalidMarketState,
+        constraint = yes_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
+    )]
+    pub yes_mint: Account<'info, anchor_spl::token::Mint>,
+
+    /// NO outcome mint — supply must be 0 (all shares burned/settled)
+    #[account(
+        constraint = no_mint.key() == market_state.no_mint @ OracleError::InvalidMarketState,
+        constraint = no_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
+    )]
+    pub no_mint: Account<'info, anchor_spl::token::Mint>,
+
+    /// Mint authority PDA (signs vault close CPI)
+    /// CHECK: PDA derived from seeds, no data stored
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+        constraint = mint_authority.key() == market_state.mint_authority @ OracleError::InvalidMarketState,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    /// Token-2022 program (for closing the vault ATA)
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn close_market(ctx: Context<CloseMarket>) -> Result<()> {
+    let market_state = &ctx.accounts.market_state;
+    let market_key = market_state.key();
+    let market_id = market_state.market_id;
+
+    // Build PDA signer seeds for mint_authority
+    let market_id_bytes = market_state.market_id.to_le_bytes();
+    let mint_key = ctx.accounts.protocol_state.mint;
+    let auth_seeds: &[&[u8]] = &[
+        MARKET_MINT_AUTHORITY_SEED,
+        mint_key.as_ref(),
+        &market_id_bytes,
+        &[ctx.bumps.mint_authority],
+    ];
+
+    // Close the vault ATA via Token-2022 close_account CPI.
+    // The mint_authority PDA is the vault's owner/authority, so it signs.
+    // Rent lamports are sent to admin.
+    let close_ix = spl_token_2022::instruction::close_account(
+        ctx.accounts.token_program.key,
+        &ctx.accounts.vault.key(),
+        &ctx.accounts.admin.key(),
+        &ctx.accounts.mint_authority.key(),
+        &[],
+    )?;
+
+    anchor_lang::solana_program::program::invoke_signed(
+        &close_ix,
+        &[
+            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.admin.to_account_info(),
+            ctx.accounts.mint_authority.to_account_info(),
+        ],
+        &[auth_seeds],
+    )?;
+
+    // MarketState PDA is closed by Anchor's `close = admin` attribute above.
+    // YES/NO mints are left as dead accounts (0 supply, rent locked).
+
+    emit!(MarketClosed {
+        market: market_key,
+        market_id,
+        admin: ctx.accounts.admin.key(),
     });
 
     Ok(())

@@ -234,6 +234,9 @@ pub enum OracleError {
 
     #[msg("Winning shares still outstanding — all winners must settle before sweep")]
     WinningSharesStillOutstanding,
+
+    #[msg("Vault is not empty — all CCM must be withdrawn before closing")]
+    VaultNotEmpty,
 }
 
 // =============================================================================

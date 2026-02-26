@@ -153,6 +153,14 @@ pub struct MarketSwept {
     pub treasury: Pubkey,
 }
 
+/// Emitted when a fully-resolved, fully-settled market is closed to reclaim rent.
+#[event]
+pub struct MarketClosed {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub admin: Pubkey,
+}
+
 /// Withheld fees withdrawn from mint to treasury
 #[event]
 pub struct MintFeesWithdrawn {

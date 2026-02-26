@@ -271,6 +271,14 @@ pub mod token_2022 {
         instructions::markets::sweep_residual(ctx)
     }
 
+    /// Close a fully-resolved, fully-settled market to reclaim rent.
+    /// Closes the vault ATA (~0.003 SOL) and MarketState PDA (~0.003 SOL).
+    /// Requires: resolved, vault empty, both YES and NO mint supply == 0.
+    /// Only admin or the market's authority can close.
+    pub fn close_market(ctx: Context<CloseMarket>) -> Result<()> {
+        instructions::markets::close_market(ctx)
+    }
+
     // -------------------------------------------------------------------------
     // Token-2022 Transfer Fee Harvesting
     // -------------------------------------------------------------------------
