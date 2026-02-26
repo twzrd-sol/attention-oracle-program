@@ -10,8 +10,8 @@ use crate::constants::{
 };
 use crate::errors::OracleError;
 use crate::events::{
-    MarketCreated, MarketResolved, MarketSettled, MarketTokensInitialized, SharesMinted,
-    SharesRedeemed,
+    MarketCreated, MarketResolved, MarketSettled, MarketSwept, MarketTokensInitialized,
+    SharesMinted, SharesRedeemed,
 };
 use crate::merkle_proof::{compute_global_leaf, verify_proof};
 use crate::state::{GlobalRootConfig, MarketState, ProtocolState};
@@ -34,6 +34,7 @@ pub struct CreateMarket<'info> {
     #[account(
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
+        constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -210,6 +211,7 @@ pub struct InitializeMarketTokens<'info> {
 }
 
 pub fn initialize_market_tokens(ctx: Context<InitializeMarketTokens>) -> Result<()> {
+    require!(!ctx.accounts.protocol_state.paused, OracleError::ProtocolPaused);
     let market_state = &mut ctx.accounts.market_state;
     require!(
         !market_state.tokens_initialized,
@@ -813,6 +815,123 @@ pub fn settle<'info>(
         winning_side: market_state.outcome,
         shares_burned: shares,
         ccm_returned: shares, // gross; net is less after transfer fee
+    });
+
+    Ok(())
+}
+
+// =============================================================================
+// SWEEP RESIDUAL (admin recovers locked losing-side CCM after all winners settle)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct SweepResidual<'info> {
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+        constraint = market_state.tokens_initialized @ OracleError::MarketTokensNotInitialized,
+        constraint = market_state.resolved @ OracleError::MarketNotResolved,
+    )]
+    pub market_state: Account<'info, MarketState>,
+
+    /// CCM mint (Token-2022)
+    #[account(
+        constraint = ccm_mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub ccm_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// Market vault (holds residual CCM from losing side)
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::token_program = token_program,
+        constraint = vault.key() == market_state.vault @ OracleError::InvalidMarketState,
+    )]
+    pub vault: InterfaceAccount<'info, TokenAccountInterface>,
+
+    /// Winning outcome mint — must have supply == 0 (all winners settled)
+    #[account(
+        constraint = winning_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
+    )]
+    pub winning_mint: Account<'info, anchor_spl::token::Mint>,
+
+    /// Treasury CCM account (receives swept funds)
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::authority = protocol_state.treasury,
+        token::token_program = token_program,
+    )]
+    pub treasury_ccm: InterfaceAccount<'info, TokenAccountInterface>,
+
+    /// Mint authority PDA (signs vault transfer)
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+        constraint = mint_authority.key() == market_state.mint_authority @ OracleError::InvalidMarketState,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn sweep_residual<'info>(
+    ctx: Context<'_, '_, '_, 'info, SweepResidual<'info>>,
+) -> Result<()> {
+    let market_state = &ctx.accounts.market_state;
+
+    // Verify the correct winning mint was provided
+    let expected_winning_mint = if market_state.outcome {
+        market_state.yes_mint
+    } else {
+        market_state.no_mint
+    };
+    require_keys_eq!(
+        ctx.accounts.winning_mint.key(),
+        expected_winning_mint,
+        OracleError::WrongOutcomeToken
+    );
+
+    let residual = ctx.accounts.vault.amount;
+    require!(residual > 0, OracleError::InsufficientVaultBalance);
+
+    // Transfer all remaining CCM from vault to treasury
+    let market_id_bytes = market_state.market_id.to_le_bytes();
+    let mint_key = ctx.accounts.protocol_state.mint;
+    let auth_seeds: &[&[u8]] = &[
+        MARKET_MINT_AUTHORITY_SEED,
+        mint_key.as_ref(),
+        &market_id_bytes,
+        &[ctx.bumps.mint_authority],
+    ];
+
+    transfer_checked_with_remaining(
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.vault.to_account_info(),
+        &ctx.accounts.ccm_mint.to_account_info(),
+        &ctx.accounts.treasury_ccm.to_account_info(),
+        &ctx.accounts.mint_authority.to_account_info(),
+        residual,
+        CCM_DECIMALS,
+        &[auth_seeds],
+        ctx.remaining_accounts,
+    )?;
+
+    emit!(MarketSwept {
+        market: market_state.key(),
+        market_id: market_state.market_id,
+        admin: ctx.accounts.admin.key(),
+        amount_swept: residual,
+        treasury: ctx.accounts.protocol_state.treasury,
     });
 
     Ok(())

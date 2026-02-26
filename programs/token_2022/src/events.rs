@@ -143,6 +143,16 @@ pub struct MarketSettled {
     pub ccm_returned: u64,
 }
 
+/// Emitted when admin sweeps residual losing-side CCM to treasury.
+#[event]
+pub struct MarketSwept {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub admin: Pubkey,
+    pub amount_swept: u64,
+    pub treasury: Pubkey,
+}
+
 /// Withheld fees withdrawn from mint to treasury
 #[event]
 pub struct MintFeesWithdrawn {

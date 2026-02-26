@@ -231,6 +231,9 @@ pub enum OracleError {
 
     #[msg("Insufficient vault balance for settlement")]
     InsufficientVaultBalance,
+
+    #[msg("Winning shares still outstanding — all winners must settle before sweep")]
+    WinningSharesStillOutstanding,
 }
 
 // =============================================================================
