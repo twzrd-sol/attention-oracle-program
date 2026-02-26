@@ -34,7 +34,8 @@ pub struct CreateMarket<'info> {
     #[account(
         seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
-        constraint = authority.key() == protocol_state.admin @ OracleError::Unauthorized,
+        constraint = (authority.key() == protocol_state.admin
+                  || authority.key() == protocol_state.publisher) @ OracleError::Unauthorized,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
