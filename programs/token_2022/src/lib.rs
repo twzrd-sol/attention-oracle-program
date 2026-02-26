@@ -263,6 +263,14 @@ pub mod token_2022 {
         instructions::markets::settle(ctx, shares)
     }
 
+    /// Admin: sweep residual losing-side CCM to treasury after all winners settle.
+    /// Requires: resolved, winning_mint.supply == 0 (all winning shares burned).
+    pub fn sweep_residual<'info>(
+        ctx: Context<'_, '_, '_, 'info, SweepResidual<'info>>,
+    ) -> Result<()> {
+        instructions::markets::sweep_residual(ctx)
+    }
+
     // -------------------------------------------------------------------------
     // Token-2022 Transfer Fee Harvesting
     // -------------------------------------------------------------------------
