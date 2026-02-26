@@ -53,18 +53,6 @@ pub mod token_2022 {
     use super::*;
 
     // -------------------------------------------------------------------------
-    // Protocol Initialization
-    // -------------------------------------------------------------------------
-
-    pub fn initialize_mint(
-        ctx: Context<InitializeMint>,
-        fee_basis_points: u16,
-        max_fee: u64,
-    ) -> Result<()> {
-        instructions::initialize_mint::handler(ctx, fee_basis_points, max_fee)
-    }
-
-    // -------------------------------------------------------------------------
     // Cumulative Roots (V2) - ACTIVE CLAIM SYSTEM
     // -------------------------------------------------------------------------
 
@@ -143,16 +131,6 @@ pub mod token_2022 {
         proof: Vec<[u8; 32]>,
     ) -> Result<()> {
         instructions::cumulative::claim_cumulative_sponsored_v3(ctx, channel, root_seq, cumulative_total, stake_snapshot, snapshot_slot, proof)
-    }
-
-    /// Migrate existing ChannelConfigV2 accounts to add creator_wallet fields.
-    pub fn migrate_channel_config_v2(
-        ctx: Context<MigrateChannelConfigV2>,
-        channel: String,
-        creator_wallet: Pubkey,
-        creator_fee_bps: u16,
-    ) -> Result<()> {
-        instructions::cumulative::migrate_channel_config_v2(ctx, channel, creator_wallet, creator_fee_bps)
     }
 
     /// Update creator fee on already-migrated ChannelConfigV2.
@@ -374,16 +352,6 @@ pub mod token_2022 {
     /// Set the reward rate for a channel stake pool (admin only).
     pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()> {
         instructions::staking::set_reward_rate(ctx, new_rate)
-    }
-
-    /// Migrate existing stake pool accounts to add reward fields (admin only).
-    pub fn migrate_stake_pool(ctx: Context<MigrateStakePool>) -> Result<()> {
-        instructions::staking::migrate_stake_pool(ctx)
-    }
-
-    /// Migrate existing user stake accounts to add reward fields (admin only).
-    pub fn migrate_user_stake(ctx: Context<MigrateUserStake>) -> Result<()> {
-        instructions::staking::migrate_user_stake(ctx)
     }
 
     /// Emergency unstake before lock expiry with 20% penalty (burned).
