@@ -62,6 +62,87 @@ pub struct GlobalRewardsClaimed {
     pub root_seq: u64,
 }
 
+// =============================================================================
+// CREATOR MARKETS EVENTS
+// =============================================================================
+
+/// Emitted when a new creator market is initialized.
+#[event]
+pub struct MarketCreated {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub authority: Pubkey,
+    pub creator_wallet: Pubkey,
+    pub mint: Pubkey,
+    pub metric: u8,
+    pub target: u64,
+    pub resolution_root_seq: u64,
+    pub created_slot: u64,
+}
+
+/// Emitted when a creator market is resolved against a published global root.
+#[event]
+pub struct MarketResolved {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub resolver: Pubkey,
+    pub creator_wallet: Pubkey,
+    pub metric: u8,
+    pub target: u64,
+    pub resolution_root_seq: u64,
+    pub verified_cumulative_total: u64,
+    pub outcome: bool,
+    pub resolved_slot: u64,
+}
+
+/// Emitted when market tokens (vault, YES/NO mints) are initialized.
+#[event]
+pub struct MarketTokensInitialized {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub vault: Pubkey,
+    pub yes_mint: Pubkey,
+    pub no_mint: Pubkey,
+    pub mint_authority: Pubkey,
+}
+
+/// Emitted when a user deposits CCM and receives YES + NO shares.
+#[event]
+pub struct SharesMinted {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub depositor: Pubkey,
+    /// Gross CCM amount user intended to deposit
+    pub deposit_amount: u64,
+    /// Net CCM received in vault after Token-2022 transfer fee
+    pub net_amount: u64,
+    /// YES + NO shares minted (equals net_amount)
+    pub shares_minted: u64,
+}
+
+/// Emitted when a user burns equal YES + NO shares to reclaim CCM (pre-resolution).
+#[event]
+pub struct SharesRedeemed {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub redeemer: Pubkey,
+    pub shares_burned: u64,
+    /// CCM transferred out (net after outbound transfer fee)
+    pub ccm_returned: u64,
+}
+
+/// Emitted when a user burns winning shares to claim CCM (post-resolution).
+#[event]
+pub struct MarketSettled {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub settler: Pubkey,
+    pub winning_side: bool,
+    pub shares_burned: u64,
+    /// CCM transferred out (net after outbound transfer fee)
+    pub ccm_returned: u64,
+}
+
 /// Withheld fees withdrawn from mint to treasury
 #[event]
 pub struct MintFeesWithdrawn {

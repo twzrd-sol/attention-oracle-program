@@ -79,7 +79,8 @@ pub struct ChannelConfigV2 {
 }
 
 impl ChannelConfigV2 {
-    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (RootEntry::LEN * CUMULATIVE_ROOT_HISTORY);
+    pub const LEN: usize =
+        8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (RootEntry::LEN * CUMULATIVE_ROOT_HISTORY);
 }
 
 /// Per-user claim state for V2 cumulative system.
@@ -133,6 +134,51 @@ pub struct ClaimStateGlobal {
 
 impl ClaimStateGlobal {
     pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 8 + 8;
+}
+
+// =============================================================================
+// CREATOR MARKETS
+// =============================================================================
+
+/// Binary creator market state resolved from global root oracle data.
+/// Seeds: ["market", mint, market_id_le_bytes]
+#[account]
+pub struct MarketState {
+    pub version: u8,
+    pub bump: u8,
+    pub metric: u8,
+    pub resolved: bool,
+    pub outcome: bool,
+    /// Whether market tokens (vault, yes_mint, no_mint) have been initialized
+    pub tokens_initialized: bool,
+    pub _padding: [u8; 2],
+    pub market_id: u64,
+    pub mint: Pubkey,
+    pub authority: Pubkey,
+    pub creator_wallet: Pubkey,
+    pub target: u64,
+    pub resolution_root_seq: u64,
+    pub resolution_cumulative_total: u64,
+    pub created_slot: u64,
+    pub resolved_slot: u64,
+    /// CCM vault token account holding collateral
+    pub vault: Pubkey,
+    /// YES outcome token mint (standard SPL, no transfer fees)
+    pub yes_mint: Pubkey,
+    /// NO outcome token mint (standard SPL, no transfer fees)
+    pub no_mint: Pubkey,
+    /// Mint authority PDA for YES/NO tokens
+    pub mint_authority: Pubkey,
+}
+
+impl MarketState {
+    // discriminator(8) + version(1) + bump(1) + metric(1) + resolved(1) + outcome(1)
+    // + tokens_initialized(1) + padding(2) + market_id(8) + mint(32) + authority(32)
+    // + creator_wallet(32) + target(8) + resolution_root_seq(8)
+    // + resolution_cumulative_total(8) + created_slot(8) + resolved_slot(8)
+    // + vault(32) + yes_mint(32) + no_mint(32) + mint_authority(32)
+    pub const LEN: usize = 8 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8
+        + 32 + 32 + 32 + 32;
 }
 
 // =============================================================================

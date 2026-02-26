@@ -43,6 +43,28 @@ pub const GLOBAL_ROOT_SEED: &[u8] = b"global_root";
 pub const CLAIM_STATE_GLOBAL_SEED: &[u8] = b"claim_global";
 
 // =============================================================================
+// CREATOR MARKETS
+// =============================================================================
+
+/// PDA seed for market state accounts
+pub const MARKET_STATE_SEED: &[u8] = b"market";
+
+/// PDA seed for market vault (holds CCM collateral)
+pub const MARKET_VAULT_SEED: &[u8] = b"market_vault";
+
+/// PDA seed for YES outcome token mint
+pub const MARKET_YES_MINT_SEED: &[u8] = b"market_yes";
+
+/// PDA seed for NO outcome token mint
+pub const MARKET_NO_MINT_SEED: &[u8] = b"market_no";
+
+/// PDA seed for market mint authority (signs YES/NO mint/burn)
+pub const MARKET_MINT_AUTHORITY_SEED: &[u8] = b"market_auth";
+
+/// Metric selector for creator attention score (global cumulative total)
+pub const MARKET_METRIC_ATTENTION_SCORE: u8 = 0;
+
+// =============================================================================
 // ECONOMICS & FEES
 // =============================================================================
 
@@ -113,12 +135,12 @@ pub fn calculate_boost_bps(lock_duration: u64) -> u64 {
     let days = lock_duration / SLOTS_PER_DAY;
 
     match days {
-        0..=6 => 10_000,      // 1.0x   - less than 7 days
-        7..=29 => 12_500,     // 1.25x  - 7-29 days
-        30..=89 => 15_000,    // 1.5x   - 30-89 days
-        90..=179 => 20_000,   // 2.0x   - 90-179 days
-        180..=364 => 25_000,  // 2.5x   - 180-364 days
-        _ => 30_000,          // 3.0x   - 365+ days
+        0..=6 => 10_000,     // 1.0x   - less than 7 days
+        7..=29 => 12_500,    // 1.25x  - 7-29 days
+        30..=89 => 15_000,   // 1.5x   - 30-89 days
+        90..=179 => 20_000,  // 2.0x   - 90-179 days
+        180..=364 => 25_000, // 2.5x   - 180-364 days
+        _ => 30_000,         // 3.0x   - 365+ days
     }
 }
 
