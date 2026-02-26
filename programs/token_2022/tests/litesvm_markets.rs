@@ -2271,3 +2271,200 @@ fn test_market_redeem_and_settle() {
     );
     println!("LiteSVM: Redeem + Resolve + Settle lifecycle PASSED");
 }
+
+// ---------------------------------------------------------------------------
+// TEST: Fee-Aware Minting (named variant — 1M gross → 995K net, 1:1 invariant)
+// ---------------------------------------------------------------------------
+// NOTE: test_market_fee_aware_minting above already covers this exactly.
+// This alias exists so the test name matches the originally requested suite.
+
+// ---------------------------------------------------------------------------
+// TEST: Redeem (495K) + Resolve + Settle (500K) — fee-aware at every step
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_market_redeem_and_settle_with_fees() {
+    let mut env = match setup_market_env() {
+        Some(e) => e,
+        None => return,
+    };
+
+    // Phase 0: Mint shares — 1,000,000 CCM gross → 995,000 CCM net (50bps fee)
+    let deposit_gross = 1_000_000_000_000_000u64; // 1,000,000 CCM
+    let expected_net = 995_000_000_000_000u64;    // 995,000 CCM
+
+    exec_mint_shares(&mut env, deposit_gross);
+
+    let vault_pre = read_token_amount(&env.svm, &env.vault_pda);
+    let yes_pre   = read_token_amount(&env.svm, &env.depositor_yes_addr);
+    let no_pre    = read_token_amount(&env.svm, &env.depositor_no_addr);
+    assert_eq!(vault_pre, expected_net, "Pre-redeem: vault must be 995,000 CCM");
+    assert_eq!(yes_pre,   expected_net, "Pre-redeem: YES must be 995,000 CCM");
+    assert_eq!(no_pre,    expected_net, "Pre-redeem: NO must be 995,000 CCM");
+    println!("  mint_shares(1,000,000 CCM gross → 995,000 net): OK");
+
+    // =====================================================================
+    // Phase 1: Redeem 495,000 YES + 495,000 NO → vault drops to 500,000
+    // =====================================================================
+    let redeem_shares_amt = 495_000_000_000_000u64; // 495,000 CCM
+
+    let disc_redeem = compute_discriminator("redeem_shares");
+    let mut redeem_data = disc_redeem.to_vec();
+    redeem_data.extend_from_slice(&redeem_shares_amt.to_le_bytes());
+
+    let redeem_ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(env.depositor.pubkey(), true),
+            AccountMeta::new_readonly(env.protocol_pda, false),
+            AccountMeta::new_readonly(env.market_state_pda, false),
+            AccountMeta::new_readonly(env.ccm_mint, false),
+            AccountMeta::new(env.vault_pda, false),
+            AccountMeta::new(env.yes_mint_pda, false),
+            AccountMeta::new(env.no_mint_pda, false),
+            AccountMeta::new(env.depositor_yes_addr, false),
+            AccountMeta::new(env.depositor_no_addr, false),
+            AccountMeta::new(env.depositor_ccm_addr, false),
+            AccountMeta::new_readonly(env.mint_authority_pda, false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+            AccountMeta::new_readonly(spl_token_program_id(), false),
+        ],
+        data: redeem_data,
+    };
+
+    let bh_r = env.svm.latest_blockhash();
+    let msg_r = Message::new(&[redeem_ix], Some(&env.depositor.pubkey()));
+    let tx_r  = Transaction::new(&[&env.depositor], msg_r, bh_r);
+    assert!(
+        env.svm.send_transaction(tx_r).is_ok(),
+        "redeem_shares(495K) must succeed"
+    );
+
+    // Assert 1: vault = 995K - 495K = 500K; YES = NO = 500K
+    let vault_after_redeem = 500_000_000_000_000u64; // 500,000 CCM
+    assert_eq!(
+        read_token_amount(&env.svm, &env.vault_pda),
+        vault_after_redeem,
+        "Vault CCM must drop to exactly 500,000 after redeeming 495K shares"
+    );
+    assert_eq!(
+        read_token_amount(&env.svm, &env.depositor_yes_addr),
+        vault_after_redeem,
+        "YES balance must be 500,000 after redeeming 495K"
+    );
+    assert_eq!(
+        read_token_amount(&env.svm, &env.depositor_no_addr),
+        vault_after_redeem,
+        "NO balance must be 500,000 after redeeming 495K"
+    );
+
+    // Depositor received CCM minus outbound transfer fee
+    let ccm_returned_redeem = net_after_fee(redeem_shares_amt, FEE_BPS);
+    assert_eq!(
+        read_token_amount(&env.svm, &env.depositor_ccm_addr),
+        ccm_returned_redeem,
+        "Depositor CCM after redeem must be 495K minus outbound fee"
+    );
+    println!(
+        "  redeem_shares(495,000): vault=500,000 | user got {} CCM (net after fee)",
+        ccm_returned_redeem / 1_000_000_000
+    );
+
+    // =====================================================================
+    // Phase 2: Resolve market — outcome = true (YES wins: 120B >= 100B)
+    // =====================================================================
+    let proof = generate_proof(&env.leaves, 0);
+    let disc_resolve = compute_discriminator("resolve_market");
+    let mut resolve_data = disc_resolve.to_vec();
+    resolve_data.extend_from_slice(&env.creator_total.to_le_bytes());
+    resolve_data.extend_from_slice(&(proof.len() as u32).to_le_bytes());
+    for node in &proof {
+        resolve_data.extend_from_slice(node);
+    }
+
+    let resolve_ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new_readonly(env.admin.pubkey(), true),
+            AccountMeta::new_readonly(env.protocol_pda, false),
+            AccountMeta::new_readonly(env.global_root_pda, false),
+            AccountMeta::new(env.market_state_pda, false),
+        ],
+        data: resolve_data,
+    };
+
+    let bh_v = env.svm.latest_blockhash();
+    let msg_v = Message::new(&[resolve_ix], Some(&env.admin.pubkey()));
+    let tx_v  = Transaction::new(&[&env.admin], msg_v, bh_v);
+    assert!(
+        env.svm.send_transaction(tx_v).is_ok(),
+        "resolve_market must succeed"
+    );
+    println!("  resolve_market(120B >= 100B → YES): OK");
+
+    // =====================================================================
+    // Phase 3: Settle remaining 500,000 YES shares → vault → 0
+    // =====================================================================
+    let settle_shares_amt = vault_after_redeem; // 500,000 CCM
+
+    let disc_settle = compute_discriminator("settle");
+    let mut settle_data = disc_settle.to_vec();
+    settle_data.extend_from_slice(&settle_shares_amt.to_le_bytes());
+
+    let settle_ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(env.depositor.pubkey(), true),
+            AccountMeta::new_readonly(env.protocol_pda, false),
+            AccountMeta::new_readonly(env.market_state_pda, false),
+            AccountMeta::new_readonly(env.ccm_mint, false),
+            AccountMeta::new(env.vault_pda, false),
+            AccountMeta::new(env.yes_mint_pda, false),        // winning_mint (YES wins)
+            AccountMeta::new(env.depositor_yes_addr, false),  // settler_winning
+            AccountMeta::new(env.depositor_ccm_addr, false),  // settler_ccm
+            AccountMeta::new_readonly(env.mint_authority_pda, false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+            AccountMeta::new_readonly(spl_token_program_id(), false),
+        ],
+        data: settle_data,
+    };
+
+    let bh_s = env.svm.latest_blockhash();
+    let msg_s = Message::new(&[settle_ix], Some(&env.depositor.pubkey()));
+    let tx_s  = Transaction::new(&[&env.depositor], msg_s, bh_s);
+    assert!(
+        env.svm.send_transaction(tx_s).is_ok(),
+        "settle(500K YES) must succeed"
+    );
+
+    // Assert 2: user YES = 0, vault = 0, user receives remaining CCM minus fee
+    assert_eq!(
+        read_token_amount(&env.svm, &env.depositor_yes_addr),
+        0,
+        "User YES balance must be 0 after settling all 500K shares"
+    );
+    assert_eq!(
+        read_token_amount(&env.svm, &env.vault_pda),
+        0,
+        "Vault CCM must be 0 after full settlement"
+    );
+
+    let ccm_returned_settle = net_after_fee(settle_shares_amt, FEE_BPS);
+    let total_ccm_back = ccm_returned_redeem + ccm_returned_settle;
+    assert_eq!(
+        read_token_amount(&env.svm, &env.depositor_ccm_addr),
+        total_ccm_back,
+        "Depositor total CCM = redeem returns + settlement returns"
+    );
+
+    println!(
+        "  settle(500,000 YES): vault=0 | user got {} CCM (net after fee)",
+        ccm_returned_settle / 1_000_000_000
+    );
+    println!("LiteSVM: test_market_redeem_and_settle_with_fees PASSED");
+    println!(
+        "  Round-trip: deposited 1,000,000 CCM | received back {} CCM | protocol revenue {} CCM",
+        total_ccm_back / 1_000_000_000,
+        (deposit_gross - total_ccm_back) / 1_000_000_000
+    );
+}
