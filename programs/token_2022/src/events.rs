@@ -161,6 +161,15 @@ pub struct MarketClosed {
     pub admin: Pubkey,
 }
 
+/// Emitted when YES/NO mints are closed after market closure (rent reclaimed).
+#[event]
+pub struct MarketMintsClosed {
+    pub market_id: u64,
+    pub yes_mint: Pubkey,
+    pub no_mint: Pubkey,
+    pub admin: Pubkey,
+}
+
 /// Withheld fees withdrawn from mint to treasury
 #[event]
 pub struct MintFeesWithdrawn {
