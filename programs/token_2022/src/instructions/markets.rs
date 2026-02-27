@@ -290,6 +290,7 @@ pub struct MintShares<'info> {
     #[account(
         mut,
         constraint = yes_mint.key() == market_state.yes_mint @ OracleError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
     )]
     pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
@@ -297,6 +298,7 @@ pub struct MintShares<'info> {
     #[account(
         mut,
         constraint = no_mint.key() == market_state.no_mint @ OracleError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
     )]
     pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
@@ -458,6 +460,7 @@ pub struct RedeemShares<'info> {
     #[account(
         mut,
         constraint = yes_mint.key() == market_state.yes_mint @ OracleError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
     )]
     pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
@@ -465,6 +468,7 @@ pub struct RedeemShares<'info> {
     #[account(
         mut,
         constraint = no_mint.key() == market_state.no_mint @ OracleError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
     )]
     pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
@@ -721,7 +725,10 @@ pub struct Settle<'info> {
     pub vault: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
     /// The WINNING outcome mint (YES if outcome=true, NO if outcome=false)
-    #[account(mut)]
+    #[account(
+        mut,
+        mint::token_program = outcome_token_program,
+    )]
     pub winning_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
     /// Settler's winning token account
@@ -1084,6 +1091,9 @@ pub struct CloseMarketMints<'info> {
     /// YES outcome mint — supply must be 0
     #[account(
         mut,
+        seeds = [MARKET_YES_MINT_SEED, protocol_state.mint.as_ref(), &market_id.to_le_bytes()],
+        bump,
+        mint::token_program = outcome_token_program,
         constraint = yes_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
     )]
     pub yes_mint: InterfaceAccount<'info, MintInterface>,
@@ -1091,6 +1101,9 @@ pub struct CloseMarketMints<'info> {
     /// NO outcome mint — supply must be 0
     #[account(
         mut,
+        seeds = [MARKET_NO_MINT_SEED, protocol_state.mint.as_ref(), &market_id.to_le_bytes()],
+        bump,
+        mint::token_program = outcome_token_program,
         constraint = no_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
     )]
     pub no_mint: InterfaceAccount<'info, MintInterface>,

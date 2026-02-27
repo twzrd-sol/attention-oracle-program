@@ -3018,6 +3018,438 @@ fn test_v2_close_market_mints() {
         "Admin should have received rent back from closed mints"
     );
 
-    println!("  V2 close_market_mints: OK — rent reclaimed: {} lamports", rent_reclaimed);
+    // Stronger assertion: rent reclaimed should be close to both mints' rent
+    let expected_rent = yes_pre_lam + no_pre_lam;
+    // Allow for tx fee deduction (~5000 lamports)
+    assert!(
+        rent_reclaimed >= expected_rent.saturating_sub(10_000),
+        "Rent reclaimed ({}) should be close to YES+NO rent ({}) minus tx fee",
+        rent_reclaimed,
+        expected_rent,
+    );
+
+    println!("  V2 close_market_mints: OK — rent reclaimed: {} lamports (expected ~{})", rent_reclaimed, expected_rent);
     println!("LiteSVM: V2 close_market_mints PASSED");
+}
+
+// ---------------------------------------------------------------------------
+// TEST: V2 redeem_shares (burn equal YES + NO → get CCM back, pre-resolution)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_v2_redeem_shares() {
+    let mut env = match setup_market_env_v2() {
+        Some(e) => e,
+        None => return,
+    };
+
+    let deposit_amount = 1_000_000_000_000_000u64; // 1,000,000 CCM
+    let expected_net = 995_000_000_000_000u64; // 995,000 CCM (50bps fee)
+
+    // Phase 1: Mint shares
+    exec_mint_shares_v2(&mut env, deposit_amount);
+
+    // Phase 2: Redeem half the shares
+    let redeem_amount = expected_net / 2; // 497,500 CCM
+
+    let disc_redeem = compute_discriminator("redeem_shares");
+    let mut redeem_data = disc_redeem.to_vec();
+    redeem_data.extend_from_slice(&redeem_amount.to_le_bytes());
+
+    let redeem_ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(env.depositor.pubkey(), true),
+            AccountMeta::new_readonly(env.protocol_pda, false),
+            AccountMeta::new_readonly(env.market_state_pda, false),
+            AccountMeta::new_readonly(env.ccm_mint, false),
+            AccountMeta::new(env.vault_pda, false),
+            AccountMeta::new(env.yes_mint_pda, false),
+            AccountMeta::new(env.no_mint_pda, false),
+            AccountMeta::new(env.depositor_yes_addr, false),
+            AccountMeta::new(env.depositor_no_addr, false),
+            AccountMeta::new(env.depositor_ccm_addr, false),
+            AccountMeta::new_readonly(env.mint_authority_pda, false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false), // token_program (CCM)
+            AccountMeta::new_readonly(spl_token_2022::id(), false), // outcome_token_program (Token-2022)
+        ],
+        data: redeem_data,
+    };
+
+    let bh = env.svm.latest_blockhash();
+    let msg = Message::new(&[redeem_ix], Some(&env.depositor.pubkey()));
+    let tx = Transaction::new(&[&env.depositor], msg, bh);
+    let result = env.svm.send_transaction(tx);
+    assert!(result.is_ok(), "V2 redeem_shares failed: {:?}", result.err());
+
+    // Verify: equal YES+NO burned, vault decreased
+    let remaining = expected_net - redeem_amount;
+    let yes_post = read_token_amount(&env.svm, &env.depositor_yes_addr);
+    let no_post = read_token_amount(&env.svm, &env.depositor_no_addr);
+    let vault_post = read_token_amount(&env.svm, &env.vault_pda);
+
+    assert_eq!(yes_post, remaining, "V2 YES should be {} after redeem", remaining);
+    assert_eq!(no_post, remaining, "V2 NO should be {} after redeem", remaining);
+    assert_eq!(vault_post, remaining, "V2 vault should be {} after redeem", remaining);
+
+    // Verify depositor got CCM back (net after outbound transfer fee)
+    let ccm_post = read_token_amount(&env.svm, &env.depositor_ccm_addr);
+    let expected_ccm_returned = net_after_fee(redeem_amount, FEE_BPS);
+    assert_eq!(ccm_post, expected_ccm_returned, "V2 depositor should have received {} CCM", expected_ccm_returned);
+
+    println!("  V2 redeem_shares({} → {} net returned): OK", redeem_amount, expected_ccm_returned);
+    println!("LiteSVM: V2 redeem_shares PASSED");
+}
+
+// ---------------------------------------------------------------------------
+// TEST: V2 market lifecycle where NO wins
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_v2_no_wins_lifecycle() {
+    // Setup: use a very high target that the creator won't meet → NO wins
+    let mut svm = LiteSVM::new();
+
+    if load_program(&mut svm).is_err() {
+        println!("Skip: AO program binary not found.");
+        return;
+    }
+    if load_token_2022_spl_program(&mut svm).is_err() {
+        println!("Skip: Token-2022 ELF not found.");
+        return;
+    }
+
+    let admin = Keypair::new();
+    let depositor = Keypair::new();
+    let creator_wallet = Pubkey::new_unique();
+    let ccm_mint_kp = Keypair::new();
+    let ccm_mint = ccm_mint_kp.pubkey();
+    let market_id: u64 = 99;
+    let root_seq: u64 = 10;
+
+    // Creator total is 50 CCM — below the high target → NO wins
+    let creator_total = 50_000_000_000u64;
+    let high_target = 100_000_000_000u64;
+
+    svm.airdrop(&admin.pubkey(), 100_000_000_000).unwrap();
+    svm.airdrop(&depositor.pubkey(), 100_000_000_000).unwrap();
+
+    create_ccm_mint_via_cpi(&mut svm, &admin, &ccm_mint_kp, 50);
+
+    let (protocol_pda, protocol_bump) = derive_protocol_state(&ccm_mint);
+    let (global_root_pda, global_root_bump) = derive_global_root_config(&ccm_mint);
+    let (market_state_pda, _) = derive_market_state(&ccm_mint, market_id);
+    let (vault_pda, _) = derive_market_vault(&ccm_mint, market_id);
+    let (yes_mint_pda, _) = derive_market_yes_mint(&ccm_mint, market_id);
+    let (no_mint_pda, _) = derive_market_no_mint(&ccm_mint, market_id);
+    let (mint_authority_pda, _) = derive_market_mint_authority(&ccm_mint, market_id);
+
+    // Build 2-leaf merkle tree with lower creator total
+    let creator_leaf = compute_global_leaf(&ccm_mint, root_seq, &creator_wallet, creator_total);
+    let other_leaf = compute_global_leaf(&ccm_mint, root_seq, &Pubkey::new_unique(), 500_000_000);
+    let leaves = vec![creator_leaf, other_leaf];
+    let root = compute_merkle_root(&leaves);
+
+    // Setup protocol state
+    let protocol_data = ProtocolState {
+        is_initialized: true,
+        version: 1,
+        admin: admin.pubkey(),
+        publisher: admin.pubkey(),
+        treasury: Pubkey::new_unique(),
+        mint: ccm_mint,
+        paused: false,
+        require_receipt: false,
+        bump: protocol_bump,
+    };
+    let protocol_bytes = serialize_anchor(&protocol_data, ProtocolState::LEN);
+    let protocol_lam = svm.minimum_balance_for_rent_exemption(protocol_bytes.len());
+    svm.set_account(
+        protocol_pda,
+        Account {
+            lamports: protocol_lam,
+            data: protocol_bytes,
+            owner: program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    ).unwrap();
+
+    // Setup global root with low creator total
+    let mut roots = [RootEntry::default(); CUMULATIVE_ROOT_HISTORY];
+    let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
+    roots[idx] = RootEntry {
+        seq: root_seq,
+        root,
+        dataset_hash: [0u8; 32],
+        published_slot: 100,
+    };
+    let global_root_data = GlobalRootConfig {
+        version: 1,
+        bump: global_root_bump,
+        mint: ccm_mint,
+        latest_root_seq: root_seq,
+        roots,
+    };
+    let global_bytes = serialize_anchor(&global_root_data, GlobalRootConfig::LEN);
+    let global_lam = svm.minimum_balance_for_rent_exemption(global_bytes.len());
+    svm.set_account(
+        global_root_pda,
+        Account {
+            lamports: global_lam,
+            data: global_bytes,
+            owner: program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    ).unwrap();
+
+    // create_market with high target
+    let disc = compute_discriminator("create_market");
+    let mut data = disc.to_vec();
+    data.extend_from_slice(&market_id.to_le_bytes());
+    data.extend_from_slice(creator_wallet.as_ref());
+    data.extend_from_slice(&0u8.to_le_bytes());
+    data.extend_from_slice(&high_target.to_le_bytes());
+    data.extend_from_slice(&root_seq.to_le_bytes());
+
+    let ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(admin.pubkey(), true),
+            AccountMeta::new_readonly(protocol_pda, false),
+            AccountMeta::new_readonly(global_root_pda, false),
+            AccountMeta::new(market_state_pda, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        data,
+    };
+    let bh = svm.latest_blockhash();
+    let msg = Message::new(&[ix], Some(&admin.pubkey()));
+    let tx = Transaction::new(&[&admin], msg, bh);
+    let result = svm.send_transaction(tx);
+    if result.is_err() {
+        println!("Skip: program binary predates V2. Run `anchor build`.");
+        return;
+    }
+
+    // initialize_market_tokens_v2
+    let disc_init = compute_discriminator("initialize_market_tokens_v2");
+    let init_ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(admin.pubkey(), true),
+            AccountMeta::new_readonly(protocol_pda, false),
+            AccountMeta::new(market_state_pda, false),
+            AccountMeta::new_readonly(ccm_mint, false),
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new(yes_mint_pda, false),
+            AccountMeta::new(no_mint_pda, false),
+            AccountMeta::new_readonly(mint_authority_pda, false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(sysvar::rent::ID, false),
+        ],
+        data: disc_init.to_vec(),
+    };
+    let bh = svm.latest_blockhash();
+    let msg = Message::new(&[init_ix], Some(&admin.pubkey()));
+    let tx = Transaction::new(&[&admin], msg, bh);
+    assert!(svm.send_transaction(tx).is_ok(), "V2 init must succeed");
+
+    // Fund depositor + create Token-2022 accounts
+    let deposit_amount = 1_000_000_000_000_000u64;
+    let expected_net = 995_000_000_000_000u64;
+
+    let depositor_ccm_kp = Keypair::new();
+    let depositor_ccm_addr = depositor_ccm_kp.pubkey();
+    create_and_fund_token_2022_account(&mut svm, &admin, &depositor, &depositor_ccm_kp, &ccm_mint, deposit_amount);
+
+    let depositor_yes_kp = Keypair::new();
+    let depositor_no_kp = Keypair::new();
+    let depositor_yes_addr = depositor_yes_kp.pubkey();
+    let depositor_no_addr = depositor_no_kp.pubkey();
+    create_token_2022_account_for_outcome_mint(&mut svm, &depositor, &depositor_yes_kp, &yes_mint_pda, &depositor.pubkey());
+    create_token_2022_account_for_outcome_mint(&mut svm, &depositor, &depositor_no_kp, &no_mint_pda, &depositor.pubkey());
+
+    // Mint shares
+    let disc_mint = compute_discriminator("mint_shares");
+    let mut mint_data = disc_mint.to_vec();
+    mint_data.extend_from_slice(&deposit_amount.to_le_bytes());
+    let mint_ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(depositor.pubkey(), true),
+            AccountMeta::new_readonly(protocol_pda, false),
+            AccountMeta::new_readonly(market_state_pda, false),
+            AccountMeta::new_readonly(ccm_mint, false),
+            AccountMeta::new(depositor_ccm_addr, false),
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new(yes_mint_pda, false),
+            AccountMeta::new(no_mint_pda, false),
+            AccountMeta::new(depositor_yes_addr, false),
+            AccountMeta::new(depositor_no_addr, false),
+            AccountMeta::new_readonly(mint_authority_pda, false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+        ],
+        data: mint_data,
+    };
+    let bh = svm.latest_blockhash();
+    let msg = Message::new(&[mint_ix], Some(&depositor.pubkey()));
+    let tx = Transaction::new(&[&depositor], msg, bh);
+    assert!(svm.send_transaction(tx).is_ok(), "mint_shares must succeed");
+    println!("  V2 NO-wins: mint_shares OK");
+
+    // Resolve — creator_total (50 CCM) < target (100 CCM) → NO wins
+    let proof = generate_proof(&leaves, 0);
+    let disc_resolve = compute_discriminator("resolve_market");
+    let mut resolve_data = disc_resolve.to_vec();
+    resolve_data.extend_from_slice(&creator_total.to_le_bytes());
+    resolve_data.extend_from_slice(&(proof.len() as u32).to_le_bytes());
+    for node in &proof { resolve_data.extend_from_slice(node); }
+
+    let resolve_ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new_readonly(admin.pubkey(), true),
+            AccountMeta::new_readonly(protocol_pda, false),
+            AccountMeta::new_readonly(global_root_pda, false),
+            AccountMeta::new(market_state_pda, false),
+        ],
+        data: resolve_data,
+    };
+    let bh = svm.latest_blockhash();
+    let msg = Message::new(&[resolve_ix], Some(&admin.pubkey()));
+    let tx = Transaction::new(&[&admin], msg, bh);
+    assert!(svm.send_transaction(tx).is_ok(), "resolve must succeed");
+
+    // Verify outcome == false (NO wins) via market_state bytes
+    let ms_account = svm.get_account(&market_state_pda).unwrap();
+    // offset: 8 (disc) + 1 (version) + 1 (bump) + 1 (metric) = byte 11 for resolved, byte 12 for outcome
+    assert_eq!(ms_account.data[11], 1, "market should be resolved");
+    assert_eq!(ms_account.data[12], 0, "outcome should be false (NO wins)");
+    println!("  V2 NO-wins: resolve(NO wins) OK");
+
+    // Settle with NO tokens (the winner)
+    let disc_settle = compute_discriminator("settle");
+    let mut settle_data = disc_settle.to_vec();
+    settle_data.extend_from_slice(&expected_net.to_le_bytes());
+
+    let settle_ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(depositor.pubkey(), true),
+            AccountMeta::new_readonly(protocol_pda, false),
+            AccountMeta::new_readonly(market_state_pda, false),
+            AccountMeta::new_readonly(ccm_mint, false),
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new(no_mint_pda, false),         // winning_mint = NO
+            AccountMeta::new(depositor_no_addr, false),    // settler_winning = depositor's NO
+            AccountMeta::new(depositor_ccm_addr, false),
+            AccountMeta::new_readonly(mint_authority_pda, false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+        ],
+        data: settle_data,
+    };
+    let bh = svm.latest_blockhash();
+    let msg = Message::new(&[settle_ix], Some(&depositor.pubkey()));
+    let tx = Transaction::new(&[&depositor], msg, bh);
+    assert!(svm.send_transaction(tx).is_ok(), "V2 settle with NO tokens must succeed");
+
+    let vault_final = read_token_amount(&svm, &vault_pda);
+    let no_final = read_token_amount(&svm, &depositor_no_addr);
+    assert_eq!(vault_final, 0, "V2 vault empty after NO settlement");
+    assert_eq!(no_final, 0, "V2 NO burned after settlement");
+    println!("  V2 NO-wins: settle(NO): OK — vault empty");
+    println!("LiteSVM: V2 NO-wins lifecycle PASSED");
+}
+
+// ---------------------------------------------------------------------------
+// TEST: V2 double-init fails
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_v2_double_init_fails() {
+    let mut env = match setup_market_env_v2() {
+        Some(e) => e,
+        None => return,
+    };
+
+    // Try to initialize_market_tokens_v2 again on same market
+    let disc = compute_discriminator("initialize_market_tokens_v2");
+    let ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(env.admin.pubkey(), true),
+            AccountMeta::new_readonly(env.protocol_pda, false),
+            AccountMeta::new(env.market_state_pda, false),
+            AccountMeta::new_readonly(env.ccm_mint, false),
+            AccountMeta::new(env.vault_pda, false),
+            AccountMeta::new(env.yes_mint_pda, false),
+            AccountMeta::new(env.no_mint_pda, false),
+            AccountMeta::new_readonly(env.mint_authority_pda, false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(sysvar::rent::id(), false),
+        ],
+        data: disc.to_vec(),
+    };
+
+    let bh = env.svm.latest_blockhash();
+    let msg = Message::new(&[ix], Some(&env.admin.pubkey()));
+    let tx = Transaction::new(&[&env.admin], msg, bh);
+    let result = env.svm.send_transaction(tx);
+    assert!(result.is_err(), "V2 double-init must fail");
+    println!("LiteSVM: V2 double-init correctly rejected");
+}
+
+// ---------------------------------------------------------------------------
+// TEST: V2 mint_shares with wrong outcome_token_program fails
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_v2_wrong_outcome_program_fails() {
+    let mut env = match setup_market_env_v2() {
+        Some(e) => e,
+        None => return,
+    };
+
+    let deposit_amount = 1_000_000_000_000_000u64;
+
+    // Build mint_shares with SPL Token as outcome_token_program (wrong for V2 mints)
+    let disc = compute_discriminator("mint_shares");
+    let mut data = disc.to_vec();
+    data.extend_from_slice(&deposit_amount.to_le_bytes());
+
+    let ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(env.depositor.pubkey(), true),
+            AccountMeta::new_readonly(env.protocol_pda, false),
+            AccountMeta::new_readonly(env.market_state_pda, false),
+            AccountMeta::new_readonly(env.ccm_mint, false),
+            AccountMeta::new(env.depositor_ccm_addr, false),
+            AccountMeta::new(env.vault_pda, false),
+            AccountMeta::new(env.yes_mint_pda, false),
+            AccountMeta::new(env.no_mint_pda, false),
+            AccountMeta::new(env.depositor_yes_addr, false),
+            AccountMeta::new(env.depositor_no_addr, false),
+            AccountMeta::new_readonly(env.mint_authority_pda, false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false), // token_program (CCM) — correct
+            AccountMeta::new_readonly(spl_token_program_id(), false), // outcome_token_program = SPL (WRONG for V2)
+        ],
+        data,
+    };
+
+    let bh = env.svm.latest_blockhash();
+    let msg = Message::new(&[ix], Some(&env.depositor.pubkey()));
+    let tx = Transaction::new(&[&env.depositor], msg, bh);
+    let result = env.svm.send_transaction(tx);
+    assert!(
+        result.is_err(),
+        "V2 mint_shares with wrong outcome_token_program must fail"
+    );
+    println!("LiteSVM: V2 wrong outcome_token_program correctly rejected");
 }
