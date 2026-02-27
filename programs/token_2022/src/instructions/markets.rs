@@ -286,35 +286,37 @@ pub struct MintShares<'info> {
     )]
     pub vault: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
-    /// YES outcome mint
+    /// YES outcome mint (SPL for old markets, Token-2022 for new)
     #[account(
         mut,
         constraint = yes_mint.key() == market_state.yes_mint @ OracleError::InvalidMarketState,
     )]
-    pub yes_mint: Box<Account<'info, anchor_spl::token::Mint>>,
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
-    /// NO outcome mint
+    /// NO outcome mint (SPL for old markets, Token-2022 for new)
     #[account(
         mut,
         constraint = no_mint.key() == market_state.no_mint @ OracleError::InvalidMarketState,
     )]
-    pub no_mint: Box<Account<'info, anchor_spl::token::Mint>>,
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
     /// Depositor's YES token account
     #[account(
         mut,
         token::mint = yes_mint,
         token::authority = depositor,
+        token::token_program = outcome_token_program,
     )]
-    pub depositor_yes: Box<Account<'info, anchor_spl::token::TokenAccount>>,
+    pub depositor_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
     /// Depositor's NO token account
     #[account(
         mut,
         token::mint = no_mint,
         token::authority = depositor,
+        token::token_program = outcome_token_program,
     )]
-    pub depositor_no: Box<Account<'info, anchor_spl::token::TokenAccount>>,
+    pub depositor_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
     /// Mint authority PDA
     /// CHECK: validated against market_state.mint_authority
@@ -327,8 +329,8 @@ pub struct MintShares<'info> {
 
     /// Token-2022 (for CCM transfers)
     pub token_program: Interface<'info, TokenInterface>,
-    /// Standard SPL token (for YES/NO mint operations)
-    pub standard_token_program: Program<'info, anchor_spl::token::Token>,
+    /// Token program for YES/NO outcome operations (SPL for old markets, Token-2022 for new)
+    pub outcome_token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn mint_shares<'info>(
@@ -374,11 +376,11 @@ pub fn mint_shares<'info>(
         &[ctx.bumps.mint_authority],
     ];
 
-    // Mint YES shares
-    anchor_spl::token::mint_to(
+    // Mint YES shares (routed via outcome_token_program — SPL or Token-2022)
+    anchor_spl::token_2022::mint_to(
         CpiContext::new_with_signer(
-            ctx.accounts.standard_token_program.to_account_info(),
-            anchor_spl::token::MintTo {
+            ctx.accounts.outcome_token_program.to_account_info(),
+            anchor_spl::token_2022::MintTo {
                 mint: ctx.accounts.yes_mint.to_account_info(),
                 to: ctx.accounts.depositor_yes.to_account_info(),
                 authority: ctx.accounts.mint_authority.to_account_info(),
@@ -388,11 +390,11 @@ pub fn mint_shares<'info>(
         net_received,
     )?;
 
-    // Mint NO shares
-    anchor_spl::token::mint_to(
+    // Mint NO shares (routed via outcome_token_program — SPL or Token-2022)
+    anchor_spl::token_2022::mint_to(
         CpiContext::new_with_signer(
-            ctx.accounts.standard_token_program.to_account_info(),
-            anchor_spl::token::MintTo {
+            ctx.accounts.outcome_token_program.to_account_info(),
+            anchor_spl::token_2022::MintTo {
                 mint: ctx.accounts.no_mint.to_account_info(),
                 to: ctx.accounts.depositor_no.to_account_info(),
                 authority: ctx.accounts.mint_authority.to_account_info(),
@@ -452,35 +454,37 @@ pub struct RedeemShares<'info> {
     )]
     pub vault: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
-    /// YES outcome mint
+    /// YES outcome mint (SPL for old markets, Token-2022 for new)
     #[account(
         mut,
         constraint = yes_mint.key() == market_state.yes_mint @ OracleError::InvalidMarketState,
     )]
-    pub yes_mint: Box<Account<'info, anchor_spl::token::Mint>>,
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
-    /// NO outcome mint
+    /// NO outcome mint (SPL for old markets, Token-2022 for new)
     #[account(
         mut,
         constraint = no_mint.key() == market_state.no_mint @ OracleError::InvalidMarketState,
     )]
-    pub no_mint: Box<Account<'info, anchor_spl::token::Mint>>,
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
     /// Redeemer's YES token account
     #[account(
         mut,
         token::mint = yes_mint,
         token::authority = redeemer,
+        token::token_program = outcome_token_program,
     )]
-    pub redeemer_yes: Box<Account<'info, anchor_spl::token::TokenAccount>>,
+    pub redeemer_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
     /// Redeemer's NO token account
     #[account(
         mut,
         token::mint = no_mint,
         token::authority = redeemer,
+        token::token_program = outcome_token_program,
     )]
-    pub redeemer_no: Box<Account<'info, anchor_spl::token::TokenAccount>>,
+    pub redeemer_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
     /// Redeemer's CCM token account (receives CCM back)
     #[account(
@@ -500,7 +504,8 @@ pub struct RedeemShares<'info> {
     pub mint_authority: SystemAccount<'info>,
 
     pub token_program: Interface<'info, TokenInterface>,
-    pub standard_token_program: Program<'info, anchor_spl::token::Token>,
+    /// Token program for YES/NO outcome operations (SPL for old markets, Token-2022 for new)
+    pub outcome_token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn redeem_shares<'info>(
@@ -511,11 +516,11 @@ pub fn redeem_shares<'info>(
     require!(!protocol_state.paused, OracleError::ProtocolPaused);
     require!(shares > 0, OracleError::ZeroSharesMinted);
 
-    // Burn equal YES and NO tokens
-    anchor_spl::token::burn(
+    // Burn equal YES and NO tokens (routed via outcome_token_program)
+    anchor_spl::token_2022::burn(
         CpiContext::new(
-            ctx.accounts.standard_token_program.to_account_info(),
-            anchor_spl::token::Burn {
+            ctx.accounts.outcome_token_program.to_account_info(),
+            anchor_spl::token_2022::Burn {
                 mint: ctx.accounts.yes_mint.to_account_info(),
                 from: ctx.accounts.redeemer_yes.to_account_info(),
                 authority: ctx.accounts.redeemer.to_account_info(),
@@ -524,10 +529,10 @@ pub fn redeem_shares<'info>(
         shares,
     )?;
 
-    anchor_spl::token::burn(
+    anchor_spl::token_2022::burn(
         CpiContext::new(
-            ctx.accounts.standard_token_program.to_account_info(),
-            anchor_spl::token::Burn {
+            ctx.accounts.outcome_token_program.to_account_info(),
+            anchor_spl::token_2022::Burn {
                 mint: ctx.accounts.no_mint.to_account_info(),
                 from: ctx.accounts.redeemer_no.to_account_info(),
                 authority: ctx.accounts.redeemer.to_account_info(),
@@ -717,15 +722,16 @@ pub struct Settle<'info> {
 
     /// The WINNING outcome mint (YES if outcome=true, NO if outcome=false)
     #[account(mut)]
-    pub winning_mint: Box<Account<'info, anchor_spl::token::Mint>>,
+    pub winning_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
     /// Settler's winning token account
     #[account(
         mut,
         token::mint = winning_mint,
         token::authority = settler,
+        token::token_program = outcome_token_program,
     )]
-    pub settler_winning: Box<Account<'info, anchor_spl::token::TokenAccount>>,
+    pub settler_winning: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
     /// Settler's CCM token account (receives settlement)
     #[account(
@@ -745,7 +751,8 @@ pub struct Settle<'info> {
     pub mint_authority: SystemAccount<'info>,
 
     pub token_program: Interface<'info, TokenInterface>,
-    pub standard_token_program: Program<'info, anchor_spl::token::Token>,
+    /// Token program for YES/NO outcome operations (SPL for old markets, Token-2022 for new)
+    pub outcome_token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn settle<'info>(
@@ -775,11 +782,11 @@ pub fn settle<'info>(
         OracleError::InsufficientVaultBalance
     );
 
-    // Burn winning shares
-    anchor_spl::token::burn(
+    // Burn winning shares (routed via outcome_token_program)
+    anchor_spl::token_2022::burn(
         CpiContext::new(
-            ctx.accounts.standard_token_program.to_account_info(),
-            anchor_spl::token::Burn {
+            ctx.accounts.outcome_token_program.to_account_info(),
+            anchor_spl::token_2022::Burn {
                 mint: ctx.accounts.winning_mint.to_account_info(),
                 from: ctx.accounts.settler_winning.to_account_info(),
                 authority: ctx.accounts.settler.to_account_info(),
@@ -864,7 +871,7 @@ pub struct SweepResidual<'info> {
     #[account(
         constraint = winning_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
     )]
-    pub winning_mint: Account<'info, anchor_spl::token::Mint>,
+    pub winning_mint: InterfaceAccount<'info, MintInterface>,
 
     /// Treasury CCM account (receives swept funds)
     #[account(
@@ -987,14 +994,14 @@ pub struct CloseMarket<'info> {
         constraint = yes_mint.key() == market_state.yes_mint @ OracleError::InvalidMarketState,
         constraint = yes_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
     )]
-    pub yes_mint: Account<'info, anchor_spl::token::Mint>,
+    pub yes_mint: InterfaceAccount<'info, MintInterface>,
 
     /// NO outcome mint — supply must be 0 (all shares burned/settled)
     #[account(
         constraint = no_mint.key() == market_state.no_mint @ OracleError::InvalidMarketState,
         constraint = no_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
     )]
-    pub no_mint: Account<'info, anchor_spl::token::Mint>,
+    pub no_mint: InterfaceAccount<'info, MintInterface>,
 
     /// Mint authority PDA (signs vault close CPI)
     /// CHECK: PDA derived from seeds, no data stored
@@ -1079,14 +1086,14 @@ pub struct CloseMarketMints<'info> {
         mut,
         constraint = yes_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
     )]
-    pub yes_mint: Account<'info, anchor_spl::token::Mint>,
+    pub yes_mint: InterfaceAccount<'info, MintInterface>,
 
     /// NO outcome mint — supply must be 0
     #[account(
         mut,
         constraint = no_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
     )]
-    pub no_mint: Account<'info, anchor_spl::token::Mint>,
+    pub no_mint: InterfaceAccount<'info, MintInterface>,
 
     /// Mint authority PDA (signs mint close CPI)
     /// CHECK: PDA derived from seeds, no data stored
@@ -1096,8 +1103,8 @@ pub struct CloseMarketMints<'info> {
     )]
     pub mint_authority: SystemAccount<'info>,
 
-    /// Standard SPL token program (for closing the mints)
-    pub standard_token_program: Program<'info, anchor_spl::token::Token>,
+    /// Token program for YES/NO outcome operations (SPL for old markets, Token-2022 for new)
+    pub outcome_token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn close_market_mints(ctx: Context<CloseMarketMints>, market_id: u64) -> Result<()> {
@@ -1111,9 +1118,9 @@ pub fn close_market_mints(ctx: Context<CloseMarketMints>, market_id: u64) -> Res
         &[ctx.bumps.mint_authority],
     ];
 
-    // Close YES mint
-    let close_yes_ix = anchor_spl::token::spl_token::instruction::close_account(
-        ctx.accounts.standard_token_program.key,
+    // Close YES mint (routed via outcome_token_program — Token-2022 for new markets)
+    let close_yes_ix = spl_token_2022::instruction::close_account(
+        ctx.accounts.outcome_token_program.key,
         &ctx.accounts.yes_mint.key(),
         &ctx.accounts.admin.key(),
         &ctx.accounts.mint_authority.key(),
@@ -1129,9 +1136,9 @@ pub fn close_market_mints(ctx: Context<CloseMarketMints>, market_id: u64) -> Res
         &[auth_seeds],
     )?;
 
-    // Close NO mint
-    let close_no_ix = anchor_spl::token::spl_token::instruction::close_account(
-        ctx.accounts.standard_token_program.key,
+    // Close NO mint (routed via outcome_token_program — Token-2022 for new markets)
+    let close_no_ix = spl_token_2022::instruction::close_account(
+        ctx.accounts.outcome_token_program.key,
         &ctx.accounts.no_mint.key(),
         &ctx.accounts.admin.key(),
         &ctx.accounts.mint_authority.key(),
@@ -1153,6 +1160,204 @@ pub fn close_market_mints(ctx: Context<CloseMarketMints>, market_id: u64) -> Res
         no_mint: ctx.accounts.no_mint.key(),
         admin: ctx.accounts.admin.key(),
     });
+
+    Ok(())
+}
+
+// =============================================================================
+// INITIALIZE MARKET TOKENS V2 (Token-2022 with MintCloseAuthority)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct InitializeMarketTokensV2<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        mut,
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+        constraint = market_state.authority == payer.key() @ OracleError::Unauthorized,
+    )]
+    pub market_state: Account<'info, MarketState>,
+
+    /// CCM mint (Token-2022)
+    #[account(
+        constraint = ccm_mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub ccm_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// Market vault — holds CCM collateral backing all shares
+    #[account(
+        init,
+        payer = payer,
+        token::mint = ccm_mint,
+        token::authority = mint_authority,
+        token::token_program = token_program,
+        seeds = [MARKET_VAULT_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub vault: InterfaceAccount<'info, TokenAccountInterface>,
+
+    /// YES outcome mint (Token-2022 with MintCloseAuthority extension)
+    /// CHECK: initialized via manual CPI — Anchor 0.32 can't init with extensions
+    #[account(
+        mut,
+        seeds = [MARKET_YES_MINT_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub yes_mint: SystemAccount<'info>,
+
+    /// NO outcome mint (Token-2022 with MintCloseAuthority extension)
+    /// CHECK: initialized via manual CPI — Anchor 0.32 can't init with extensions
+    #[account(
+        mut,
+        seeds = [MARKET_NO_MINT_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub no_mint: SystemAccount<'info>,
+
+    /// Mint authority PDA (signs mint/burn of YES/NO tokens, also close authority)
+    /// CHECK: PDA derived from seeds, no data stored
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    /// Token-2022 program (for vault AND YES/NO mints — enforced)
+    #[account(
+        constraint = token_program.key() == spl_token_2022::ID @ OracleError::InvalidTokenProgram,
+    )]
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+pub fn initialize_market_tokens_v2(ctx: Context<InitializeMarketTokensV2>) -> Result<()> {
+    require!(!ctx.accounts.protocol_state.paused, OracleError::ProtocolPaused);
+    let market_state = &mut ctx.accounts.market_state;
+    require!(
+        !market_state.tokens_initialized,
+        OracleError::MarketTokensAlreadyInitialized
+    );
+
+    // Initialize YES mint (Token-2022 + MintCloseAuthority)
+    initialize_outcome_mint(
+        &ctx.accounts.payer.to_account_info(),
+        &ctx.accounts.yes_mint.to_account_info(),
+        &ctx.accounts.mint_authority.to_account_info(),
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        &ctx.accounts.rent,
+        MARKET_YES_MINT_SEED,
+        ctx.accounts.protocol_state.mint.as_ref(),
+        &market_state.market_id.to_le_bytes(),
+        ctx.bumps.yes_mint,
+    )?;
+
+    // Initialize NO mint (Token-2022 + MintCloseAuthority)
+    initialize_outcome_mint(
+        &ctx.accounts.payer.to_account_info(),
+        &ctx.accounts.no_mint.to_account_info(),
+        &ctx.accounts.mint_authority.to_account_info(),
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        &ctx.accounts.rent,
+        MARKET_NO_MINT_SEED,
+        ctx.accounts.protocol_state.mint.as_ref(),
+        &market_state.market_id.to_le_bytes(),
+        ctx.bumps.no_mint,
+    )?;
+
+    market_state.vault = ctx.accounts.vault.key();
+    market_state.yes_mint = ctx.accounts.yes_mint.key();
+    market_state.no_mint = ctx.accounts.no_mint.key();
+    market_state.mint_authority = ctx.accounts.mint_authority.key();
+    market_state.tokens_initialized = true;
+
+    emit!(MarketTokensInitialized {
+        market: market_state.key(),
+        market_id: market_state.market_id,
+        vault: market_state.vault,
+        yes_mint: market_state.yes_mint,
+        no_mint: market_state.no_mint,
+        mint_authority: market_state.mint_authority,
+    });
+
+    Ok(())
+}
+
+/// Create a Token-2022 mint with MintCloseAuthority extension.
+/// Isolated into its own stack frame to stay within SBF's 4096-byte limit.
+#[inline(never)]
+fn initialize_outcome_mint<'info>(
+    payer: &AccountInfo<'info>,
+    mint_account: &AccountInfo<'info>,
+    mint_authority: &AccountInfo<'info>,
+    token_program: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    rent: &Sysvar<'info, Rent>,
+    seed_prefix: &[u8],
+    mint_ref: &[u8],
+    market_id_bytes: &[u8],
+    bump: u8,
+) -> Result<()> {
+    let extension_types = &[spl_token_2022::extension::ExtensionType::MintCloseAuthority];
+    let space = spl_token_2022::extension::ExtensionType::try_calculate_account_len::<
+        spl_token_2022::state::Mint,
+    >(extension_types)
+    .map_err(|_| OracleError::MathOverflow)?;
+    let rent_lamports = rent.minimum_balance(space);
+
+    let signer_seeds: &[&[u8]] = &[seed_prefix, mint_ref, market_id_bytes, &[bump]];
+
+    // 1. Create account owned by Token-2022
+    anchor_lang::solana_program::program::invoke_signed(
+        &anchor_lang::solana_program::system_instruction::create_account(
+            payer.key,
+            mint_account.key,
+            rent_lamports,
+            space as u64,
+            token_program.key,
+        ),
+        &[
+            payer.clone(),
+            mint_account.clone(),
+            system_program.clone(),
+        ],
+        &[signer_seeds],
+    )?;
+
+    // 2. Initialize MintCloseAuthority extension (close authority = mint_authority PDA)
+    let close_auth_ix = spl_token_2022::instruction::initialize_mint_close_authority(
+        token_program.key,
+        mint_account.key,
+        Some(mint_authority.key),
+    )?;
+    anchor_lang::solana_program::program::invoke(
+        &close_auth_ix,
+        &[mint_account.clone(), token_program.clone()],
+    )?;
+
+    // 3. Initialize mint (decimals = 9, authority = mint_authority PDA)
+    let init_mint_ix = spl_token_2022::instruction::initialize_mint2(
+        token_program.key,
+        mint_account.key,
+        mint_authority.key,
+        None, // no freeze authority
+        CCM_DECIMALS,
+    )?;
+    anchor_lang::solana_program::program::invoke(
+        &init_mint_ix,
+        &[mint_account.clone(), token_program.clone()],
+    )?;
 
     Ok(())
 }

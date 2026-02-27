@@ -190,10 +190,16 @@ pub mod token_2022 {
         )
     }
 
-    /// Initialize vault + YES/NO mints for a market.
+    /// Initialize vault + YES/NO mints for a market (standard SPL mints).
     /// Separated from create_market to reduce per-instruction compute.
     pub fn initialize_market_tokens(ctx: Context<InitializeMarketTokens>) -> Result<()> {
         instructions::markets::initialize_market_tokens(ctx)
+    }
+
+    /// Initialize vault + YES/NO mints as Token-2022 with MintCloseAuthority.
+    /// New markets use this to enable rent reclamation via close_market_mints.
+    pub fn initialize_market_tokens_v2(ctx: Context<InitializeMarketTokensV2>) -> Result<()> {
+        instructions::markets::initialize_market_tokens_v2(ctx)
     }
 
     /// Deposit CCM, receive YES + NO shares.
