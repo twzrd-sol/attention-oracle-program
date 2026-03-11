@@ -62,6 +62,20 @@ pub struct GlobalRewardsClaimed {
     pub root_seq: u64,
 }
 
+/// V5 global claim event with yield breakdown (base_yield + attention_bonus).
+/// Emitted by claim_global_v2 / claim_global_sponsored_v2.
+#[event]
+pub struct GlobalRewardsClaimedV5 {
+    pub claimer: Pubkey,
+    pub amount: u64,
+    pub cumulative_total: u64,
+    pub root_seq: u64,
+    /// Reward component from vault/strategy APR
+    pub base_yield: u64,
+    /// Reward component from attention scoring
+    pub attention_bonus: u64,
+}
+
 // =============================================================================
 // CREATOR MARKETS EVENTS
 // =============================================================================

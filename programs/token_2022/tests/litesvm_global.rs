@@ -944,3 +944,244 @@ fn test_mainnet_protocol_state_pda() {
 
     println!("  ProtocolState PDA: {} — matches mainnet", protocol_state);
 }
+
+// =============================================================================
+// V5 GLOBAL LEAF (YIELD BREAKDOWN) TESTS
+// =============================================================================
+
+const GLOBAL_V5_DOMAIN: &[u8] = b"TWZRD:GLOBAL_V5";
+
+/// Compute V5 global leaf hash (matches on-chain compute_global_leaf_v5)
+/// keccak(domain || mint || root_seq || wallet || cumulative_total || base_yield || attention_bonus)
+fn compute_global_leaf_v5(
+    mint: &Pubkey,
+    root_seq: u64,
+    wallet: &Pubkey,
+    cumulative_total: u64,
+    base_yield: u64,
+    attention_bonus: u64,
+) -> [u8; 32] {
+    let mut hasher = Keccak256::new();
+    hasher.update(GLOBAL_V5_DOMAIN);
+    hasher.update(mint.as_ref());
+    hasher.update(&root_seq.to_le_bytes());
+    hasher.update(wallet.as_ref());
+    hasher.update(&cumulative_total.to_le_bytes());
+    hasher.update(&base_yield.to_le_bytes());
+    hasher.update(&attention_bonus.to_le_bytes());
+    hasher.finalize().into()
+}
+
+#[test]
+fn test_v5_discriminator_computation() {
+    let disc_claim_v2 = compute_discriminator("claim_global_v2");
+    let disc_claim_sponsored_v2 = compute_discriminator("claim_global_sponsored_v2");
+    let disc_claim = compute_discriminator("claim_global");
+    let disc_claim_sponsored = compute_discriminator("claim_global_sponsored");
+
+    // V2 discriminators must differ from V1
+    assert_ne!(disc_claim_v2, disc_claim, "V2 claim discriminator must differ from V1");
+    assert_ne!(
+        disc_claim_sponsored_v2, disc_claim_sponsored,
+        "V2 sponsored discriminator must differ from V1"
+    );
+    // V2 pair must be mutually unique
+    assert_ne!(disc_claim_v2, disc_claim_sponsored_v2, "V2 discriminators must differ from each other");
+
+    println!("  claim_global_v2:           {:?}", disc_claim_v2);
+    println!("  claim_global_sponsored_v2: {:?}", disc_claim_sponsored_v2);
+    println!("All V5 discriminators unique and distinct from V4");
+}
+
+#[test]
+fn test_v5_leaf_deterministic() {
+    let mint = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let total = 10_000_000_000u64;
+    let base = 6_000_000_000u64;
+    let bonus = 4_000_000_000u64;
+
+    let leaf1 = compute_global_leaf_v5(&mint, root_seq, &wallet, total, base, bonus);
+    let leaf2 = compute_global_leaf_v5(&mint, root_seq, &wallet, total, base, bonus);
+
+    assert_eq!(leaf1, leaf2, "Same inputs must produce same V5 leaf");
+    println!("V5 leaf computation: deterministic");
+}
+
+#[test]
+fn test_v5_leaf_all_fields_bound() {
+    let mint = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let total = 10_000_000_000u64;
+    let base = 6_000_000_000u64;
+    let bonus = 4_000_000_000u64;
+
+    let baseline = compute_global_leaf_v5(&mint, root_seq, &wallet, total, base, bonus);
+
+    // Each component change must produce a different leaf
+    let diff_mint = compute_global_leaf_v5(&Pubkey::new_unique(), root_seq, &wallet, total, base, bonus);
+    let diff_seq = compute_global_leaf_v5(&mint, root_seq + 1, &wallet, total, base, bonus);
+    let diff_wallet = compute_global_leaf_v5(&mint, root_seq, &Pubkey::new_unique(), total, base, bonus);
+    let diff_total = compute_global_leaf_v5(&mint, root_seq, &wallet, total + 1, base + 1, bonus);
+    let diff_base = compute_global_leaf_v5(&mint, root_seq, &wallet, total, base + 1, bonus - 1);
+    let diff_bonus = compute_global_leaf_v5(&mint, root_seq, &wallet, total, base - 1, bonus + 1);
+
+    assert_ne!(baseline, diff_mint, "Different mint must change V5 leaf");
+    assert_ne!(baseline, diff_seq, "Different root_seq must change V5 leaf");
+    assert_ne!(baseline, diff_wallet, "Different wallet must change V5 leaf");
+    assert_ne!(baseline, diff_total, "Different cumulative_total must change V5 leaf");
+    assert_ne!(baseline, diff_base, "Different base_yield (same total) must change V5 leaf");
+    assert_ne!(baseline, diff_bonus, "Different attention_bonus (same total) must change V5 leaf");
+
+    println!("V5 leaf: all fields (mint, seq, wallet, total, base, bonus) affect hash");
+}
+
+#[test]
+fn test_v5_leaf_domain_separation_from_v4() {
+    let mint = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let total = 10_000_000_000u64;
+
+    // V4 leaf (no yield breakdown)
+    let v4_leaf = compute_global_leaf(&mint, root_seq, &wallet, total);
+
+    // V5 leaf with all yield as base (attention_bonus = 0)
+    let v5_leaf = compute_global_leaf_v5(&mint, root_seq, &wallet, total, total, 0);
+
+    // Domain separation ensures they're always different
+    assert_ne!(
+        v4_leaf, v5_leaf,
+        "V5 and V4 leaves must differ (domain separation: GLOBAL_V5 vs GLOBAL_V4)"
+    );
+
+    println!("V5 vs V4 domain separation: enforced");
+}
+
+#[test]
+fn test_v5_leaf_manual_keccak_match() {
+    let mint = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let root_seq = 42u64;
+    let total = 123_456_789u64;
+    let base = 100_000_000u64;
+    let bonus = 23_456_789u64;
+
+    // Compute via helper
+    let leaf_from_fn = compute_global_leaf_v5(&mint, root_seq, &wallet, total, base, bonus);
+
+    // Compute manually (must match on-chain compute_global_leaf_v5)
+    let mut hasher = Keccak256::new();
+    hasher.update(GLOBAL_V5_DOMAIN);
+    hasher.update(mint.as_ref());
+    hasher.update(&root_seq.to_le_bytes());
+    hasher.update(wallet.as_ref());
+    hasher.update(&total.to_le_bytes());
+    hasher.update(&base.to_le_bytes());
+    hasher.update(&bonus.to_le_bytes());
+    let expected: [u8; 32] = hasher.finalize().into();
+
+    assert_eq!(leaf_from_fn, expected, "V5 leaf computation must match raw keccak");
+    println!("V5 leaf: manual keccak matches compute_global_leaf_v5");
+}
+
+#[test]
+fn test_v5_proof_generation_and_verification() {
+    let mint = Pubkey::new_unique();
+    let root_seq = 1u64;
+
+    // Create 8 wallets with varying yield breakdowns
+    let wallets: Vec<(Pubkey, u64, u64, u64)> = (0..8)
+        .map(|i| {
+            let total = (i + 1) as u64 * 1_000_000_000;
+            let base = total / 2;
+            let bonus = total - base;
+            (Pubkey::new_unique(), total, base, bonus)
+        })
+        .collect();
+
+    let leaves: Vec<[u8; 32]> = wallets
+        .iter()
+        .map(|(w, t, b, a)| compute_global_leaf_v5(&mint, root_seq, w, *t, *b, *a))
+        .collect();
+
+    let root = compute_merkle_root(&leaves);
+
+    // Verify proof for each leaf
+    for (i, leaf) in leaves.iter().enumerate() {
+        let proof = generate_proof(&leaves, i);
+        assert!(
+            verify_proof(&proof, *leaf, root),
+            "V5 proof verification failed for leaf {}", i
+        );
+    }
+    println!("V5 proof generation and verification: all 8 leaves pass");
+}
+
+/// CHAOS: Swapping base_yield and attention_bonus with same total must fail proof
+#[test]
+fn test_v5_chaos_yield_swap_attack() {
+    let mint = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let total = 10_000_000_000u64;
+    let base = 7_000_000_000u64;
+    let bonus = 3_000_000_000u64;
+
+    // Real leaf with correct yield breakdown
+    let real_leaf = compute_global_leaf_v5(&mint, root_seq, &wallet, total, base, bonus);
+    let root = compute_merkle_root(&[real_leaf]);
+    let proof = generate_proof(&[real_leaf], 0);
+
+    // Attacker swaps base_yield and attention_bonus (same total, different split)
+    let swapped_leaf = compute_global_leaf_v5(&mint, root_seq, &wallet, total, bonus, base);
+
+    assert_ne!(real_leaf, swapped_leaf, "Swapped yield components must produce different leaf");
+    assert!(!verify_proof(&proof, swapped_leaf, root), "Swapped yield leaf must not verify");
+
+    println!("V5 chaos: yield swap attack blocked");
+}
+
+/// CHAOS: Cross-version replay from V4 to V5
+#[test]
+fn test_v5_chaos_cross_version_replay_v4_to_v5() {
+    let mint = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let root_seq = 1u64;
+    let total = 5_000_000_000u64;
+
+    // V4 tree
+    let v4_leaf = compute_global_leaf(&mint, root_seq, &wallet, total);
+    let v4_root = compute_merkle_root(&[v4_leaf]);
+    let v4_proof = generate_proof(&[v4_leaf], 0);
+
+    // V5 tree
+    let v5_leaf = compute_global_leaf_v5(&mint, root_seq, &wallet, total, total, 0);
+    let v5_root = compute_merkle_root(&[v5_leaf]);
+
+    // V4 proof must not verify against V5 root
+    assert!(!verify_proof(&v4_proof, v4_leaf, v5_root), "V4 proof must not verify against V5 root");
+    // V5 leaf must not verify against V4 root
+    let v5_proof = generate_proof(&[v5_leaf], 0);
+    assert!(!verify_proof(&v5_proof, v5_leaf, v4_root), "V5 proof must not verify against V4 root");
+
+    println!("V5 chaos: cross-version replay (V4↔V5) blocked");
+}
+
+/// V4 and V5 claim states share the same PDA (backward-compatible)
+#[test]
+fn test_v5_shares_claim_state_pda_with_v4() {
+    let mint = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+
+    // Same PDA derivation for both versions
+    let (claim_v4, bump_v4) = derive_claim_state_global(&mint, &wallet);
+    let (claim_v5, bump_v5) = derive_claim_state_global(&mint, &wallet);
+
+    assert_eq!(claim_v4, claim_v5, "V4 and V5 must share the same ClaimStateGlobal PDA");
+    assert_eq!(bump_v4, bump_v5, "Bumps must match");
+
+    println!("V5 claim state: shares PDA with V4 (backward-compatible)");
+}

@@ -32,6 +32,9 @@ pub const CUMULATIVE_V3_DOMAIN: &[u8] = b"TWZRD:CUMULATIVE_V3";
 /// Domain separation for global V4 leaf hashing (single root, per-user totals)
 pub const GLOBAL_V4_DOMAIN: &[u8] = b"TWZRD:GLOBAL_V4";
 
+/// Domain separation for global V5 leaf hashing (base_yield + attention_bonus breakdown)
+pub const GLOBAL_V5_DOMAIN: &[u8] = b"TWZRD:GLOBAL_V5";
+
 // =============================================================================
 // GLOBAL ROOT (V4 CLAIMS)
 // =============================================================================
