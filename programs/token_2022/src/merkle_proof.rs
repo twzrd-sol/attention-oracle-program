@@ -120,9 +120,9 @@ pub fn compute_global_leaf(
 /// - `base_yield`: reward from vault/strategy APR (deposit × rate × time)
 /// - `attention_bonus`: reward from attention scoring/multiplier
 ///
-/// The constraint `base_yield + attention_bonus == cumulative_total` is enforced by the publisher.
-/// On-chain verification only checks merkle proof validity; the split is informational
-/// for off-chain auditability and UI display.
+/// The constraint `base_yield + attention_bonus == cumulative_total` is enforced on-chain
+/// in the `claim_global_v2` / `claim_global_sponsored_v2` instructions.
+/// The split is committed to the merkle leaf for auditability and UI display.
 pub fn compute_global_leaf_v5(
     mint: &Pubkey,
     root_seq: u64,
