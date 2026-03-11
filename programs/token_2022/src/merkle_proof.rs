@@ -145,3 +145,78 @@ pub fn compute_global_leaf_v5(
         &bonus,
     ])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_global_leaf_v5_deterministic() {
+        let mint = Pubkey::new_unique();
+        let wallet = Pubkey::new_unique();
+        let leaf1 = compute_global_leaf_v5(&mint, 1, &wallet, 10_000, 6_000, 4_000);
+        let leaf2 = compute_global_leaf_v5(&mint, 1, &wallet, 10_000, 6_000, 4_000);
+        assert_eq!(leaf1, leaf2, "Same inputs must produce same leaf");
+    }
+
+    #[test]
+    fn compute_global_leaf_v5_all_fields_bound() {
+        let mint = Pubkey::new_unique();
+        let wallet = Pubkey::new_unique();
+        let baseline = compute_global_leaf_v5(&mint, 1, &wallet, 10_000, 6_000, 4_000);
+
+        let diff_mint = compute_global_leaf_v5(&Pubkey::new_unique(), 1, &wallet, 10_000, 6_000, 4_000);
+        let diff_seq = compute_global_leaf_v5(&mint, 2, &wallet, 10_000, 6_000, 4_000);
+        let diff_wallet = compute_global_leaf_v5(&mint, 1, &Pubkey::new_unique(), 10_000, 6_000, 4_000);
+        let diff_total = compute_global_leaf_v5(&mint, 1, &wallet, 10_001, 6_001, 4_000);
+        let diff_base = compute_global_leaf_v5(&mint, 1, &wallet, 10_000, 7_000, 3_000);
+        let diff_bonus = compute_global_leaf_v5(&mint, 1, &wallet, 10_000, 5_000, 5_000);
+
+        assert_ne!(baseline, diff_mint, "Different mint must change leaf");
+        assert_ne!(baseline, diff_seq, "Different root_seq must change leaf");
+        assert_ne!(baseline, diff_wallet, "Different wallet must change leaf");
+        assert_ne!(baseline, diff_total, "Different cumulative_total must change leaf");
+        assert_ne!(baseline, diff_base, "Different base_yield must change leaf");
+        assert_ne!(baseline, diff_bonus, "Different attention_bonus must change leaf");
+    }
+
+    #[test]
+    fn compute_global_leaf_v5_domain_separation_from_v4() {
+        let mint = Pubkey::new_unique();
+        let wallet = Pubkey::new_unique();
+        let total = 10_000_000_000u64;
+        let root_seq = 1u64;
+
+        let v4_leaf = compute_global_leaf(&mint, root_seq, &wallet, total);
+        let v5_leaf = compute_global_leaf_v5(&mint, root_seq, &wallet, total, total, 0);
+
+        assert_ne!(
+            v4_leaf, v5_leaf,
+            "V4 and V5 leaves must differ even with same cumulative_total (domain separation)"
+        );
+    }
+
+    #[test]
+    fn compute_global_leaf_v5_manual_keccak_match() {
+        let mint = Pubkey::new_unique();
+        let wallet = Pubkey::new_unique();
+        let root_seq = 42u64;
+        let total = 123_456_789u64;
+        let base = 100_000_000u64;
+        let bonus = 23_456_789u64;
+
+        let leaf_from_fn = compute_global_leaf_v5(&mint, root_seq, &wallet, total, base, bonus);
+
+        let mut hasher = Keccak256::new();
+        hasher.update(GLOBAL_V5_DOMAIN);
+        hasher.update(mint.as_ref());
+        hasher.update(&root_seq.to_le_bytes());
+        hasher.update(wallet.as_ref());
+        hasher.update(&total.to_le_bytes());
+        hasher.update(&base.to_le_bytes());
+        hasher.update(&bonus.to_le_bytes());
+        let expected: [u8; 32] = hasher.finalize().into();
+
+        assert_eq!(leaf_from_fn, expected, "V5 leaf computation must match raw keccak");
+    }
+}
