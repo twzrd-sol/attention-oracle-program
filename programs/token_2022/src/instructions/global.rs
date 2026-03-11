@@ -8,8 +8,8 @@ use crate::constants::{
     CLAIM_STATE_GLOBAL_SEED, CUMULATIVE_ROOT_HISTORY, GLOBAL_ROOT_SEED, PROTOCOL_SEED,
 };
 use crate::errors::OracleError;
-use crate::events::{GlobalRewardsClaimed, GlobalRootPublished};
-use crate::merkle_proof::{compute_global_leaf, verify_proof};
+use crate::events::{GlobalRewardsClaimed, GlobalRewardsClaimedV5, GlobalRootPublished};
+use crate::merkle_proof::{compute_global_leaf, compute_global_leaf_v5, verify_proof};
 use crate::state::{ClaimStateGlobal, GlobalRootConfig, ProtocolState, RootEntry};
 
 const GLOBAL_ROOT_VERSION: u8 = 1;
@@ -416,6 +416,217 @@ pub fn claim_global_sponsored<'info>(
         amount: delta,
         cumulative_total,
         root_seq,
+    });
+
+    Ok(())
+}
+
+// =============================================================================
+// CLAIM GLOBAL V2 (SELF-SIGN) — V5 LEAF WITH YIELD BREAKDOWN
+// =============================================================================
+
+/// V2 claim instruction uses V5 leaf format with base_yield + attention_bonus.
+/// Reuses the same account layout as ClaimGlobal (same PDAs, same state).
+/// The yield breakdown fields are committed to the merkle leaf for auditability
+/// but do not affect the transfer amount (which is still cumulative_total - claimed_total).
+pub fn claim_global_v2<'info>(
+    ctx: Context<'_, '_, '_, 'info, ClaimGlobal<'info>>,
+    root_seq: u64,
+    cumulative_total: u64,
+    base_yield: u64,
+    attention_bonus: u64,
+    proof: Vec<[u8; 32]>,
+) -> Result<()> {
+    let protocol_state = &ctx.accounts.protocol_state;
+    let global_cfg = &ctx.accounts.global_root_config;
+
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
+    require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
+    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+
+    require!(global_cfg.version == GLOBAL_ROOT_VERSION, OracleError::InvalidChannelState);
+    require!(global_cfg.mint == protocol_state.mint, OracleError::InvalidMint);
+
+    // Validate yield breakdown sums to cumulative_total
+    let yield_sum = base_yield
+        .checked_add(attention_bonus)
+        .ok_or(OracleError::MathOverflow)?;
+    require!(yield_sum == cumulative_total, OracleError::InvalidMerkleLeafVersion);
+
+    // Look up root from circular buffer
+    let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
+    let entry = global_cfg.roots[idx];
+    require!(entry.seq == root_seq, OracleError::RootTooOldOrMissing);
+
+    // Verify V5 merkle proof
+    let leaf = compute_global_leaf_v5(
+        &protocol_state.mint,
+        root_seq,
+        &ctx.accounts.claimer.key(),
+        cumulative_total,
+        base_yield,
+        attention_bonus,
+    );
+    require!(verify_proof(&proof, leaf, entry.root), OracleError::InvalidProof);
+
+    // Initialize or validate claim state (same PDA as V4)
+    let claim_state = &mut ctx.accounts.claim_state;
+    if claim_state.version == 0 {
+        claim_state.version = CLAIM_STATE_GLOBAL_VERSION;
+        claim_state.bump = ctx.bumps.claim_state;
+        claim_state.mint = protocol_state.mint;
+        claim_state.wallet = ctx.accounts.claimer.key();
+        claim_state.claimed_total = 0;
+        claim_state.last_claim_seq = 0;
+    } else {
+        require!(claim_state.mint == protocol_state.mint, OracleError::InvalidClaimState);
+        require!(
+            claim_state.wallet == ctx.accounts.claimer.key(),
+            OracleError::InvalidClaimState
+        );
+    }
+
+    // Idempotent: no-op if already claimed up to this total
+    if cumulative_total <= claim_state.claimed_total {
+        return Ok(());
+    }
+
+    let delta = cumulative_total
+        .checked_sub(claim_state.claimed_total)
+        .ok_or(OracleError::MathOverflow)?;
+
+    let seeds: &[&[u8]] = &[
+        PROTOCOL_SEED,
+        protocol_state.mint.as_ref(),
+        &[protocol_state.bump],
+    ];
+    let signer = &[seeds];
+
+    crate::transfer_checked_with_remaining(
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.treasury_ata.to_account_info(),
+        &ctx.accounts.mint.to_account_info(),
+        &ctx.accounts.claimer_ata.to_account_info(),
+        &ctx.accounts.protocol_state.to_account_info(),
+        delta,
+        ctx.accounts.mint.decimals,
+        signer,
+        ctx.remaining_accounts,
+    )?;
+
+    claim_state.claimed_total = cumulative_total;
+    claim_state.last_claim_seq = root_seq;
+
+    emit!(GlobalRewardsClaimedV5 {
+        claimer: ctx.accounts.claimer.key(),
+        amount: delta,
+        cumulative_total,
+        root_seq,
+        base_yield,
+        attention_bonus,
+    });
+
+    Ok(())
+}
+
+// =============================================================================
+// CLAIM GLOBAL V2 (SPONSORED / GASLESS) — V5 LEAF WITH YIELD BREAKDOWN
+// =============================================================================
+
+/// Sponsored V2 claim with V5 leaf format (base_yield + attention_bonus).
+/// Reuses ClaimGlobalSponsored account layout.
+pub fn claim_global_sponsored_v2<'info>(
+    ctx: Context<'_, '_, '_, 'info, ClaimGlobalSponsored<'info>>,
+    root_seq: u64,
+    cumulative_total: u64,
+    base_yield: u64,
+    attention_bonus: u64,
+    proof: Vec<[u8; 32]>,
+) -> Result<()> {
+    let protocol_state = &ctx.accounts.protocol_state;
+    let global_cfg = &ctx.accounts.global_root_config;
+
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
+    require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
+    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+
+    require!(global_cfg.version == GLOBAL_ROOT_VERSION, OracleError::InvalidChannelState);
+    require!(global_cfg.mint == protocol_state.mint, OracleError::InvalidMint);
+
+    // Validate yield breakdown sums to cumulative_total
+    let yield_sum = base_yield
+        .checked_add(attention_bonus)
+        .ok_or(OracleError::MathOverflow)?;
+    require!(yield_sum == cumulative_total, OracleError::InvalidMerkleLeafVersion);
+
+    let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
+    let entry = global_cfg.roots[idx];
+    require!(entry.seq == root_seq, OracleError::RootTooOldOrMissing);
+
+    // Verify V5 merkle proof
+    let leaf = compute_global_leaf_v5(
+        &protocol_state.mint,
+        root_seq,
+        &ctx.accounts.claimer.key(),
+        cumulative_total,
+        base_yield,
+        attention_bonus,
+    );
+    require!(verify_proof(&proof, leaf, entry.root), OracleError::InvalidProof);
+
+    let claim_state = &mut ctx.accounts.claim_state;
+    if claim_state.version == 0 {
+        claim_state.version = CLAIM_STATE_GLOBAL_VERSION;
+        claim_state.bump = ctx.bumps.claim_state;
+        claim_state.mint = protocol_state.mint;
+        claim_state.wallet = ctx.accounts.claimer.key();
+        claim_state.claimed_total = 0;
+        claim_state.last_claim_seq = 0;
+    } else {
+        require!(claim_state.mint == protocol_state.mint, OracleError::InvalidClaimState);
+        require!(
+            claim_state.wallet == ctx.accounts.claimer.key(),
+            OracleError::InvalidClaimState
+        );
+    }
+
+    if cumulative_total <= claim_state.claimed_total {
+        return Ok(());
+    }
+
+    let delta = cumulative_total
+        .checked_sub(claim_state.claimed_total)
+        .ok_or(OracleError::MathOverflow)?;
+
+    let seeds: &[&[u8]] = &[
+        PROTOCOL_SEED,
+        protocol_state.mint.as_ref(),
+        &[protocol_state.bump],
+    ];
+    let signer = &[seeds];
+
+    crate::transfer_checked_with_remaining(
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.treasury_ata.to_account_info(),
+        &ctx.accounts.mint.to_account_info(),
+        &ctx.accounts.claimer_ata.to_account_info(),
+        &ctx.accounts.protocol_state.to_account_info(),
+        delta,
+        ctx.accounts.mint.decimals,
+        signer,
+        ctx.remaining_accounts,
+    )?;
+
+    claim_state.claimed_total = cumulative_total;
+    claim_state.last_claim_seq = root_seq;
+
+    emit!(GlobalRewardsClaimedV5 {
+        claimer: ctx.accounts.claimer.key(),
+        amount: delta,
+        cumulative_total,
+        root_seq,
+        base_yield,
+        attention_bonus,
     });
 
     Ok(())

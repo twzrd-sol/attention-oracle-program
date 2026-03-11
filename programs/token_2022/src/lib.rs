@@ -168,6 +168,32 @@ pub mod token_2022 {
         instructions::global::claim_global_sponsored(ctx, root_seq, cumulative_total, proof)
     }
 
+    /// V2 global claim with V5 leaf format (base_yield + attention_bonus breakdown).
+    /// Uses the same account layout as claim_global.
+    pub fn claim_global_v2<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimGlobal<'info>>,
+        root_seq: u64,
+        cumulative_total: u64,
+        base_yield: u64,
+        attention_bonus: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::global::claim_global_v2(ctx, root_seq, cumulative_total, base_yield, attention_bonus, proof)
+    }
+
+    /// Sponsored V2 global claim with V5 leaf format (base_yield + attention_bonus breakdown).
+    /// Uses the same account layout as claim_global_sponsored.
+    pub fn claim_global_sponsored_v2<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimGlobalSponsored<'info>>,
+        root_seq: u64,
+        cumulative_total: u64,
+        base_yield: u64,
+        attention_bonus: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::global::claim_global_sponsored_v2(ctx, root_seq, cumulative_total, base_yield, attention_bonus, proof)
+    }
+
     // -------------------------------------------------------------------------
     // Creator Markets (V1) — Oracle-Resolved Binary Markets
     // -------------------------------------------------------------------------

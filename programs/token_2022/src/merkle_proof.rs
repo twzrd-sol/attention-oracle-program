@@ -1,5 +1,5 @@
 use anchor_lang::prelude::Pubkey;
-use crate::constants::{CUMULATIVE_V2_DOMAIN, CUMULATIVE_V3_DOMAIN, GLOBAL_V4_DOMAIN};
+use crate::constants::{CUMULATIVE_V2_DOMAIN, CUMULATIVE_V3_DOMAIN, GLOBAL_V4_DOMAIN, GLOBAL_V5_DOMAIN};
 use sha3::{Digest, Keccak256};
 
 pub fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {
@@ -110,5 +110,38 @@ pub fn compute_global_leaf(
         &seq,
         wallet.as_ref(),
         &total,
+    ])
+}
+
+/// Computes the global (v5) leaf hash with yield breakdown:
+/// keccak(domain || mint || root_seq || wallet || cumulative_total || base_yield || attention_bonus)
+///
+/// V5 extends V4 by splitting the cumulative total into two auditable components:
+/// - `base_yield`: reward from vault/strategy APR (deposit × rate × time)
+/// - `attention_bonus`: reward from attention scoring/multiplier
+///
+/// The constraint `base_yield + attention_bonus == cumulative_total` is enforced by the publisher.
+/// On-chain verification only checks merkle proof validity; the split is informational
+/// for off-chain auditability and UI display.
+pub fn compute_global_leaf_v5(
+    mint: &Pubkey,
+    root_seq: u64,
+    wallet: &Pubkey,
+    cumulative_total: u64,
+    base_yield: u64,
+    attention_bonus: u64,
+) -> [u8; 32] {
+    let seq = root_seq.to_le_bytes();
+    let total = cumulative_total.to_le_bytes();
+    let base = base_yield.to_le_bytes();
+    let bonus = attention_bonus.to_le_bytes();
+    keccak_hashv(&[
+        GLOBAL_V5_DOMAIN,
+        mint.as_ref(),
+        &seq,
+        wallet.as_ref(),
+        &total,
+        &base,
+        &bonus,
     ])
 }
