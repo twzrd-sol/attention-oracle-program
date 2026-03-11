@@ -196,6 +196,9 @@ pub enum OracleError {
     #[msg("Global root config not initialized")]
     GlobalRootNotInitialized,
 
+    #[msg("Invalid merkle leaf version")]
+    InvalidMerkleLeafVersion,
+
     // =========================================================================
     // CREATOR MARKETS
     // =========================================================================
