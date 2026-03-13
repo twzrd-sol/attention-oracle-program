@@ -550,11 +550,14 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     let current_acc = pool.acc_reward_per_share;
 
     // Calculate weighted amount based on actual received (net of transfer fees)
-    let weighted_amount = (actual_received as u128)
-        .checked_mul(multiplier_bps as u128)
-        .ok_or(OracleError::MathOverflow)?
-        .checked_div(BOOST_PRECISION as u128)
-        .ok_or(OracleError::MathOverflow)? as u64;
+    let weighted_amount = u64::try_from(
+        (actual_received as u128)
+            .checked_mul(multiplier_bps as u128)
+            .ok_or(OracleError::MathOverflow)?
+            .checked_div(BOOST_PRECISION as u128)
+            .ok_or(OracleError::MathOverflow)?,
+    )
+    .map_err(|_| OracleError::MathOverflow)?;
 
     // 9. Update pool totals (using actual received, not requested amount)
     pool.total_staked = pool
@@ -725,11 +728,14 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
     // 3. Capture values before mutable borrows
     let amount = ctx.accounts.user_stake.amount;
     let multiplier_bps = ctx.accounts.user_stake.multiplier_bps;
-    let weighted_amount = (amount as u128)
-        .checked_mul(multiplier_bps as u128)
-        .ok_or(OracleError::MathOverflow)?
-        .checked_div(BOOST_PRECISION as u128)
-        .ok_or(OracleError::MathOverflow)? as u64;
+    let weighted_amount = u64::try_from(
+        (amount as u128)
+            .checked_mul(multiplier_bps as u128)
+            .ok_or(OracleError::MathOverflow)?
+            .checked_div(BOOST_PRECISION as u128)
+            .ok_or(OracleError::MathOverflow)?,
+    )
+    .map_err(|_| OracleError::MathOverflow)?;
 
     let mint_key = ctx.accounts.mint.key();
     let decimals = ctx.accounts.mint.decimals;
@@ -1005,13 +1011,16 @@ pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()>
     // max_rate = (MAX_APR_BPS * total_weighted) / (BPS_DENOMINATOR * SLOTS_PER_YEAR)
     // Note: Division order matters to avoid overflow
     if pool.total_weighted > 0 {
-        let max_rate = (pool.total_weighted as u128)
+        let max_rate = u64::try_from(
+            (pool.total_weighted as u128)
             .checked_mul(MAX_APR_BPS as u128)
             .ok_or(OracleError::MathOverflow)?
             .checked_div(BPS_DENOMINATOR as u128)
             .ok_or(OracleError::MathOverflow)?
             .checked_div(SLOTS_PER_YEAR as u128)
-            .ok_or(OracleError::MathOverflow)? as u64;
+            .ok_or(OracleError::MathOverflow)?,
+        )
+        .map_err(|_| OracleError::MathOverflow)?;
 
         require!(new_rate <= max_rate, OracleError::RewardRateExceedsMaxApr);
 
@@ -1032,9 +1041,12 @@ pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()>
         let total_staked = pool.total_staked;
         let available_rewards = vault_balance.saturating_sub(total_staked);
 
-        let required_runway = (new_rate as u128)
+        let required_runway = u64::try_from(
+            (new_rate as u128)
             .checked_mul(MIN_RUNWAY_SLOTS as u128)
-            .ok_or(OracleError::MathOverflow)? as u64;
+            .ok_or(OracleError::MathOverflow)?,
+        )
+        .map_err(|_| OracleError::MathOverflow)?;
 
         require!(
             available_rewards >= required_runway,
@@ -1160,11 +1172,14 @@ pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Resul
     let multiplier_bps = ctx.accounts.user_stake.multiplier_bps;
     let lock_end_slot = ctx.accounts.user_stake.lock_end_slot;
 
-    let weighted_amount = (amount as u128)
-        .checked_mul(multiplier_bps as u128)
-        .ok_or(OracleError::MathOverflow)?
-        .checked_div(BOOST_PRECISION as u128)
-        .ok_or(OracleError::MathOverflow)? as u64;
+    let weighted_amount = u64::try_from(
+        (amount as u128)
+            .checked_mul(multiplier_bps as u128)
+            .ok_or(OracleError::MathOverflow)?
+            .checked_div(BOOST_PRECISION as u128)
+            .ok_or(OracleError::MathOverflow)?,
+    )
+    .map_err(|_| OracleError::MathOverflow)?;
 
     let mint_key = ctx.accounts.mint.key();
     let decimals = ctx.accounts.mint.decimals;
