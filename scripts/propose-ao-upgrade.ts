@@ -27,7 +27,6 @@ import * as fs from "fs";
 const MULTISIG_PDA = new PublicKey("BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ");
 const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 const PROGRAM_DATA = new PublicKey("5GyaaVmzRr2r9KcUuzt9SxBVq9ubTT5m3pH9Lzy3Kh4L");
-const BUFFER = new PublicKey("8T5qmmVAtUMEd7aFgV9DmtPKWVeZ32pZJzUFudXfHh6i");
 const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
 const KEYPAIR_PATHS = [
@@ -42,6 +41,23 @@ const KEYPAIR_PATHS = [
 function loadKeypair(path: string): Keypair {
   const raw = JSON.parse(fs.readFileSync(path, "utf-8"));
   return Keypair.fromSecretKey(new Uint8Array(raw));
+}
+
+function resolveBuffer(): PublicKey {
+  const raw = process.env.UPGRADE_BUFFER || process.argv[2] || "";
+  if (!raw || !raw.trim()) {
+    console.error("ERROR: upgrade buffer not provided");
+    console.error("Usage: UPGRADE_BUFFER=<pubkey> RPC_URL=... npx ts-node scripts/propose-ao-upgrade.ts");
+    console.error("Tip: create one with: solana program write-buffer target/deploy/token_2022.so --url <RPC> --keypair <payer>");
+    process.exit(1);
+  }
+
+  try {
+    return new PublicKey(raw.trim());
+  } catch {
+    console.error(`ERROR: invalid buffer pubkey: ${raw}`);
+    process.exit(1);
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -71,6 +87,7 @@ async function main() {
     console.log(`  Loaded: ${kp.publicKey.toBase58().slice(0, 8)}... (${p.split("/").pop()})`);
     return kp;
   });
+  const BUFFER = resolveBuffer();
 
   // Derive vault PDA
   const [vaultPda] = multisig.getVaultPda({
@@ -89,6 +106,10 @@ async function main() {
     console.error("\n  ERROR: Buffer account not found");
     process.exit(1);
   }
+  if (!bufferInfo.owner.equals(BPF_LOADER_UPGRADEABLE)) {
+    console.error(`\n  ERROR: Buffer account is not BPFLoaderUpgradeable-owned: ${bufferInfo.owner.toBase58()}`);
+    process.exit(1);
+  }
   console.log(`  Buffer size:  ${bufferInfo.data.length} bytes`);
   console.log(`  Buffer rent:  ${(bufferInfo.lamports / 1e9).toFixed(4)} SOL`);
 
@@ -104,6 +125,14 @@ async function main() {
       }
       console.log("  OK: Buffer authority matches vault");
     }
+  }
+
+  const payerLamports = await connection.getBalance(keypairs[0].publicKey);
+  if (payerLamports < bufferInfo.lamports + 5_000_000) {
+    console.error(
+      `\n  ERROR: Fee payer balance too low to execute proposal flow. Needed at least ${(bufferInfo.lamports + 5_000_000) / 1e9} SOL`,
+    );
+    process.exit(1);
   }
 
   // Get multisig state
