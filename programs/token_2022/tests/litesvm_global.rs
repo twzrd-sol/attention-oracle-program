@@ -68,7 +68,11 @@ fn derive_channel_config_v2(mint: &Pubkey, subject_id: &Pubkey) -> (Pubkey, u8) 
 
 fn derive_claim_state_v2(channel_config: &Pubkey, wallet: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(
-        &[CLAIM_STATE_V2_SEED, channel_config.as_ref(), wallet.as_ref()],
+        &[
+            CLAIM_STATE_V2_SEED,
+            channel_config.as_ref(),
+            wallet.as_ref(),
+        ],
         &program_id(),
     )
 }
@@ -211,10 +215,20 @@ fn test_v4_discriminator_computation() {
     let disc_withdraw = compute_discriminator("withdraw_fees_from_mint");
 
     // All discriminators must be unique
-    let discs = vec![disc_init, disc_publish, disc_claim, disc_claim_sponsored, disc_withdraw];
+    let discs = vec![
+        disc_init,
+        disc_publish,
+        disc_claim,
+        disc_claim_sponsored,
+        disc_withdraw,
+    ];
     for i in 0..discs.len() {
         for j in (i + 1)..discs.len() {
-            assert_ne!(discs[i], discs[j], "Discriminator collision between ix {} and {}", i, j);
+            assert_ne!(
+                discs[i], discs[j],
+                "Discriminator collision between ix {} and {}",
+                i, j
+            );
         }
     }
     println!("  initialize_global_root: {:?}", disc_init);
@@ -242,17 +256,26 @@ fn test_v4_pda_derivation() {
 
     // Deterministic derivation
     let (global_cfg2, _) = derive_global_root_config(&mint);
-    assert_eq!(global_cfg, global_cfg2, "PDA derivation must be deterministic");
+    assert_eq!(
+        global_cfg, global_cfg2,
+        "PDA derivation must be deterministic"
+    );
 
     // Different mints produce different PDAs
     let mint2 = Pubkey::new_unique();
     let (global_cfg_mint2, _) = derive_global_root_config(&mint2);
-    assert_ne!(global_cfg, global_cfg_mint2, "Different mints must produce different GlobalRootConfig PDAs");
+    assert_ne!(
+        global_cfg, global_cfg_mint2,
+        "Different mints must produce different GlobalRootConfig PDAs"
+    );
 
     // Different wallets produce different claim state PDAs
     let wallet2 = Pubkey::new_unique();
     let (claim_state2, _) = derive_claim_state_global(&mint, &wallet2);
-    assert_ne!(claim_state, claim_state2, "Different wallets must produce different ClaimStateGlobal PDAs");
+    assert_ne!(
+        claim_state, claim_state2,
+        "Different wallets must produce different ClaimStateGlobal PDAs"
+    );
 
     println!("V4 PDA derivation: deterministic and collision-resistant");
 }
@@ -270,7 +293,10 @@ fn test_v4_vs_v2_pda_isolation() {
     let (v2_claim, _) = derive_claim_state_v2(&channel_config, &wallet);
 
     // These MUST be different — they're independent claim state machines
-    assert_ne!(v4_claim, v2_claim, "V4 and V2 claim PDAs must be different (independent state)");
+    assert_ne!(
+        v4_claim, v2_claim,
+        "V4 and V2 claim PDAs must be different (independent state)"
+    );
 
     // V4 global root config: ["global_root", mint]
     let (v4_root_cfg, _) = derive_global_root_config(&mint);
@@ -280,7 +306,10 @@ fn test_v4_vs_v2_pda_isolation() {
     let (v2_channel_cfg, _) = derive_channel_config_v2(&mint, &subject_id);
 
     // These MUST be different
-    assert_ne!(v4_root_cfg, v2_channel_cfg, "V4 GlobalRootConfig and V2 ChannelConfigV2 must have different PDAs");
+    assert_ne!(
+        v4_root_cfg, v2_channel_cfg,
+        "V4 GlobalRootConfig and V2 ChannelConfigV2 must have different PDAs"
+    );
 
     println!("V4 vs V2 PDA isolation: confirmed (independent state machines)");
 }
@@ -321,7 +350,10 @@ fn test_v4_leaf_all_fields_bound() {
     assert_ne!(baseline, diff_mint, "Different mint must change leaf");
     assert_ne!(baseline, diff_seq, "Different root_seq must change leaf");
     assert_ne!(baseline, diff_wallet, "Different wallet must change leaf");
-    assert_ne!(baseline, diff_total, "Different cumulative_total must change leaf");
+    assert_ne!(
+        baseline, diff_total,
+        "Different cumulative_total must change leaf"
+    );
 
     println!("V4 leaf: all fields (mint, seq, wallet, total) affect hash");
 }
@@ -341,7 +373,10 @@ fn test_v4_leaf_domain_separation_from_v2() {
     let v2_leaf = compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, total);
 
     // Domain separation ensures they're always different
-    assert_ne!(v4_leaf, v2_leaf, "V4 and V2 leaves must differ (domain separation: GLOBAL_V4 vs CUMULATIVE_V2)");
+    assert_ne!(
+        v4_leaf, v2_leaf,
+        "V4 and V2 leaves must differ (domain separation: GLOBAL_V4 vs CUMULATIVE_V2)"
+    );
 
     println!("V4 vs V2 domain separation: enforced");
 }
@@ -365,7 +400,10 @@ fn test_v4_leaf_manual_keccak_match() {
     hasher.update(&total.to_le_bytes());
     let expected: [u8; 32] = hasher.finalize().into();
 
-    assert_eq!(leaf_from_fn, expected, "Leaf computation must match raw keccak");
+    assert_eq!(
+        leaf_from_fn, expected,
+        "Leaf computation must match raw keccak"
+    );
     println!("V4 leaf: manual keccak matches compute_global_leaf");
 }
 
@@ -395,7 +433,8 @@ fn test_v4_proof_generation_and_verification() {
         let proof = generate_proof(&leaves, i);
         assert!(
             verify_proof(&proof, *leaf, root),
-            "Proof verification failed for leaf {}", i
+            "Proof verification failed for leaf {}",
+            i
         );
     }
     println!("V4 proof generation and verification: all 8 leaves pass");
@@ -412,7 +451,10 @@ fn test_v4_single_leaf_tree() {
 
     let proof = generate_proof(&[leaf], 0);
     assert!(proof.is_empty(), "Single leaf proof should be empty");
-    assert!(verify_proof(&proof, leaf, root), "Empty proof should verify for single leaf");
+    assert!(
+        verify_proof(&proof, leaf, root),
+        "Empty proof should verify for single leaf"
+    );
 
     println!("V4 single-leaf tree: correct");
 }
@@ -437,7 +479,10 @@ fn test_v4_chaos_inflated_amount() {
     let proof = generate_proof(&leaves, 0);
 
     let forged_leaf = compute_global_leaf(&mint, root_seq, &wallet, inflated_amount);
-    assert!(!verify_proof(&proof, forged_leaf, root), "SECURITY: inflated amount must NOT verify");
+    assert!(
+        !verify_proof(&proof, forged_leaf, root),
+        "SECURITY: inflated amount must NOT verify"
+    );
     println!("V4 CHAOS: inflated amount attack rejected");
 }
 
@@ -457,7 +502,10 @@ fn test_v4_chaos_wallet_substitution() {
     let proof = generate_proof(&leaves, 0);
 
     let attacker_leaf = compute_global_leaf(&mint, root_seq, &attacker, amount);
-    assert!(!verify_proof(&proof, attacker_leaf, root), "SECURITY: wallet substitution must NOT verify");
+    assert!(
+        !verify_proof(&proof, attacker_leaf, root),
+        "SECURITY: wallet substitution must NOT verify"
+    );
     println!("V4 CHAOS: wallet substitution attack rejected");
 }
 
@@ -479,12 +527,18 @@ fn test_v4_chaos_mint_confusion() {
 
     // Try to verify with mint B's leaf against mint A's root
     let leaf_b = compute_global_leaf(&mint_b, root_seq, &wallet, amount);
-    assert!(!verify_proof(&proof_a, leaf_b, root_a), "SECURITY: mint confusion must NOT verify");
+    assert!(
+        !verify_proof(&proof_a, leaf_b, root_a),
+        "SECURITY: mint confusion must NOT verify"
+    );
 
     // Also verify GlobalRootConfig PDAs differ per mint
     let (grc_a, _) = derive_global_root_config(&mint_a);
     let (grc_b, _) = derive_global_root_config(&mint_b);
-    assert_ne!(grc_a, grc_b, "Different mints must have different GlobalRootConfig PDAs");
+    assert_ne!(
+        grc_a, grc_b,
+        "Different mints must have different GlobalRootConfig PDAs"
+    );
 
     println!("V4 CHAOS: mint confusion attack rejected");
 }
@@ -507,7 +561,13 @@ fn test_v4_chaos_cross_version_replay() {
 
     // Build V2 tree with same wallet/amount
     let v2_leaf = compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, amount);
-    let v2_other = compute_cumulative_leaf(&channel_config, &mint, root_seq, &Pubkey::new_unique(), 500_000_000);
+    let v2_other = compute_cumulative_leaf(
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        500_000_000,
+    );
     let v2_leaves = vec![v2_leaf, v2_other];
     let v2_root = compute_merkle_root(&v2_leaves);
     let v2_proof = generate_proof(&v2_leaves, 0);
@@ -515,13 +575,22 @@ fn test_v4_chaos_cross_version_replay() {
     // Cross-version attacks:
 
     // 1. V2 leaf against V4 root
-    assert!(!verify_proof(&v4_proof, v2_leaf, v4_root), "SECURITY: V2 leaf must NOT verify against V4 root");
+    assert!(
+        !verify_proof(&v4_proof, v2_leaf, v4_root),
+        "SECURITY: V2 leaf must NOT verify against V4 root"
+    );
 
     // 2. V4 leaf against V2 root
-    assert!(!verify_proof(&v2_proof, v4_leaf, v2_root), "SECURITY: V4 leaf must NOT verify against V2 root");
+    assert!(
+        !verify_proof(&v2_proof, v4_leaf, v2_root),
+        "SECURITY: V4 leaf must NOT verify against V2 root"
+    );
 
     // 3. V2 proof against V4 root
-    assert!(!verify_proof(&v2_proof, v4_leaf, v4_root), "SECURITY: V2 proof must NOT verify V4 leaf against V4 root");
+    assert!(
+        !verify_proof(&v2_proof, v4_leaf, v4_root),
+        "SECURITY: V2 proof must NOT verify V4 leaf against V4 root"
+    );
 
     // Roots must be different
     assert_ne!(v4_root, v2_root, "V4 and V2 roots must be different");
@@ -534,11 +603,11 @@ fn test_v4_chaos_cross_version_replay() {
 fn test_v4_chaos_double_claim_idempotency() {
     // Simulate V4 claim state machine
     let claims = vec![
-        (1u64, 1_000_000_000u64),   // First claim: seq 1, 1 CCM total
-        (1u64, 1_000_000_000u64),   // REPLAY: same seq, same amount
-        (2u64, 3_000_000_000u64),   // Second claim: seq 2, 3 CCM total (delta = 2 CCM)
-        (2u64, 3_000_000_000u64),   // REPLAY: same seq, same amount
-        (3u64, 3_000_000_000u64),   // Third claim: seq 3, same total (delta = 0, no-op)
+        (1u64, 1_000_000_000u64), // First claim: seq 1, 1 CCM total
+        (1u64, 1_000_000_000u64), // REPLAY: same seq, same amount
+        (2u64, 3_000_000_000u64), // Second claim: seq 2, 3 CCM total (delta = 2 CCM)
+        (2u64, 3_000_000_000u64), // REPLAY: same seq, same amount
+        (3u64, 3_000_000_000u64), // Third claim: seq 3, same total (delta = 0, no-op)
     ];
 
     let mut claimed_total = 0u64;
@@ -547,17 +616,29 @@ fn test_v4_chaos_double_claim_idempotency() {
     for (i, (_root_seq, cumulative_total)) in claims.iter().enumerate() {
         if *cumulative_total <= claimed_total {
             // Idempotent: no-op
-            println!("  Claim {}: IDEMPOTENT (total {} <= claimed {})", i, cumulative_total, claimed_total);
+            println!(
+                "  Claim {}: IDEMPOTENT (total {} <= claimed {})",
+                i, cumulative_total, claimed_total
+            );
         } else {
             let delta = cumulative_total - claimed_total;
             total_transferred += delta;
             claimed_total = *cumulative_total;
-            println!("  Claim {}: TRANSFER {} (new total {})", i, delta, claimed_total);
+            println!(
+                "  Claim {}: TRANSFER {} (new total {})",
+                i, delta, claimed_total
+            );
         }
     }
 
-    assert_eq!(claimed_total, 3_000_000_000, "Final claimed total should be 3 CCM");
-    assert_eq!(total_transferred, 3_000_000_000, "Total transferred should be exactly 3 CCM (no double-spend)");
+    assert_eq!(
+        claimed_total, 3_000_000_000,
+        "Final claimed total should be 3 CCM"
+    );
+    assert_eq!(
+        total_transferred, 3_000_000_000,
+        "Total transferred should be exactly 3 CCM (no double-spend)"
+    );
     println!("V4 CHAOS: double-claim idempotency correct");
 }
 
@@ -576,11 +657,17 @@ fn test_v4_chaos_stale_root() {
     let old_proof = generate_proof(&old_leaves, 0);
 
     // Verify old proof works for old leaf
-    assert!(verify_proof(&old_proof, old_leaf, old_root), "Old proof should verify against old root");
+    assert!(
+        verify_proof(&old_proof, old_leaf, old_root),
+        "Old proof should verify against old root"
+    );
 
     // Attacker tries inflated amount with old proof
     let inflated_leaf = compute_global_leaf(&mint, 1, &wallet, 100_000_000_000);
-    assert!(!verify_proof(&old_proof, inflated_leaf, old_root), "SECURITY: inflated leaf must NOT verify against old root");
+    assert!(
+        !verify_proof(&old_proof, inflated_leaf, old_root),
+        "SECURITY: inflated leaf must NOT verify against old root"
+    );
 
     // Attacker tries old proof against new root
     let new_leaf = compute_global_leaf(&mint, 2, &wallet, 2_000_000_000);
@@ -588,7 +675,10 @@ fn test_v4_chaos_stale_root() {
     let new_leaves = vec![new_leaf, new_other];
     let new_root = compute_merkle_root(&new_leaves);
 
-    assert!(!verify_proof(&old_proof, old_leaf, new_root), "SECURITY: old proof must NOT verify against new root");
+    assert!(
+        !verify_proof(&old_proof, old_leaf, new_root),
+        "SECURITY: old proof must NOT verify against new root"
+    );
     println!("V4 CHAOS: stale root attack rejected");
 }
 
@@ -607,7 +697,10 @@ fn test_v4_chaos_future_root_seq() {
 
     // Attacker claims seq 10 with inflated amount
     let future_leaf = compute_global_leaf(&mint, 10, &wallet, 100_000_000_000);
-    assert!(!verify_proof(&proof, future_leaf, current_root), "SECURITY: future seq must NOT verify against current root");
+    assert!(
+        !verify_proof(&proof, future_leaf, current_root),
+        "SECURITY: future seq must NOT verify against current root"
+    );
 
     println!("V4 CHAOS: future root_seq manipulation rejected");
 }
@@ -623,11 +716,17 @@ fn test_v4_chaos_empty_proof_multi_leaf() {
 
     // Empty proof only works for single-leaf tree
     let empty_proof: Vec<[u8; 32]> = vec![];
-    assert!(!verify_proof(&empty_proof, leaf1, root), "SECURITY: empty proof must NOT verify for multi-leaf tree");
+    assert!(
+        !verify_proof(&empty_proof, leaf1, root),
+        "SECURITY: empty proof must NOT verify for multi-leaf tree"
+    );
 
     // Single leaf tree: empty proof is valid
     let single_root = compute_merkle_root(&[leaf1]);
-    assert!(verify_proof(&empty_proof, leaf1, single_root), "Empty proof should work for single-leaf tree");
+    assert!(
+        verify_proof(&empty_proof, leaf1, single_root),
+        "Empty proof should work for single-leaf tree"
+    );
 
     println!("V4 CHAOS: empty proof attack rejected for multi-leaf tree");
 }
@@ -652,7 +751,11 @@ fn test_v4_root_circular_buffer_behavior() {
     // Publish 6 roots (wraps around the 4-slot buffer)
     for seq in 1..=6u64 {
         // On-chain check: seq must be latest + 1
-        assert_eq!(seq, latest_root_seq + 1, "Root seq must be strictly increasing");
+        assert_eq!(
+            seq,
+            latest_root_seq + 1,
+            "Root seq must be strictly increasing"
+        );
 
         let idx = (seq as usize) % CUMULATIVE_ROOT_HISTORY;
         buffer[idx] = RootEntry {
@@ -667,7 +770,11 @@ fn test_v4_root_circular_buffer_behavior() {
     // Roots 3, 4, 5, 6 should be available
     for seq in 3..=6u64 {
         let idx = (seq as usize) % CUMULATIVE_ROOT_HISTORY;
-        assert_eq!(buffer[idx].seq, seq, "Root seq {} should be available at idx {}", seq, idx);
+        assert_eq!(
+            buffer[idx].seq, seq,
+            "Root seq {} should be available at idx {}",
+            seq, idx
+        );
     }
 
     // Roots 1, 2 have been evicted
@@ -681,7 +788,10 @@ fn test_v4_root_circular_buffer_behavior() {
     assert_ne!(buffer[idx_2].seq, 2, "Root seq 2 should have been evicted");
     assert_eq!(buffer[idx_2].seq, 6, "Slot should now contain seq 6");
 
-    println!("V4 circular buffer: correct eviction behavior with {} slots", CUMULATIVE_ROOT_HISTORY);
+    println!(
+        "V4 circular buffer: correct eviction behavior with {} slots",
+        CUMULATIVE_ROOT_HISTORY
+    );
 }
 
 #[test]
@@ -701,7 +811,10 @@ fn test_v4_root_lookup_validation() {
     // Publish seq 1 through 5
     for seq in 1..=5u64 {
         let idx = (seq as usize) % CUMULATIVE_ROOT_HISTORY;
-        buffer[idx] = RootEntry { seq, root: [seq as u8; 32] };
+        buffer[idx] = RootEntry {
+            seq,
+            root: [seq as u8; 32],
+        };
     }
 
     // Attempt to use evicted seq 1 (slot now holds seq 5)
@@ -710,13 +823,19 @@ fn test_v4_root_lookup_validation() {
     let entry = buffer[idx];
 
     // On-chain: require!(entry.seq == root_seq, OracleError::RootTooOldOrMissing)
-    assert_ne!(entry.seq, requested_seq, "Evicted root should NOT match requested seq");
+    assert_ne!(
+        entry.seq, requested_seq,
+        "Evicted root should NOT match requested seq"
+    );
     assert_eq!(entry.seq, 5, "Slot should contain seq 5 (evicted seq 1)");
 
     // Valid lookup: seq 3 is still in buffer
     let valid_seq = 3u64;
     let valid_idx = (valid_seq as usize) % CUMULATIVE_ROOT_HISTORY;
-    assert_eq!(buffer[valid_idx].seq, valid_seq, "Seq 3 should still be available");
+    assert_eq!(
+        buffer[valid_idx].seq, valid_seq,
+        "Seq 3 should still be available"
+    );
 
     println!("V4 root lookup: evicted roots correctly rejected");
 }
@@ -746,7 +865,10 @@ fn test_v2_v4_independent_claim_states() {
     let (v2_claim, _) = derive_claim_state_v2(&channel_config, &wallet);
 
     // These are DIFFERENT accounts — no shared state
-    assert_ne!(v4_claim, v2_claim, "V4 and V2 claim states are independent accounts");
+    assert_ne!(
+        v4_claim, v2_claim,
+        "V4 and V2 claim states are independent accounts"
+    );
 
     // Simulate the risk:
     // V2: wallet claims 5 CCM from channel A
@@ -757,7 +879,10 @@ fn test_v2_v4_independent_claim_states() {
 
     // Safe approach: V4 publisher subtracts V2 claims
     let v4_adjusted_total = v4_cumulative.saturating_sub(v2_claimed);
-    assert_eq!(v4_adjusted_total, 3_000_000_000, "V4 publisher must deduct V2 claims (8 - 5 = 3)");
+    assert_eq!(
+        v4_adjusted_total, 3_000_000_000,
+        "V4 publisher must deduct V2 claims (8 - 5 = 3)"
+    );
 
     // OR: disable V2 before enabling V4 (simpler but requires coordination)
     println!("  V4 claim state: {} (mint-scoped)", v4_claim);
@@ -786,15 +911,24 @@ fn test_v4_account_sizes() {
 
     // Compare with V2 for reference:
     // ChannelConfigV2::LEN = 8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (80 * 4) = 482
-    let v2_channel_len = 8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (80 * CUMULATIVE_ROOT_HISTORY);
+    let v2_channel_len =
+        8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (80 * CUMULATIVE_ROOT_HISTORY);
     assert_eq!(v2_channel_len, 482, "ChannelConfigV2 should be 482 bytes");
 
     // V4 saves 112 bytes per root config (370 vs 482) AND only needs 1 PDA vs 102
-    println!("  GlobalRootConfig:  {} bytes (1 PDA for all users)", global_root_len);
+    println!(
+        "  GlobalRootConfig:  {} bytes (1 PDA for all users)",
+        global_root_len
+    );
     println!("  ClaimStateGlobal:  {} bytes per user", claim_state_len);
-    println!("  ChannelConfigV2:   {} bytes (102 PDAs, one per channel)", v2_channel_len);
-    println!("  Rent savings: 1 * {} vs 102 * {} = {} bytes saved",
-        global_root_len, v2_channel_len,
+    println!(
+        "  ChannelConfigV2:   {} bytes (102 PDAs, one per channel)",
+        v2_channel_len
+    );
+    println!(
+        "  Rent savings: 1 * {} vs 102 * {} = {} bytes saved",
+        global_root_len,
+        v2_channel_len,
         102 * v2_channel_len - global_root_len
     );
 
@@ -827,18 +961,23 @@ fn test_v4_large_tree_proof() {
         let proof = generate_proof(&leaves, idx);
         assert!(
             verify_proof(&proof, leaves[idx], root),
-            "Proof failed for leaf {} in 1000-leaf tree", idx
+            "Proof failed for leaf {} in 1000-leaf tree",
+            idx
         );
         assert!(
             proof.len() <= 32,
-            "Proof length {} exceeds MAX_PROOF_LEN (32) for 1000-leaf tree", proof.len()
+            "Proof length {} exceeds MAX_PROOF_LEN (32) for 1000-leaf tree",
+            proof.len()
         );
     }
 
     // For 1000 leaves, proof depth should be ~10 (ceil(log2(1000)))
     let proof = generate_proof(&leaves, 0);
     println!("  1000-leaf tree: proof depth = {}", proof.len());
-    assert!(proof.len() <= 10, "Proof should be ~10 levels for 1000 leaves");
+    assert!(
+        proof.len() <= 10,
+        "Proof should be ~10 levels for 1000 leaves"
+    );
 
     println!("V4 large tree (1000 leaves): proof generation and verification pass");
 }
@@ -853,7 +992,10 @@ fn test_withdraw_fees_discriminator_unique() {
     let disc_harvest = compute_discriminator("harvest_fees");
 
     // These are different instructions, must have different discriminators
-    assert_ne!(disc_withdraw, disc_harvest, "withdraw_fees_from_mint and harvest_fees must have different discriminators");
+    assert_ne!(
+        disc_withdraw, disc_harvest,
+        "withdraw_fees_from_mint and harvest_fees must have different discriminators"
+    );
 
     // Verify neither collides with V4 instructions
     let v4_discs = vec![
@@ -864,8 +1006,16 @@ fn test_withdraw_fees_discriminator_unique() {
     ];
 
     for (i, v4_disc) in v4_discs.iter().enumerate() {
-        assert_ne!(*v4_disc, disc_withdraw, "V4 disc {} collides with withdraw_fees_from_mint", i);
-        assert_ne!(*v4_disc, disc_harvest, "V4 disc {} collides with harvest_fees", i);
+        assert_ne!(
+            *v4_disc, disc_withdraw,
+            "V4 disc {} collides with withdraw_fees_from_mint",
+            i
+        );
+        assert_ne!(
+            *v4_disc, disc_harvest,
+            "V4 disc {} collides with harvest_fees",
+            i
+        );
     }
 
     println!("  withdraw_fees_from_mint: {:?}", disc_withdraw);
@@ -894,7 +1044,10 @@ fn test_withdraw_fees_is_permissionless() {
     // Even if an attacker calls withdraw_fees_from_mint, the destination
     // is immutable (derived from protocol state), so it's safe.
 
-    println!("  Protocol State PDA (withdraw authority): {}", protocol_state);
+    println!(
+        "  Protocol State PDA (withdraw authority): {}",
+        protocol_state
+    );
     println!("  Permissionless crank: Anyone can trigger withdrawal");
     println!("  Safety: Destination locked to treasury_ata.owner == protocol_state.treasury");
     println!("  Attack surface: None (destination is constraint-enforced)");
@@ -921,8 +1074,14 @@ fn test_mainnet_global_root_config_pda() {
         .unwrap();
     let expected_bump = 255u8;
 
-    assert_eq!(global_root_config, expected, "GlobalRootConfig PDA mismatch with mainnet");
-    assert_eq!(bump, expected_bump, "GlobalRootConfig bump mismatch with mainnet");
+    assert_eq!(
+        global_root_config, expected,
+        "GlobalRootConfig PDA mismatch with mainnet"
+    );
+    assert_eq!(
+        bump, expected_bump,
+        "GlobalRootConfig bump mismatch with mainnet"
+    );
 
     println!("  PDA: {} (bump {})", global_root_config, bump);
     println!("  Matches mainnet: confirmed");
@@ -940,7 +1099,10 @@ fn test_mainnet_protocol_state_pda() {
         .parse()
         .unwrap();
 
-    assert_eq!(protocol_state, expected, "ProtocolState PDA mismatch with mainnet");
+    assert_eq!(
+        protocol_state, expected,
+        "ProtocolState PDA mismatch with mainnet"
+    );
 
     println!("  ProtocolState PDA: {} — matches mainnet", protocol_state);
 }

@@ -9,6 +9,7 @@ pub mod initialize;
 pub mod metadata;
 pub mod migrate_oracle_position;
 pub mod redeem;
+pub mod transfer_authority;
 
 pub use admin::*;
 pub use close::*;
@@ -19,3 +20,4 @@ pub use initialize::*;
 pub use metadata::*;
 pub use migrate_oracle_position::*;
 pub use redeem::*;
+pub use transfer_authority::*;

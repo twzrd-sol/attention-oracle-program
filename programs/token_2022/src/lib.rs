@@ -1,15 +1,43 @@
 #![allow(ambiguous_glob_reexports)]
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![allow(clippy::too_many_arguments, clippy::missing_errors_doc)]
-#![allow(clippy::doc_markdown, clippy::must_use_candidate, clippy::needless_pass_by_value)]
+#![allow(
+    clippy::doc_markdown,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value
+)]
 #![allow(clippy::manual_div_ceil)]
-#![allow(clippy::items_after_statements, clippy::needless_for_each, clippy::needless_borrow)]
-#![allow(clippy::missing_panics_doc, clippy::too_many_lines, clippy::uninlined_format_args)]
-#![allow(clippy::or_fun_call, clippy::explicit_iter_loop, clippy::used_underscore_binding)]
-#![allow(clippy::needless_borrows_for_generic_args, clippy::cast_possible_truncation, clippy::cast_lossless)]
+#![allow(
+    clippy::items_after_statements,
+    clippy::needless_for_each,
+    clippy::needless_borrow
+)]
+#![allow(
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args
+)]
+#![allow(
+    clippy::or_fun_call,
+    clippy::explicit_iter_loop,
+    clippy::used_underscore_binding
+)]
+#![allow(
+    clippy::needless_borrows_for_generic_args,
+    clippy::cast_possible_truncation,
+    clippy::cast_lossless
+)]
 #![allow(clippy::no_effect_underscore_binding, clippy::pub_underscore_fields)]
-#![allow(clippy::too_long_first_doc_paragraph, clippy::unnecessary_cast, clippy::len_zero)]
-#![allow(clippy::wildcard_imports, clippy::missing_const_for_fn, clippy::use_self)]
+#![allow(
+    clippy::too_long_first_doc_paragraph,
+    clippy::unnecessary_cast,
+    clippy::len_zero
+)]
+#![allow(
+    clippy::wildcard_imports,
+    clippy::missing_const_for_fn,
+    clippy::use_self
+)]
 
 //! # Attention Oracle Protocol
 //!
@@ -80,7 +108,13 @@ pub mod token_2022 {
         root: [u8; 32],
         dataset_hash: [u8; 32],
     ) -> Result<()> {
-        instructions::cumulative::publish_cumulative_root(ctx, channel, root_seq, root, dataset_hash)
+        instructions::cumulative::publish_cumulative_root(
+            ctx,
+            channel,
+            root_seq,
+            root,
+            dataset_hash,
+        )
     }
 
     /// V3 cumulative claim with stake snapshot verification.
@@ -94,7 +128,15 @@ pub mod token_2022 {
         snapshot_slot: u64,
         proof: Vec<[u8; 32]>,
     ) -> Result<()> {
-        instructions::cumulative::claim_cumulative_v3(ctx, channel, root_seq, cumulative_total, stake_snapshot, snapshot_slot, proof)
+        instructions::cumulative::claim_cumulative_v3(
+            ctx,
+            channel,
+            root_seq,
+            cumulative_total,
+            stake_snapshot,
+            snapshot_slot,
+            proof,
+        )
     }
 
     /// V3 sponsored claim with stake snapshot verification.
@@ -107,7 +149,15 @@ pub mod token_2022 {
         snapshot_slot: u64,
         proof: Vec<[u8; 32]>,
     ) -> Result<()> {
-        instructions::cumulative::claim_cumulative_sponsored_v3(ctx, channel, root_seq, cumulative_total, stake_snapshot, snapshot_slot, proof)
+        instructions::cumulative::claim_cumulative_sponsored_v3(
+            ctx,
+            channel,
+            root_seq,
+            cumulative_total,
+            stake_snapshot,
+            snapshot_slot,
+            proof,
+        )
     }
 
     /// Update creator fee on already-migrated ChannelConfigV2.
@@ -342,5 +392,10 @@ pub mod token_2022 {
     /// reward tokens and rent. Requires: is_shutdown, 0 stakers, 0 staked.
     pub fn close_stake_pool(ctx: Context<CloseStakePool>) -> Result<()> {
         instructions::staking::close_stake_pool(ctx)
+    }
+
+    /// Admin: Fix CCM withdrawal authority to ProtocolState PDA.
+    pub fn admin_fix_ccm_authority(ctx: Context<AdminFixCcmAuthority>) -> Result<()> {
+        instructions::admin::admin_fix_ccm_authority(ctx)
     }
 }

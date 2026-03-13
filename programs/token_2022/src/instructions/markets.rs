@@ -213,7 +213,10 @@ pub struct InitializeMarketTokens<'info> {
 }
 
 pub fn initialize_market_tokens(ctx: Context<InitializeMarketTokens>) -> Result<()> {
-    require!(!ctx.accounts.protocol_state.paused, OracleError::ProtocolPaused);
+    require!(
+        !ctx.accounts.protocol_state.paused,
+        OracleError::ProtocolPaused
+    );
     let market_state = &mut ctx.accounts.market_state;
     require!(
         !market_state.tokens_initialized,
@@ -344,6 +347,7 @@ pub fn mint_shares<'info>(
     require!(amount > 0, OracleError::ZeroSharesMinted);
 
     // CRITICAL: Snapshot vault balance BEFORE transfer to calculate net received
+    let ccm_decimals = ctx.accounts.ccm_mint.decimals;
     let vault_before = ctx.accounts.vault.amount;
 
     // Transfer CCM from depositor to vault (Token-2022 — may deduct transfer fee)
@@ -354,7 +358,7 @@ pub fn mint_shares<'info>(
         &ctx.accounts.vault.to_account_info(),
         &ctx.accounts.depositor.to_account_info(),
         amount,
-        CCM_DECIMALS,
+        ccm_decimals,
         &[], // depositor signs directly
         ctx.remaining_accounts,
     )?;
@@ -546,6 +550,7 @@ pub fn redeem_shares<'info>(
     )?;
 
     // Transfer CCM from vault back to redeemer (outbound transfer fee applies)
+    let ccm_decimals = ctx.accounts.ccm_mint.decimals;
     let market_id_bytes = ctx.accounts.market_state.market_id.to_le_bytes();
     let mint_key = protocol_state.mint;
     let auth_seeds: &[&[u8]] = &[
@@ -562,7 +567,7 @@ pub fn redeem_shares<'info>(
         &ctx.accounts.redeemer_ccm.to_account_info(),
         &ctx.accounts.mint_authority.to_account_info(),
         shares,
-        CCM_DECIMALS,
+        ccm_decimals,
         &[auth_seeds],
         ctx.remaining_accounts,
     )?;
@@ -762,10 +767,7 @@ pub struct Settle<'info> {
     pub outcome_token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn settle<'info>(
-    ctx: Context<'_, '_, '_, 'info, Settle<'info>>,
-    shares: u64,
-) -> Result<()> {
+pub fn settle<'info>(ctx: Context<'_, '_, '_, 'info, Settle<'info>>, shares: u64) -> Result<()> {
     let protocol_state = &ctx.accounts.protocol_state;
     let market_state = &ctx.accounts.market_state;
     require!(!protocol_state.paused, OracleError::ProtocolPaused);
@@ -803,6 +805,7 @@ pub fn settle<'info>(
     )?;
 
     // Transfer CCM from vault to settler (Token-2022 transfer fee applies on exit)
+    let ccm_decimals = ctx.accounts.ccm_mint.decimals;
     let market_id_bytes = market_state.market_id.to_le_bytes();
     let mint_key = protocol_state.mint;
     let auth_seeds: &[&[u8]] = &[
@@ -819,7 +822,7 @@ pub fn settle<'info>(
         &ctx.accounts.settler_ccm.to_account_info(),
         &ctx.accounts.mint_authority.to_account_info(),
         shares,
-        CCM_DECIMALS,
+        ccm_decimals,
         &[auth_seeds],
         ctx.remaining_accounts,
     )?;
@@ -900,9 +903,7 @@ pub struct SweepResidual<'info> {
     pub token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn sweep_residual<'info>(
-    ctx: Context<'_, '_, '_, 'info, SweepResidual<'info>>,
-) -> Result<()> {
+pub fn sweep_residual<'info>(ctx: Context<'_, '_, '_, 'info, SweepResidual<'info>>) -> Result<()> {
     let market_state = &ctx.accounts.market_state;
 
     // Verify the correct winning mint was provided
@@ -921,6 +922,7 @@ pub fn sweep_residual<'info>(
     require!(residual > 0, OracleError::InsufficientVaultBalance);
 
     // Transfer all remaining CCM from vault to treasury
+    let ccm_decimals = ctx.accounts.ccm_mint.decimals;
     let market_id_bytes = market_state.market_id.to_le_bytes();
     let mint_key = ctx.accounts.protocol_state.mint;
     let auth_seeds: &[&[u8]] = &[
@@ -937,7 +939,7 @@ pub fn sweep_residual<'info>(
         &ctx.accounts.treasury_ccm.to_account_info(),
         &ctx.accounts.mint_authority.to_account_info(),
         residual,
-        CCM_DECIMALS,
+        ccm_decimals,
         &[auth_seeds],
         ctx.remaining_accounts,
     )?;
@@ -1254,12 +1256,17 @@ pub struct InitializeMarketTokensV2<'info> {
 }
 
 pub fn initialize_market_tokens_v2(ctx: Context<InitializeMarketTokensV2>) -> Result<()> {
-    require!(!ctx.accounts.protocol_state.paused, OracleError::ProtocolPaused);
+    require!(
+        !ctx.accounts.protocol_state.paused,
+        OracleError::ProtocolPaused
+    );
     let market_state = &mut ctx.accounts.market_state;
     require!(
         !market_state.tokens_initialized,
         OracleError::MarketTokensAlreadyInitialized
     );
+
+    let ccm_decimals = ctx.accounts.ccm_mint.decimals;
 
     // Initialize YES mint (Token-2022 + MintCloseAuthority)
     initialize_outcome_mint(
@@ -1273,6 +1280,7 @@ pub fn initialize_market_tokens_v2(ctx: Context<InitializeMarketTokensV2>) -> Re
         ctx.accounts.protocol_state.mint.as_ref(),
         &market_state.market_id.to_le_bytes(),
         ctx.bumps.yes_mint,
+        ccm_decimals,
     )?;
 
     // Initialize NO mint (Token-2022 + MintCloseAuthority)
@@ -1287,6 +1295,7 @@ pub fn initialize_market_tokens_v2(ctx: Context<InitializeMarketTokensV2>) -> Re
         ctx.accounts.protocol_state.mint.as_ref(),
         &market_state.market_id.to_le_bytes(),
         ctx.bumps.no_mint,
+        ccm_decimals,
     )?;
 
     market_state.vault = ctx.accounts.vault.key();
@@ -1321,6 +1330,7 @@ fn initialize_outcome_mint<'info>(
     mint_ref: &[u8],
     market_id_bytes: &[u8],
     bump: u8,
+    decimals: u8,
 ) -> Result<()> {
     let extension_types = &[spl_token_2022::extension::ExtensionType::MintCloseAuthority];
     let space = spl_token_2022::extension::ExtensionType::try_calculate_account_len::<
@@ -1340,11 +1350,7 @@ fn initialize_outcome_mint<'info>(
             space as u64,
             token_program.key,
         ),
-        &[
-            payer.clone(),
-            mint_account.clone(),
-            system_program.clone(),
-        ],
+        &[payer.clone(), mint_account.clone(), system_program.clone()],
         &[signer_seeds],
     )?;
 
@@ -1359,13 +1365,13 @@ fn initialize_outcome_mint<'info>(
         &[mint_account.clone(), token_program.clone()],
     )?;
 
-    // 3. Initialize mint (decimals = 9, authority = mint_authority PDA)
+    // 3. Initialize mint (authority = mint_authority PDA)
     let init_mint_ix = spl_token_2022::instruction::initialize_mint2(
         token_program.key,
         mint_account.key,
         mint_authority.key,
         None, // no freeze authority
-        CCM_DECIMALS,
+        decimals,
     )?;
     anchor_lang::solana_program::program::invoke(
         &init_mint_ix,
@@ -1374,4 +1380,3 @@ fn initialize_outcome_mint<'info>(
 
     Ok(())
 }
-

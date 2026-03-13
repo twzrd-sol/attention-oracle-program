@@ -120,11 +120,7 @@ pub fn handler(ctx: Context<Deposit>, amount: u64, min_shares: u64) -> Result<()
     // Mint vLOFI shares to user (standard SPL)
     let channel_config_key = vault.channel_config;
     let bump = vault.bump;
-    let signer_seeds: &[&[&[u8]]] = &[&[
-        VAULT_SEED,
-        channel_config_key.as_ref(),
-        &[bump],
-    ]];
+    let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, channel_config_key.as_ref(), &[bump]]];
 
     let mint_ctx = CpiContext::new_with_signer(
         ctx.accounts.token_program.to_account_info(),

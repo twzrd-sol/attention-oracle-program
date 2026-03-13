@@ -9,7 +9,9 @@ use crate::constants::{
     MAX_PROOF_AGE_SLOTS, PROTOCOL_SEED,
 };
 use crate::errors::OracleError;
-use crate::events::{ChannelClosed, CumulativeRewardsClaimedV3, CreatorFeeUpdated, RootSeqRecovered};
+use crate::events::{
+    ChannelClosed, CreatorFeeUpdated, CumulativeRewardsClaimedV3, RootSeqRecovered,
+};
 use crate::merkle_proof::{compute_cumulative_leaf_v3, verify_proof};
 use crate::state::{ChannelConfigV2, ClaimStateV2, ProtocolState, RootEntry, UserChannelStake};
 
@@ -102,7 +104,10 @@ pub fn initialize_channel_cumulative(
         cfg._padding = [0u8; 6];
         cfg.roots = [RootEntry::default(); CUMULATIVE_ROOT_HISTORY];
     } else {
-        require!(cfg.version == CHANNEL_CONFIG_V2_VERSION, OracleError::InvalidChannelState);
+        require!(
+            cfg.version == CHANNEL_CONFIG_V2_VERSION,
+            OracleError::InvalidChannelState
+        );
         require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
         require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
     }
@@ -153,17 +158,26 @@ pub fn publish_cumulative_root(
     require!(is_admin || is_publisher, OracleError::Unauthorized);
 
     // Block publishing while paused (only admin can publish during pause)
-    require!(!protocol_state.paused || is_admin, OracleError::ProtocolPaused);
+    require!(
+        !protocol_state.paused || is_admin,
+        OracleError::ProtocolPaused
+    );
 
     let subject_id = derive_subject_id(&channel);
     let cfg = &mut ctx.accounts.channel_config;
 
-    require!(cfg.version == CHANNEL_CONFIG_V2_VERSION, OracleError::InvalidChannelState);
+    require!(
+        cfg.version == CHANNEL_CONFIG_V2_VERSION,
+        OracleError::InvalidChannelState
+    );
     require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
     require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
 
     // Enforce strictly increasing sequence
-    require!(root_seq == cfg.latest_root_seq + 1, OracleError::InvalidRootSeq);
+    require!(
+        root_seq == cfg.latest_root_seq + 1,
+        OracleError::InvalidRootSeq
+    );
 
     let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
     cfg.roots[idx] = RootEntry {
@@ -176,7 +190,6 @@ pub fn publish_cumulative_root(
 
     Ok(())
 }
-
 
 // =============================================================================
 // CLAIM CUMULATIVE V3 - With Stake Snapshot Binding (Anti-Gaming)
@@ -279,11 +292,17 @@ pub fn claim_cumulative_v3<'info>(
         protocol_state.mint,
         OracleError::InvalidMint
     );
-    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+    require!(
+        proof.len() <= MAX_PROOF_LEN,
+        OracleError::InvalidProofLength
+    );
 
     let subject_id = derive_subject_id(&channel);
 
-    require!(cfg.version == CHANNEL_CONFIG_V2_VERSION, OracleError::InvalidChannelState);
+    require!(
+        cfg.version == CHANNEL_CONFIG_V2_VERSION,
+        OracleError::InvalidChannelState
+    );
     require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
     require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
 
@@ -296,10 +315,7 @@ pub fn claim_cumulative_v3<'info>(
 
     // SECURITY: Enforce proof freshness to prevent stale-stake attacks
     let clock = Clock::get()?;
-    require!(
-        snapshot_slot <= clock.slot,
-        OracleError::ProofExpired
-    );
+    require!(snapshot_slot <= clock.slot, OracleError::ProofExpired);
     require!(
         clock.slot.saturating_sub(snapshot_slot) <= MAX_PROOF_AGE_SLOTS,
         OracleError::ProofExpired
@@ -324,7 +340,10 @@ pub fn claim_cumulative_v3<'info>(
         stake_snapshot,
         snapshot_slot,
     );
-    require!(verify_proof(&proof, leaf, entry.root), OracleError::InvalidProof);
+    require!(
+        verify_proof(&proof, leaf, entry.root),
+        OracleError::InvalidProof
+    );
 
     let claim_state = &mut ctx.accounts.claim_state;
     if claim_state.version == 0 {
@@ -335,8 +354,14 @@ pub fn claim_cumulative_v3<'info>(
         claim_state.claimed_total = 0;
         claim_state.last_claim_seq = 0;
     } else {
-        require!(claim_state.channel == cfg.key(), OracleError::InvalidClaimState);
-        require!(claim_state.wallet == ctx.accounts.claimer.key(), OracleError::InvalidClaimState);
+        require!(
+            claim_state.channel == cfg.key(),
+            OracleError::InvalidClaimState
+        );
+        require!(
+            claim_state.wallet == ctx.accounts.claimer.key(),
+            OracleError::InvalidClaimState
+        );
     }
 
     if cumulative_total <= claim_state.claimed_total {
@@ -354,7 +379,9 @@ pub fn claim_cumulative_v3<'info>(
             .ok_or(OracleError::MathOverflow)?
             .checked_div(10000)
             .ok_or(OracleError::MathOverflow)? as u64;
-        let user_cut = delta.checked_sub(creator_cut).ok_or(OracleError::MathOverflow)?;
+        let user_cut = delta
+            .checked_sub(creator_cut)
+            .ok_or(OracleError::MathOverflow)?;
         (user_cut, creator_cut)
     } else {
         (delta, 0u64)
@@ -524,11 +551,17 @@ pub fn claim_cumulative_sponsored_v3<'info>(
         protocol_state.mint,
         OracleError::InvalidMint
     );
-    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+    require!(
+        proof.len() <= MAX_PROOF_LEN,
+        OracleError::InvalidProofLength
+    );
 
     let subject_id = derive_subject_id(&channel);
 
-    require!(cfg.version == CHANNEL_CONFIG_V2_VERSION, OracleError::InvalidChannelState);
+    require!(
+        cfg.version == CHANNEL_CONFIG_V2_VERSION,
+        OracleError::InvalidChannelState
+    );
     require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
     require!(cfg.subject == subject_id, OracleError::InvalidChannelState);
 
@@ -540,10 +573,7 @@ pub fn claim_cumulative_sponsored_v3<'info>(
 
     // SECURITY: Enforce proof freshness to prevent stale-stake attacks
     let clock = Clock::get()?;
-    require!(
-        snapshot_slot <= clock.slot,
-        OracleError::ProofExpired
-    );
+    require!(snapshot_slot <= clock.slot, OracleError::ProofExpired);
     require!(
         clock.slot.saturating_sub(snapshot_slot) <= MAX_PROOF_AGE_SLOTS,
         OracleError::ProofExpired
@@ -567,7 +597,10 @@ pub fn claim_cumulative_sponsored_v3<'info>(
         stake_snapshot,
         snapshot_slot,
     );
-    require!(verify_proof(&proof, leaf, entry.root), OracleError::InvalidProof);
+    require!(
+        verify_proof(&proof, leaf, entry.root),
+        OracleError::InvalidProof
+    );
 
     let claim_state = &mut ctx.accounts.claim_state;
     if claim_state.version == 0 {
@@ -578,8 +611,14 @@ pub fn claim_cumulative_sponsored_v3<'info>(
         claim_state.claimed_total = 0;
         claim_state.last_claim_seq = 0;
     } else {
-        require!(claim_state.channel == cfg.key(), OracleError::InvalidClaimState);
-        require!(claim_state.wallet == ctx.accounts.claimer.key(), OracleError::InvalidClaimState);
+        require!(
+            claim_state.channel == cfg.key(),
+            OracleError::InvalidClaimState
+        );
+        require!(
+            claim_state.wallet == ctx.accounts.claimer.key(),
+            OracleError::InvalidClaimState
+        );
     }
 
     if cumulative_total <= claim_state.claimed_total {
@@ -597,7 +636,9 @@ pub fn claim_cumulative_sponsored_v3<'info>(
             .ok_or(OracleError::MathOverflow)?
             .checked_div(10000)
             .ok_or(OracleError::MathOverflow)? as u64;
-        let user_cut = delta.checked_sub(creator_cut).ok_or(OracleError::MathOverflow)?;
+        let user_cut = delta
+            .checked_sub(creator_cut)
+            .ok_or(OracleError::MathOverflow)?;
         (user_cut, creator_cut)
     } else {
         (delta, 0u64)
@@ -721,7 +762,6 @@ pub fn update_channel_creator_fee(
 
     Ok(())
 }
-
 
 // =============================================================================
 // ADMIN ROOT SEQUENCE RECOVERY

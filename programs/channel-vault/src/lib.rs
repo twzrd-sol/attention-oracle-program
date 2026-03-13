@@ -49,7 +49,12 @@ pub mod channel_vault {
         lock_duration_slots: u64,
         withdraw_queue_slots: u64,
     ) -> Result<()> {
-        instructions::initialize::handler(ctx, min_deposit, lock_duration_slots, withdraw_queue_slots)
+        instructions::initialize::handler(
+            ctx,
+            min_deposit,
+            lock_duration_slots,
+            withdraw_queue_slots,
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -57,11 +62,7 @@ pub mod channel_vault {
     // -------------------------------------------------------------------------
 
     /// Deposit CCM and receive vLOFI shares.
-    pub fn deposit(
-        ctx: Context<Deposit>,
-        amount: u64,
-        min_shares: u64,
-    ) -> Result<()> {
+    pub fn deposit(ctx: Context<Deposit>, amount: u64, min_shares: u64) -> Result<()> {
         instructions::deposit::handler(ctx, amount, min_shares)
     }
 
@@ -118,9 +119,7 @@ pub mod channel_vault {
 
     /// Compound pending deposits into Oracle stake.
     /// Anyone can call this (keeper incentive).
-    pub fn compound<'info>(
-        ctx: Context<'_, '_, 'info, 'info, Compound<'info>>,
-    ) -> Result<()> {
+    pub fn compound<'info>(ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -> Result<()> {
         instructions::compound::handler(ctx)
     }
 
@@ -196,6 +195,16 @@ pub mod channel_vault {
     /// to reconcile with on-chain Oracle state.
     pub fn migrate_oracle_position(ctx: Context<MigrateOraclePosition>) -> Result<()> {
         instructions::migrate_oracle_position::handler(ctx)
+    }
+
+    /// Transfer vLOFI mint authority to a new owner.
+    /// Admin-only, irreversible. Used to migrate mint authority from
+    /// this vault PDA to the new AO protocol_state PDA.
+    pub fn transfer_mint_authority(
+        ctx: Context<TransferMintAuthority>,
+        new_authority: Pubkey,
+    ) -> Result<()> {
+        instructions::transfer_authority::handler(ctx, new_authority)
     }
 
     // -------------------------------------------------------------------------

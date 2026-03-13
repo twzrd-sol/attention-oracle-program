@@ -9,7 +9,9 @@ use crate::constants::{
     STAKE_VAULT_SEED,
 };
 use crate::errors::OracleError;
-use crate::events::{ChannelStaked, ChannelUnstaked, ChannelEmergencyUnstaked, PoolClosed, PoolRecovered};
+use crate::events::{
+    ChannelEmergencyUnstaked, ChannelStaked, ChannelUnstaked, PoolClosed, PoolRecovered,
+};
 use crate::state::{ChannelConfigV2, ChannelStakePool, ProtocolState, UserChannelStake};
 use anchor_lang::prelude::*;
 use anchor_spl::{
@@ -89,7 +91,7 @@ pub fn calculate_pending_rewards(
         .checked_add(user_stake.pending_rewards as u128)
         .ok_or(OracleError::MathOverflow)?;
 
-    Ok(pending as u64)
+    Ok(u64::try_from(pending).map_err(|_| OracleError::MathOverflow)?)
 }
 
 /// Calculate new reward debt for user after stake change.
@@ -288,10 +290,16 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     use spl_token_2022::extension::ExtensionType;
 
     // Block new stakes if pool is shutdown
-    require!(!ctx.accounts.stake_pool.is_shutdown, OracleError::PoolIsShutdown);
+    require!(
+        !ctx.accounts.stake_pool.is_shutdown,
+        OracleError::PoolIsShutdown
+    );
 
     require!(amount >= MIN_STAKE_AMOUNT, OracleError::StakeBelowMinimum);
-    require!(lock_duration <= MAX_LOCK_SLOTS, OracleError::LockPeriodTooLong);
+    require!(
+        lock_duration <= MAX_LOCK_SLOTS,
+        OracleError::LockPeriodTooLong
+    );
 
     let clock = Clock::get()?;
     let current_slot = clock.slot;
@@ -300,7 +308,9 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     let multiplier_bps = calculate_boost_bps(lock_duration);
 
     let lock_end_slot = if lock_duration > 0 {
-        current_slot.checked_add(lock_duration).ok_or(OracleError::MathOverflow)?
+        current_slot
+            .checked_add(lock_duration)
+            .ok_or(OracleError::MathOverflow)?
     } else {
         0
     };
@@ -316,11 +326,7 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     let nft_mint_key = ctx.accounts.nft_mint.key();
 
     // Pool signer seeds
-    let seeds: &[&[u8]] = &[
-        CHANNEL_STAKE_POOL_SEED,
-        channel_key.as_ref(),
-        &[pool_bump],
-    ];
+    let seeds: &[&[u8]] = &[CHANNEL_STAKE_POOL_SEED, channel_key.as_ref(), &[pool_bump]];
     let signer_seeds = &[seeds];
 
     // Capture vault balance before transfer to measure actual received
@@ -351,7 +357,10 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
 
     // Measure actual tokens received (net of Token-2022 transfer fees)
     ctx.accounts.vault.reload()?;
-    let actual_received = ctx.accounts.vault.amount
+    let actual_received = ctx
+        .accounts
+        .vault
+        .amount
         .checked_sub(vault_balance_before)
         .ok_or(OracleError::MathOverflow)?;
     require!(actual_received > 0, OracleError::StakeBelowMinimum);
@@ -372,12 +381,13 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     if nft_mint_exists {
         // Re-stake: NFT mint already exists from previous cycle.
         // Check if pool still has mint authority (post-fix mints retain it).
-        use spl_token_2022::extension::StateWithExtensions;
         use anchor_lang::solana_program::program_option::COption;
+        use spl_token_2022::extension::StateWithExtensions;
 
         let has_mint_authority = {
             let mint_data = nft_mint_info.try_borrow_data()?;
-            let mint_state = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&mint_data)?;
+            let mint_state =
+                StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&mint_data)?;
             mint_state.base.mint_authority == COption::Some(pool_key)
         };
 
@@ -432,8 +442,10 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
     } else {
         // Fresh stake: create NFT mint from scratch
         let extension_types = &[ExtensionType::NonTransferable];
-        let space = ExtensionType::try_calculate_account_len::<spl_token_2022::state::Mint>(extension_types)
-            .map_err(|_| OracleError::MathOverflow)?;
+        let space = ExtensionType::try_calculate_account_len::<spl_token_2022::state::Mint>(
+            extension_types,
+        )
+        .map_err(|_| OracleError::MathOverflow)?;
         let rent_lamports = ctx.accounts.rent.minimum_balance(space);
 
         // Create the mint account (payer funds rent, nft_mint is the new account)
@@ -454,10 +466,11 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
         )?;
 
         // Initialize NonTransferable extension
-        let init_non_transferable_ix = spl_token_2022::instruction::initialize_non_transferable_mint(
-            &ctx.accounts.token_program.key(),
-            &nft_mint_key,
-        )?;
+        let init_non_transferable_ix =
+            spl_token_2022::instruction::initialize_non_transferable_mint(
+                &ctx.accounts.token_program.key(),
+                &nft_mint_key,
+            )?;
 
         anchor_lang::solana_program::program::invoke(
             &init_non_transferable_ix,
@@ -471,9 +484,9 @@ pub fn stake_channel(ctx: Context<StakeChannel>, amount: u64, lock_duration: u64
         let init_mint_ix = spl_token_2022::instruction::initialize_mint2(
             &ctx.accounts.token_program.key(),
             &nft_mint_key,
-            &pool_key,    // mint authority (retained, NOT revoked)
+            &pool_key,       // mint authority (retained, NOT revoked)
             Some(&pool_key), // freeze authority
-            0, // decimals
+            0,               // decimals
         )?;
 
         anchor_lang::solana_program::program::invoke(
@@ -695,7 +708,10 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
         let total_staked = ctx.accounts.stake_pool.total_staked;
         let excess = vault_balance.saturating_sub(total_staked);
         if excess >= pending {
-            msg!("User has {} pending rewards - call claim_channel_rewards first", pending);
+            msg!(
+                "User has {} pending rewards - call claim_channel_rewards first",
+                pending
+            );
             return Err(OracleError::PendingRewardsOnUnstake.into());
         }
         // Rewards underfunded - allow unstake with forfeit to prevent deadlock
@@ -743,11 +759,7 @@ pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
     }
 
     // 5. Transfer tokens from vault back to user
-    let seeds: &[&[u8]] = &[
-        CHANNEL_STAKE_POOL_SEED,
-        channel_key.as_ref(),
-        &[pool_bump],
-    ];
+    let seeds: &[&[u8]] = &[CHANNEL_STAKE_POOL_SEED, channel_key.as_ref(), &[pool_bump]];
     let signer_seeds = &[seeds];
 
     let transfer_ix = spl_token_2022::instruction::transfer_checked(
@@ -882,10 +894,7 @@ pub fn claim_channel_rewards(ctx: Context<ClaimChannelRewards>) -> Result<()> {
     let vault_balance = ctx.accounts.vault.amount;
     let total_staked = pool.total_staked;
     let excess = vault_balance.saturating_sub(total_staked);
-    require!(
-        excess >= pending,
-        OracleError::ClaimExceedsAvailableRewards
-    );
+    require!(excess >= pending, OracleError::ClaimExceedsAvailableRewards);
 
     // Capture values for CPI
     let channel_key = ctx.accounts.channel_config.key();
@@ -895,11 +904,7 @@ pub fn claim_channel_rewards(ctx: Context<ClaimChannelRewards>) -> Result<()> {
     let pool_key = ctx.accounts.stake_pool.key();
 
     // 3. Transfer rewards from vault to user
-    let seeds: &[&[u8]] = &[
-        CHANNEL_STAKE_POOL_SEED,
-        channel_key.as_ref(),
-        &[pool_bump],
-    ];
+    let seeds: &[&[u8]] = &[CHANNEL_STAKE_POOL_SEED, channel_key.as_ref(), &[pool_bump]];
     let signer_seeds = &[seeds];
 
     let transfer_ix = spl_token_2022::instruction::transfer_checked(
@@ -1008,10 +1013,7 @@ pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()>
             .checked_div(SLOTS_PER_YEAR as u128)
             .ok_or(OracleError::MathOverflow)? as u64;
 
-        require!(
-            new_rate <= max_rate,
-            OracleError::RewardRateExceedsMaxApr
-        );
+        require!(new_rate <= max_rate, OracleError::RewardRateExceedsMaxApr);
 
         msg!(
             "Rate cap check: new_rate={}, max_rate={} ({}% APR on {} weighted)",
@@ -1185,11 +1187,7 @@ pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Resul
     let remaining_lock_slots = lock_end_slot.saturating_sub(current_slot);
 
     // Pool signer seeds
-    let seeds: &[&[u8]] = &[
-        CHANNEL_STAKE_POOL_SEED,
-        channel_key.as_ref(),
-        &[pool_bump],
-    ];
+    let seeds: &[&[u8]] = &[CHANNEL_STAKE_POOL_SEED, channel_key.as_ref(), &[pool_bump]];
     let signer_seeds = &[seeds];
 
     // 1. Burn the receipt NFT (if present — legacy re-stakes may have skipped minting)
@@ -1526,11 +1524,7 @@ pub fn close_stake_pool(ctx: Context<CloseStakePool>) -> Result<()> {
     let decimals = ctx.accounts.mint.decimals;
 
     // Pool PDA signer seeds (vault authority for transfers + close)
-    let pool_seeds: &[&[u8]] = &[
-        CHANNEL_STAKE_POOL_SEED,
-        channel_key.as_ref(),
-        &[pool_bump],
-    ];
+    let pool_seeds: &[&[u8]] = &[CHANNEL_STAKE_POOL_SEED, channel_key.as_ref(), &[pool_bump]];
     let pool_signer = &[pool_seeds];
 
     // Protocol PDA signer seeds (withdraw_withheld_authority for the mint)
@@ -1592,7 +1586,10 @@ pub fn close_stake_pool(ctx: Context<CloseStakePool>) -> Result<()> {
             pool_signer,
         )?;
 
-        msg!("Transferred {} surplus tokens to destination", vault_balance);
+        msg!(
+            "Transferred {} surplus tokens to destination",
+            vault_balance
+        );
     }
 
     // Step 3: Close the vault ATA (returns SOL rent to admin).

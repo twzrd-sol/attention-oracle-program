@@ -45,7 +45,7 @@ pub struct HarvestFees<'info> {
 
     /// Protocol state (mint-keyed) - PDA is the withdraw_withheld_authority
     #[account(
-        seeds = [PROTOCOL_SEED, mint.key().as_ref()],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
@@ -127,11 +127,7 @@ pub fn harvest_and_distribute_fees<'info>(
     let treasury_before = ctx.accounts.treasury.amount;
 
     // PDA signer seeds for protocol_state (withdraw_withheld_authority)
-    let seeds: &[&[u8]] = &[
-        PROTOCOL_SEED,
-        mint_key.as_ref(),
-        &[protocol_state.bump],
-    ];
+    let seeds: &[&[u8]] = &[PROTOCOL_SEED, mint_key.as_ref(), &[protocol_state.bump]];
     let signer_seeds = &[seeds];
 
     // Collect source account infos from remaining_accounts
@@ -191,8 +187,9 @@ pub struct WithdrawFeesFromMint<'info> {
 
     /// Protocol state PDA is the mint's withdraw_withheld_authority.
     #[account(
-        seeds = [PROTOCOL_SEED, mint.key().as_ref()],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
+        constraint = protocol_state.mint == mint.key() @ OracleError::InvalidMint,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -226,18 +223,16 @@ pub fn withdraw_fees_from_mint(ctx: Context<WithdrawFeesFromMint>) -> Result<()>
     let seeds: &[&[u8]] = &[PROTOCOL_SEED, mint_key.as_ref(), &[protocol_state.bump]];
     let signer_seeds = &[seeds];
 
-    withdraw_withheld_tokens_from_mint(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            WithdrawWithheldTokensFromMint {
-                token_program_id: ctx.accounts.token_program.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-                destination: ctx.accounts.treasury_ata.to_account_info(),
-                authority: ctx.accounts.protocol_state.to_account_info(),
-            },
-            signer_seeds,
-        ),
-    )?;
+    withdraw_withheld_tokens_from_mint(CpiContext::new_with_signer(
+        ctx.accounts.token_program.to_account_info(),
+        WithdrawWithheldTokensFromMint {
+            token_program_id: ctx.accounts.token_program.to_account_info(),
+            mint: ctx.accounts.mint.to_account_info(),
+            destination: ctx.accounts.treasury_ata.to_account_info(),
+            authority: ctx.accounts.protocol_state.to_account_info(),
+        },
+        signer_seeds,
+    ))?;
 
     ctx.accounts.treasury_ata.reload()?;
     let treasury_after = ctx.accounts.treasury_ata.amount;
@@ -285,8 +280,9 @@ pub struct RouteTreasury<'info> {
 
     /// Protocol state PDA — token owner of the treasury ATA.
     #[account(
-        seeds = [PROTOCOL_SEED, mint.key().as_ref()],
+        seeds = [PROTOCOL_SEED, protocol_state.mint.as_ref()],
         bump = protocol_state.bump,
+        constraint = protocol_state.mint == mint.key() @ OracleError::InvalidMint,
     )]
     pub protocol_state: Account<'info, ProtocolState>,
 
@@ -315,11 +311,7 @@ pub struct RouteTreasury<'info> {
     pub token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn route_treasury(
-    ctx: Context<RouteTreasury>,
-    amount: u64,
-    min_reserve: u64,
-) -> Result<()> {
+pub fn route_treasury(ctx: Context<RouteTreasury>, amount: u64, min_reserve: u64) -> Result<()> {
     let ts = Clock::get()?.unix_timestamp;
     let protocol_state = &ctx.accounts.protocol_state;
     let mint_key = ctx.accounts.mint.key();

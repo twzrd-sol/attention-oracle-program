@@ -7,7 +7,10 @@ use anchor_spl::{
     token_interface::{Mint as MintInterface, TokenAccount, TokenInterface},
 };
 
-use crate::constants::{TOKEN_2022_PROGRAM_ID, VAULT_CCM_BUFFER_SEED, VAULT_ORACLE_POSITION_SEED, VAULT_SEED, VLOFI_MINT_SEED};
+use crate::constants::{
+    TOKEN_2022_PROGRAM_ID, VAULT_CCM_BUFFER_SEED, VAULT_ORACLE_POSITION_SEED, VAULT_SEED,
+    VLOFI_MINT_SEED,
+};
 use crate::errors::VaultError;
 use crate::events::VaultInitialized;
 use crate::state::{ChannelVault, VaultOraclePosition};

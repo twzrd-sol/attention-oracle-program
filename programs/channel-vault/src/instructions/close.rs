@@ -6,12 +6,15 @@
 //! - pending_withdrawals == 0
 
 use anchor_lang::prelude::*;
+use anchor_spl::token::Token;
 use anchor_spl::token_interface::{
     close_account, CloseAccount, Mint as MintInterface, TokenAccount, TokenInterface,
 };
-use anchor_spl::token::Token;
 
-use crate::constants::{TOKEN_2022_PROGRAM_ID, VAULT_CCM_BUFFER_SEED, VAULT_ORACLE_POSITION_SEED, VAULT_SEED, VLOFI_MINT_SEED};
+use crate::constants::{
+    TOKEN_2022_PROGRAM_ID, VAULT_CCM_BUFFER_SEED, VAULT_ORACLE_POSITION_SEED, VAULT_SEED,
+    VLOFI_MINT_SEED,
+};
 use crate::errors::VaultError;
 use crate::events::VaultClosed;
 use crate::state::{ChannelVault, VaultOraclePosition};
@@ -87,11 +90,7 @@ pub fn handler(ctx: Context<CloseVault>) -> Result<()> {
     let vault_key = vault.key();
 
     // Vault signer seeds
-    let signer_seeds: &[&[&[u8]]] = &[&[
-        VAULT_SEED,
-        channel_config_key.as_ref(),
-        &[vault_bump],
-    ]];
+    let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, channel_config_key.as_ref(), &[vault_bump]]];
 
     // Close CCM buffer (Token-2022)
     let close_buffer_ctx = CpiContext::new_with_signer(

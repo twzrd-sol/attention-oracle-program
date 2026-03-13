@@ -98,13 +98,22 @@ pub fn publish_global_root(
     let is_publisher =
         protocol_state.publisher != Pubkey::default() && signer == protocol_state.publisher;
     require!(is_admin || is_publisher, OracleError::Unauthorized);
-    require!(!protocol_state.paused || is_admin, OracleError::ProtocolPaused);
+    require!(
+        !protocol_state.paused || is_admin,
+        OracleError::ProtocolPaused
+    );
 
     let cfg = &mut ctx.accounts.global_root_config;
-    require!(cfg.version == GLOBAL_ROOT_VERSION, OracleError::InvalidChannelState);
+    require!(
+        cfg.version == GLOBAL_ROOT_VERSION,
+        OracleError::InvalidChannelState
+    );
     require!(cfg.mint == protocol_state.mint, OracleError::InvalidMint);
 
-    require!(root_seq == cfg.latest_root_seq + 1, OracleError::InvalidRootSeq);
+    require!(
+        root_seq == cfg.latest_root_seq + 1,
+        OracleError::InvalidRootSeq
+    );
 
     let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
     let slot = Clock::get()?.slot;
@@ -196,11 +205,24 @@ pub fn claim_global<'info>(
     let global_cfg = &ctx.accounts.global_root_config;
 
     require!(!protocol_state.paused, OracleError::ProtocolPaused);
-    require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
-    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+    require_keys_eq!(
+        ctx.accounts.mint.key(),
+        protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(
+        proof.len() <= MAX_PROOF_LEN,
+        OracleError::InvalidProofLength
+    );
 
-    require!(global_cfg.version == GLOBAL_ROOT_VERSION, OracleError::InvalidChannelState);
-    require!(global_cfg.mint == protocol_state.mint, OracleError::InvalidMint);
+    require!(
+        global_cfg.version == GLOBAL_ROOT_VERSION,
+        OracleError::InvalidChannelState
+    );
+    require!(
+        global_cfg.mint == protocol_state.mint,
+        OracleError::InvalidMint
+    );
 
     // Look up root from circular buffer
     let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
@@ -214,7 +236,10 @@ pub fn claim_global<'info>(
         &ctx.accounts.claimer.key(),
         cumulative_total,
     );
-    require!(verify_proof(&proof, leaf, entry.root), OracleError::InvalidProof);
+    require!(
+        verify_proof(&proof, leaf, entry.root),
+        OracleError::InvalidProof
+    );
 
     // Initialize or validate claim state
     let claim_state = &mut ctx.accounts.claim_state;
@@ -226,7 +251,10 @@ pub fn claim_global<'info>(
         claim_state.claimed_total = 0;
         claim_state.last_claim_seq = 0;
     } else {
-        require!(claim_state.mint == protocol_state.mint, OracleError::InvalidClaimState);
+        require!(
+            claim_state.mint == protocol_state.mint,
+            OracleError::InvalidClaimState
+        );
         require!(
             claim_state.wallet == ctx.accounts.claimer.key(),
             OracleError::InvalidClaimState
@@ -347,11 +375,24 @@ pub fn claim_global_sponsored<'info>(
     let global_cfg = &ctx.accounts.global_root_config;
 
     require!(!protocol_state.paused, OracleError::ProtocolPaused);
-    require_keys_eq!(ctx.accounts.mint.key(), protocol_state.mint, OracleError::InvalidMint);
-    require!(proof.len() <= MAX_PROOF_LEN, OracleError::InvalidProofLength);
+    require_keys_eq!(
+        ctx.accounts.mint.key(),
+        protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(
+        proof.len() <= MAX_PROOF_LEN,
+        OracleError::InvalidProofLength
+    );
 
-    require!(global_cfg.version == GLOBAL_ROOT_VERSION, OracleError::InvalidChannelState);
-    require!(global_cfg.mint == protocol_state.mint, OracleError::InvalidMint);
+    require!(
+        global_cfg.version == GLOBAL_ROOT_VERSION,
+        OracleError::InvalidChannelState
+    );
+    require!(
+        global_cfg.mint == protocol_state.mint,
+        OracleError::InvalidMint
+    );
 
     let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
     let entry = global_cfg.roots[idx];
@@ -363,7 +404,10 @@ pub fn claim_global_sponsored<'info>(
         &ctx.accounts.claimer.key(),
         cumulative_total,
     );
-    require!(verify_proof(&proof, leaf, entry.root), OracleError::InvalidProof);
+    require!(
+        verify_proof(&proof, leaf, entry.root),
+        OracleError::InvalidProof
+    );
 
     let claim_state = &mut ctx.accounts.claim_state;
     if claim_state.version == 0 {
@@ -374,7 +418,10 @@ pub fn claim_global_sponsored<'info>(
         claim_state.claimed_total = 0;
         claim_state.last_claim_seq = 0;
     } else {
-        require!(claim_state.mint == protocol_state.mint, OracleError::InvalidClaimState);
+        require!(
+            claim_state.mint == protocol_state.mint,
+            OracleError::InvalidClaimState
+        );
         require!(
             claim_state.wallet == ctx.accounts.claimer.key(),
             OracleError::InvalidClaimState

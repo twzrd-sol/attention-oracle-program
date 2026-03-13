@@ -84,7 +84,8 @@ impl ChannelVault {
     ///
     /// pending_withdrawals is subtracted because it's already committed to queued users.
     fn net_assets(&self) -> Result<u64> {
-        let gross = self.total_staked
+        let gross = self
+            .total_staked
             .checked_add(self.pending_deposits)
             .ok_or(VaultError::MathOverflow)?
             .checked_add(self.emergency_reserve)
@@ -113,11 +114,13 @@ impl ChannelVault {
     /// Calculate shares for a deposit amount using virtual offset pattern (ERC4626).
     /// This prevents first-depositor inflation attacks.
     pub fn calculate_shares(&self, deposit_amount: u64) -> Result<u64> {
-        let total_assets = self.net_assets()?
+        let total_assets = self
+            .net_assets()?
             .checked_add(VIRTUAL_ASSETS)
             .ok_or(VaultError::MathOverflow)?;
 
-        let total_supply = self.total_shares
+        let total_supply = self
+            .total_shares
             .checked_add(VIRTUAL_SHARES)
             .ok_or(VaultError::MathOverflow)?;
 
@@ -133,11 +136,13 @@ impl ChannelVault {
 
     /// Calculate CCM amount for share redemption using virtual offset pattern.
     pub fn calculate_redeem_amount(&self, shares: u64) -> Result<u64> {
-        let total_assets = self.net_assets()?
+        let total_assets = self
+            .net_assets()?
             .checked_add(VIRTUAL_ASSETS)
             .ok_or(VaultError::MathOverflow)?;
 
-        let total_supply = self.total_shares
+        let total_supply = self
+            .total_shares
             .checked_add(VIRTUAL_SHARES)
             .ok_or(VaultError::MathOverflow)?;
 
@@ -189,7 +194,8 @@ impl ChannelVault {
         let space = cap.saturating_sub(self.emergency_reserve);
         let to_add = amount.min(space);
 
-        self.emergency_reserve = self.emergency_reserve
+        self.emergency_reserve = self
+            .emergency_reserve
             .checked_add(to_add)
             .ok_or(VaultError::MathOverflow)?;
 
@@ -232,7 +238,7 @@ impl VaultOraclePosition {
         + 32  // oracle_nft_ata
         + 1   // is_active
         + 8   // stake_amount
-        + 8;  // lock_end_slot
+        + 8; // lock_end_slot
 }
 
 // =============================================================================
@@ -273,7 +279,7 @@ impl WithdrawRequest {
         + 8   // ccm_amount
         + 8   // request_slot
         + 8   // completion_slot
-        + 1;  // completed
+        + 1; // completed
 }
 
 // =============================================================================
@@ -305,7 +311,7 @@ impl UserVaultState {
         + 32  // vault
         + 8   // next_request_id
         + 8   // total_deposited
-        + 8;  // total_redeemed
+        + 8; // total_redeemed
 }
 
 // =============================================================================

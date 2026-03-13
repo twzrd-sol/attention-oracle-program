@@ -1,11 +1,16 @@
 //! Admin instructions for vault management.
 
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint as MintInterface, TokenAccount, TokenInterface, TransferChecked};
+use anchor_spl::token_interface::{
+    Mint as MintInterface, TokenAccount, TokenInterface, TransferChecked,
+};
 
 use crate::constants::{TOKEN_2022_PROGRAM_ID, VAULT_ORACLE_POSITION_SEED, VAULT_SEED};
 use crate::errors::VaultError;
-use crate::events::{AdminUpdated, CapitalInjected, LockDurationSlotsUpdated, OraclePositionSynced, VaultPaused, VaultResumed, WithdrawQueueSlotsUpdated};
+use crate::events::{
+    AdminUpdated, CapitalInjected, LockDurationSlotsUpdated, OraclePositionSynced, VaultPaused,
+    VaultResumed, WithdrawQueueSlotsUpdated,
+};
 use crate::state::{ChannelVault, VaultOraclePosition};
 
 use token_2022::UserChannelStake;
@@ -57,10 +62,7 @@ pub fn resume(ctx: Context<AdminAction>) -> Result<()> {
 
 /// Update admin authority.
 pub fn update_admin(ctx: Context<AdminAction>, new_admin: Pubkey) -> Result<()> {
-    require!(
-        new_admin != Pubkey::default(),
-        VaultError::InvalidPubkey
-    );
+    require!(new_admin != Pubkey::default(), VaultError::InvalidPubkey);
 
     let vault = &mut ctx.accounts.vault;
     let old_admin = vault.admin;
@@ -299,7 +301,8 @@ pub fn inject_capital(ctx: Context<InjectCapital>, amount: u64) -> Result<()> {
         .ok_or(VaultError::MathOverflow)?;
 
     // Check if vault is now solvent
-    let gross_assets = vault.total_staked
+    let gross_assets = vault
+        .total_staked
         .checked_add(vault.pending_deposits)
         .ok_or(VaultError::MathOverflow)?
         .checked_add(vault.emergency_reserve)

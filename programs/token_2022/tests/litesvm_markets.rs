@@ -30,9 +30,9 @@ use spl_token_2022::{
 use std::path::Path;
 
 use token_2022::{
-    GlobalRootConfig, MarketState, ProtocolState, RootEntry,
-    CUMULATIVE_ROOT_HISTORY, GLOBAL_ROOT_SEED, MARKET_MINT_AUTHORITY_SEED, MARKET_NO_MINT_SEED,
-    MARKET_STATE_SEED, MARKET_VAULT_SEED, MARKET_YES_MINT_SEED, PROTOCOL_SEED,
+    GlobalRootConfig, MarketState, ProtocolState, RootEntry, CUMULATIVE_ROOT_HISTORY,
+    GLOBAL_ROOT_SEED, MARKET_MINT_AUTHORITY_SEED, MARKET_NO_MINT_SEED, MARKET_STATE_SEED,
+    MARKET_VAULT_SEED, MARKET_YES_MINT_SEED, PROTOCOL_SEED,
 };
 
 const GLOBAL_V4_DOMAIN: &[u8] = b"TWZRD:GLOBAL_V4";
@@ -105,7 +105,11 @@ fn derive_market_vault(mint: &Pubkey, market_id: u64) -> (Pubkey, u8) {
 
 fn derive_market_yes_mint(mint: &Pubkey, market_id: u64) -> (Pubkey, u8) {
     Pubkey::find_program_address(
-        &[MARKET_YES_MINT_SEED, mint.as_ref(), &market_id.to_le_bytes()],
+        &[
+            MARKET_YES_MINT_SEED,
+            mint.as_ref(),
+            &market_id.to_le_bytes(),
+        ],
         &program_id(),
     )
 }
@@ -510,11 +514,17 @@ fn test_market_token_pda_derivation() {
 
     // Different market_id → different PDAs
     let (vault_other, _) = derive_market_vault(&mint, 99);
-    assert_ne!(vault, vault_other, "Different market IDs must produce different vault PDAs");
+    assert_ne!(
+        vault, vault_other,
+        "Different market IDs must produce different vault PDAs"
+    );
 
     // Different mint → different PDAs
     let (vault_other_mint, _) = derive_market_vault(&Pubkey::new_unique(), market_id);
-    assert_ne!(vault, vault_other_mint, "Different mints must produce different vault PDAs");
+    assert_ne!(
+        vault, vault_other_mint,
+        "Different mints must produce different vault PDAs"
+    );
 
     println!("Market token PDAs: 5 unique, deterministic, collision-resistant");
 }
@@ -532,9 +542,15 @@ fn test_market_token_pdas_isolated_from_state_pda() {
 
     // Token PDAs must never collide with the market state PDA
     assert_ne!(state_pda, vault_pda, "Vault PDA must differ from state PDA");
-    assert_ne!(state_pda, yes_pda, "YES mint PDA must differ from state PDA");
+    assert_ne!(
+        state_pda, yes_pda,
+        "YES mint PDA must differ from state PDA"
+    );
     assert_ne!(state_pda, no_pda, "NO mint PDA must differ from state PDA");
-    assert_ne!(state_pda, auth_pda, "Mint authority PDA must differ from state PDA");
+    assert_ne!(
+        state_pda, auth_pda,
+        "Mint authority PDA must differ from state PDA"
+    );
 }
 
 // =============================================================================
@@ -554,10 +570,19 @@ fn test_fee_aware_minting_basic() {
     let mut market = MarketSim::new(50_000_000_000);
     let (net_deposited, shares) = market.mint_shares(deposit, FEE_BPS).unwrap();
 
-    assert_eq!(net_deposited, net, "Net deposited must match fee calculation");
+    assert_eq!(
+        net_deposited, net,
+        "Net deposited must match fee calculation"
+    );
     assert_eq!(shares, net, "Shares minted must equal net deposited (1:1)");
-    assert_eq!(market.vault_balance, net, "Vault balance must equal net deposited");
-    assert_eq!(market.yes_supply, net, "YES supply must equal net deposited");
+    assert_eq!(
+        market.vault_balance, net,
+        "Vault balance must equal net deposited"
+    );
+    assert_eq!(
+        market.yes_supply, net,
+        "YES supply must equal net deposited"
+    );
     assert_eq!(market.no_supply, net, "NO supply must equal net deposited");
 }
 
@@ -582,10 +607,17 @@ fn test_fee_aware_minting_snapshot_pattern() {
     let vault_after = vault_before + (deposit - fee);
 
     let net_received = vault_after.checked_sub(vault_before).unwrap();
-    assert_eq!(net_received, deposit - fee, "Snapshot correctly captures net");
+    assert_eq!(
+        net_received,
+        deposit - fee,
+        "Snapshot correctly captures net"
+    );
 
     // Shares minted should be exactly net_received
-    assert_eq!(net_received, 199_000_000_000, "200 CCM - 1 CCM fee = 199 CCM");
+    assert_eq!(
+        net_received, 199_000_000_000,
+        "200 CCM - 1 CCM fee = 199 CCM"
+    );
 }
 
 #[test]
@@ -595,11 +627,11 @@ fn test_fee_aware_minting_multiple_deposits() {
 
     // 5 different deposit amounts
     let deposits = [
-        10_000_000_000u64,  // 10 CCM
-        50_000_000_000,     // 50 CCM
-        1_000_000_000,      // 1 CCM
-        100_000_000_000,    // 100 CCM
-        500_000_000,        // 0.5 CCM
+        10_000_000_000u64, // 10 CCM
+        50_000_000_000,    // 50 CCM
+        1_000_000_000,     // 1 CCM
+        100_000_000_000,   // 100 CCM
+        500_000_000,       // 0.5 CCM
     ];
 
     for deposit in &deposits {
@@ -608,9 +640,18 @@ fn test_fee_aware_minting_multiple_deposits() {
     }
 
     // Conservation invariant: vault == YES supply == NO supply == sum(net)
-    assert_eq!(market.vault_balance, total_net, "Vault must equal sum of nets");
-    assert_eq!(market.yes_supply, total_net, "YES supply must equal sum of nets");
-    assert_eq!(market.no_supply, total_net, "NO supply must equal sum of nets");
+    assert_eq!(
+        market.vault_balance, total_net,
+        "Vault must equal sum of nets"
+    );
+    assert_eq!(
+        market.yes_supply, total_net,
+        "YES supply must equal sum of nets"
+    );
+    assert_eq!(
+        market.no_supply, total_net,
+        "NO supply must equal sum of nets"
+    );
 
     // Verify YES == NO at all times (conditional token conservation)
     assert_eq!(
@@ -657,7 +698,10 @@ fn test_conditional_token_conservation_after_mints() {
 
     // Invariant: YES == NO == vault at all times
     assert_eq!(market.yes_supply, market.no_supply, "YES must equal NO");
-    assert_eq!(market.vault_balance, market.yes_supply, "Vault must equal YES supply");
+    assert_eq!(
+        market.vault_balance, market.yes_supply,
+        "Vault must equal YES supply"
+    );
 }
 
 #[test]
@@ -673,13 +717,28 @@ fn test_conditional_token_conservation_after_redeems() {
 
     // Remaining supplies
     let remaining = net - redeem_shares;
-    assert_eq!(market.yes_supply, remaining, "YES supply after partial redeem");
-    assert_eq!(market.no_supply, remaining, "NO supply after partial redeem");
-    assert_eq!(market.vault_balance, remaining, "Vault after partial redeem");
+    assert_eq!(
+        market.yes_supply, remaining,
+        "YES supply after partial redeem"
+    );
+    assert_eq!(
+        market.no_supply, remaining,
+        "NO supply after partial redeem"
+    );
+    assert_eq!(
+        market.vault_balance, remaining,
+        "Vault after partial redeem"
+    );
 
     // Invariant still holds
-    assert_eq!(market.yes_supply, market.no_supply, "YES must equal NO after redeem");
-    assert_eq!(market.vault_balance, market.yes_supply, "Vault must equal YES after redeem");
+    assert_eq!(
+        market.yes_supply, market.no_supply,
+        "YES must equal NO after redeem"
+    );
+    assert_eq!(
+        market.vault_balance, market.yes_supply,
+        "Vault must equal YES after redeem"
+    );
 }
 
 #[test]
@@ -691,9 +750,18 @@ fn test_conditional_token_conservation_mint_then_redeem_all() {
     // Redeem ALL shares
     market.redeem_shares(net, FEE_BPS).unwrap();
 
-    assert_eq!(market.vault_balance, 0, "Vault should be empty after full redeem");
-    assert_eq!(market.yes_supply, 0, "YES supply should be 0 after full redeem");
-    assert_eq!(market.no_supply, 0, "NO supply should be 0 after full redeem");
+    assert_eq!(
+        market.vault_balance, 0,
+        "Vault should be empty after full redeem"
+    );
+    assert_eq!(
+        market.yes_supply, 0,
+        "YES supply should be 0 after full redeem"
+    );
+    assert_eq!(
+        market.no_supply, 0,
+        "NO supply should be 0 after full redeem"
+    );
 }
 
 // =============================================================================
@@ -707,7 +775,10 @@ fn test_redeem_shares_outbound_fee() {
     let outbound_fee = transfer_fee(shares, FEE_BPS);
     let net_returned = net_after_fee(shares, FEE_BPS);
 
-    assert_eq!(outbound_fee, 50_000_000, "Outbound fee on 10 CCM = 0.05 CCM");
+    assert_eq!(
+        outbound_fee, 50_000_000,
+        "Outbound fee on 10 CCM = 0.05 CCM"
+    );
     assert_eq!(net_returned, 9_950_000_000, "Redeemer gets 9.95 CCM");
 
     // The difference (fee) becomes protocol revenue via Token-2022 withheld fees
@@ -759,8 +830,14 @@ fn test_settlement_yes_outcome() {
     // YES holder settles
     let returned = market.settle(net, true, FEE_BPS).unwrap();
     let expected_net = net_after_fee(net, FEE_BPS);
-    assert_eq!(returned, expected_net, "Settlement should return net after outbound fee");
-    assert_eq!(market.vault_balance, 0, "Vault should be empty after full settlement");
+    assert_eq!(
+        returned, expected_net,
+        "Settlement should return net after outbound fee"
+    );
+    assert_eq!(
+        market.vault_balance, 0,
+        "Vault should be empty after full settlement"
+    );
     assert_eq!(market.yes_supply, 0, "YES supply should be 0");
 }
 
@@ -778,7 +855,10 @@ fn test_settlement_no_outcome() {
     // NO holder settles
     let returned = market.settle(net, false, FEE_BPS).unwrap();
     assert!(returned > 0, "NO holder should receive CCM");
-    assert_eq!(market.vault_balance, 0, "Vault empty after full NO settlement");
+    assert_eq!(
+        market.vault_balance, 0,
+        "Vault empty after full NO settlement"
+    );
     assert_eq!(market.no_supply, 0, "NO supply should be 0");
 }
 
@@ -825,9 +905,16 @@ fn test_settlement_partial() {
     market.settle(half, true, FEE_BPS).unwrap();
 
     // Check remaining state
-    assert_eq!(market.vault_balance, net - half, "Half should remain in vault");
+    assert_eq!(
+        market.vault_balance,
+        net - half,
+        "Half should remain in vault"
+    );
     assert_eq!(market.yes_supply, net - half, "Half of YES should remain");
-    assert_eq!(market.no_supply, net, "NO supply unchanged (losers don't settle)");
+    assert_eq!(
+        market.no_supply, net,
+        "NO supply unchanged (losers don't settle)"
+    );
 
     // Settle remaining half
     market.settle(net - half, true, FEE_BPS).unwrap();
@@ -862,8 +949,8 @@ fn test_market_lifecycle_happy_path() {
     let mut market = MarketSim::new(100_000_000_000); // 100 CCM target
 
     // Multiple users deposit
-    let (net_a, _) = market.mint_shares(50_000_000_000, FEE_BPS).unwrap();  // User A: 50 CCM
-    let (net_b, _) = market.mint_shares(30_000_000_000, FEE_BPS).unwrap();  // User B: 30 CCM
+    let (net_a, _) = market.mint_shares(50_000_000_000, FEE_BPS).unwrap(); // User A: 50 CCM
+    let (net_b, _) = market.mint_shares(30_000_000_000, FEE_BPS).unwrap(); // User B: 30 CCM
 
     let total_vault = net_a + net_b;
     assert_eq!(market.vault_balance, total_vault);
@@ -956,13 +1043,19 @@ fn test_protocol_revenue_from_market_activity() {
 
     // Total protocol revenue from one round-trip
     let total_revenue = inbound_fee + outbound_fee;
-    assert_eq!(total_revenue, 997_500_000, "~1 CCM total fee revenue on 100 CCM round-trip");
+    assert_eq!(
+        total_revenue, 997_500_000,
+        "~1 CCM total fee revenue on 100 CCM round-trip"
+    );
 
     // Effective round-trip fee as basis points
     let effective_bps = total_revenue * 10_000 / deposit;
     assert_eq!(effective_bps, 99, "~99bps effective round-trip fee");
 
-    println!("Protocol revenue: {} CCM per 100 CCM round-trip (~99bps)", total_revenue as f64 / 1e9);
+    println!(
+        "Protocol revenue: {} CCM per 100 CCM round-trip (~99bps)",
+        total_revenue as f64 / 1e9
+    );
 }
 
 #[test]
@@ -1019,18 +1112,23 @@ fn test_market_state_account_size() {
     // + creator_wallet(32) + target(8) + resolution_root_seq(8)
     // + resolution_cumulative_total(8) + created_slot(8) + resolved_slot(8)
     // + vault(32) + yes_mint(32) + no_mint(32) + mint_authority(32)
-    let expected = 8 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8
-        + 32 + 32 + 32 + 32;
+    let expected =
+        8 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 32 + 32 + 32 + 32;
     assert_eq!(expected, 288, "Manual calculation should be 288 bytes");
     assert_eq!(
-        MarketState::LEN, expected,
+        MarketState::LEN,
+        expected,
         "MarketState::LEN must match manual calculation"
     );
 
     // Rent cost (using approximate lamports per byte)
     let rent_per_byte: u64 = 6960; // approximate
     let rent = MarketState::LEN as u64 * rent_per_byte;
-    println!("  MarketState rent: ~{} lamports (~{:.4} SOL)", rent, rent as f64 / 1e9);
+    println!(
+        "  MarketState rent: ~{} lamports (~{:.4} SOL)",
+        rent,
+        rent as f64 / 1e9
+    );
 }
 
 // =============================================================================
@@ -1122,9 +1220,15 @@ fn test_chaos_cross_market_token_isolation() {
     let (no_b, _) = derive_market_no_mint(&mint, market_id_b);
 
     // Cross-market tokens must have different mints
-    assert_ne!(yes_a, yes_b, "SECURITY: YES mints must differ across markets");
+    assert_ne!(
+        yes_a, yes_b,
+        "SECURITY: YES mints must differ across markets"
+    );
     assert_ne!(no_a, no_b, "SECURITY: NO mints must differ across markets");
-    assert_ne!(yes_a, no_a, "YES and NO mints must differ within same market");
+    assert_ne!(
+        yes_a, no_a,
+        "YES and NO mints must differ within same market"
+    );
     assert_ne!(yes_a, no_b, "Cross-market cross-side mints must differ");
 
     println!("CHAOS: cross-market token isolation confirmed via PDA uniqueness");
@@ -1170,7 +1274,10 @@ fn test_chaos_vault_drainage_attack() {
 
     // User B settles their correct share
     market.settle(net_b, true, FEE_BPS).unwrap();
-    assert_eq!(market.vault_balance, 0, "Vault fully drained after both settle");
+    assert_eq!(
+        market.vault_balance, 0,
+        "Vault fully drained after both settle"
+    );
 
     println!("CHAOS: vault drainage attack rejected");
 }
@@ -1258,6 +1365,7 @@ fn test_litesvm_create_market_and_resolve() {
         admin: admin.pubkey(),
         publisher: admin.pubkey(),
         treasury: Pubkey::new_unique(),
+        oracle_authority: Pubkey::new_unique(),
         mint,
         paused: false,
         require_receipt: false,
@@ -1378,7 +1486,7 @@ fn test_litesvm_create_market_and_resolve() {
     let disc_resolve = compute_discriminator("resolve_market");
     let mut resolve_data = disc_resolve.to_vec();
     resolve_data.extend_from_slice(&creator_total.to_le_bytes()); // cumulative_total
-    // Serialize proof as Borsh Vec: length prefix (u32) + elements
+                                                                  // Serialize proof as Borsh Vec: length prefix (u32) + elements
     resolve_data.extend_from_slice(&(proof.len() as u32).to_le_bytes());
     for node in &proof {
         resolve_data.extend_from_slice(node);
@@ -1433,10 +1541,7 @@ fn test_litesvm_create_market_and_resolve() {
     let tx3 = Transaction::new(&[&admin], message3, blockhash3);
 
     let result3 = svm.send_transaction(tx3);
-    assert!(
-        result3.is_err(),
-        "Double resolution must fail"
-    );
+    assert!(result3.is_err(), "Double resolution must fail");
 
     println!("LiteSVM: double resolution correctly rejected");
     println!("LiteSVM integration: create_market + resolve_market + double-resolve guard: PASS");
@@ -1542,16 +1647,14 @@ fn find_spl_elf(prefix: &str) -> Option<Vec<u8>> {
 
 /// Load the Token-2022 SPL program from litesvm's bundled ELF.
 fn load_token_2022_spl_program(svm: &mut LiteSVM) -> Result<(), String> {
-    let bytes =
-        find_spl_elf("spl_token_2022").ok_or("Token-2022 ELF not found in litesvm")?;
+    let bytes = find_spl_elf("spl_token_2022").ok_or("Token-2022 ELF not found in litesvm")?;
     svm.add_program(spl_token_2022::id(), &bytes)
         .map_err(|e| format!("{e:?}"))
 }
 
 /// Load the standard SPL Token program from litesvm's bundled ELF.
 fn load_standard_spl_token_program(svm: &mut LiteSVM) -> Result<(), String> {
-    let bytes =
-        find_spl_elf("spl_token-").ok_or("SPL Token ELF not found in litesvm")?;
+    let bytes = find_spl_elf("spl_token-").ok_or("SPL Token ELF not found in litesvm")?;
     svm.add_program(spl_token_program_id(), &bytes)
         .map_err(|e| format!("{e:?}"))
 }
@@ -1560,12 +1663,7 @@ fn load_standard_spl_token_program(svm: &mut LiteSVM) -> Result<(), String> {
 /// This uses the actual Token-2022 program instructions to ensure the account
 /// data layout (AccountType discriminator, TLV extension metadata) is exactly
 /// what the program expects during deserialization.
-fn create_ccm_mint_via_cpi(
-    svm: &mut LiteSVM,
-    payer: &Keypair,
-    mint_kp: &Keypair,
-    fee_bps: u16,
-) {
+fn create_ccm_mint_via_cpi(svm: &mut LiteSVM, payer: &Keypair, mint_kp: &Keypair, fee_bps: u16) {
     use spl_token_2022::extension::transfer_fee;
 
     let extensions = &[ExtensionType::TransferFeeConfig];
@@ -1789,6 +1887,7 @@ fn setup_market_env() -> Option<MarketTestEnv> {
         admin: admin.pubkey(),
         publisher: admin.pubkey(),
         treasury: Pubkey::new_unique(),
+        oracle_authority: Pubkey::new_unique(),
         mint: ccm_mint,
         paused: false,
         require_receipt: false,
@@ -1903,17 +2002,17 @@ fn setup_market_env() -> Option<MarketTestEnv> {
         program_id: program_id(),
         accounts: vec![
             AccountMeta::new(admin.pubkey(), true),               // payer
-            AccountMeta::new_readonly(protocol_pda, false),        // protocol_state
-            AccountMeta::new(market_state_pda, false),             // market_state
-            AccountMeta::new_readonly(ccm_mint, false),            // ccm_mint
-            AccountMeta::new(vault_pda, false),                    // vault (init)
-            AccountMeta::new(yes_mint_pda, false),                 // yes_mint (init)
-            AccountMeta::new(no_mint_pda, false),                  // no_mint (init)
-            AccountMeta::new_readonly(mint_authority_pda, false),  // mint_authority
+            AccountMeta::new_readonly(protocol_pda, false),       // protocol_state
+            AccountMeta::new(market_state_pda, false),            // market_state
+            AccountMeta::new_readonly(ccm_mint, false),           // ccm_mint
+            AccountMeta::new(vault_pda, false),                   // vault (init)
+            AccountMeta::new(yes_mint_pda, false),                // yes_mint (init)
+            AccountMeta::new(no_mint_pda, false),                 // no_mint (init)
+            AccountMeta::new_readonly(mint_authority_pda, false), // mint_authority
             AccountMeta::new_readonly(spl_token_2022::id(), false), // token_program
             AccountMeta::new_readonly(spl_token_program_id(), false), // standard_token_program
-            AccountMeta::new_readonly(system_program::ID, false),  // system_program
-            AccountMeta::new_readonly(sysvar::rent::ID, false),    // rent
+            AccountMeta::new_readonly(system_program::ID, false), // system_program
+            AccountMeta::new_readonly(sysvar::rent::ID, false),   // rent
         ],
         data: init_data,
     };
@@ -2065,12 +2164,13 @@ fn test_market_fee_aware_minting() {
 
     // Depositor's CCM should be fully drained
     let depositor_ccm_bal = read_token_amount(&env.svm, &env.depositor_ccm_addr);
-    assert_eq!(depositor_ccm_bal, 0, "Depositor CCM should be 0 after full deposit");
+    assert_eq!(
+        depositor_ccm_bal, 0,
+        "Depositor CCM should be 0 after full deposit"
+    );
 
     println!("LiteSVM: Fee-aware minting PASSED");
-    println!(
-        "  Gross: 1,000,000 CCM | Fee: 5,000 CCM (50bps) | Net: 995,000 CCM"
-    );
+    println!("  Gross: 1,000,000 CCM | Fee: 5,000 CCM (50bps) | Net: 995,000 CCM");
     println!(
         "  Vault={} | YES={} | NO={} (all 995,000 CCM)",
         vault_bal / 1_000_000_000,
@@ -2229,7 +2329,7 @@ fn test_market_redeem_and_settle() {
             AccountMeta::new_readonly(env.market_state_pda, false),
             AccountMeta::new_readonly(env.ccm_mint, false),
             AccountMeta::new(env.vault_pda, false),
-            AccountMeta::new(env.yes_mint_pda, false),  // winning_mint (YES wins)
+            AccountMeta::new(env.yes_mint_pda, false), // winning_mint (YES wins)
             AccountMeta::new(env.depositor_yes_addr, false), // settler_winning
             AccountMeta::new(env.depositor_ccm_addr, false), // settler_ccm
             AccountMeta::new_readonly(env.mint_authority_pda, false),
@@ -2249,8 +2349,14 @@ fn test_market_redeem_and_settle() {
     let vault_final = read_token_amount(&env.svm, &env.vault_pda);
     let yes_final = read_token_amount(&env.svm, &env.depositor_yes_addr);
 
-    assert_eq!(vault_final, 0, "Vault should be empty after full settlement");
-    assert_eq!(yes_final, 0, "All YES shares should be burned after settlement");
+    assert_eq!(
+        vault_final, 0,
+        "Vault should be empty after full settlement"
+    );
+    assert_eq!(
+        yes_final, 0,
+        "All YES shares should be burned after settlement"
+    );
 
     // Verify: depositor received settlement CCM (net after outbound fee)
     let depositor_ccm_final = read_token_amount(&env.svm, &env.depositor_ccm_addr);
@@ -2291,16 +2397,19 @@ fn test_market_redeem_and_settle_with_fees() {
 
     // Phase 0: Mint shares — 1,000,000 CCM gross → 995,000 CCM net (50bps fee)
     let deposit_gross = 1_000_000_000_000_000u64; // 1,000,000 CCM
-    let expected_net = 995_000_000_000_000u64;    // 995,000 CCM
+    let expected_net = 995_000_000_000_000u64; // 995,000 CCM
 
     exec_mint_shares(&mut env, deposit_gross);
 
     let vault_pre = read_token_amount(&env.svm, &env.vault_pda);
-    let yes_pre   = read_token_amount(&env.svm, &env.depositor_yes_addr);
-    let no_pre    = read_token_amount(&env.svm, &env.depositor_no_addr);
-    assert_eq!(vault_pre, expected_net, "Pre-redeem: vault must be 995,000 CCM");
-    assert_eq!(yes_pre,   expected_net, "Pre-redeem: YES must be 995,000 CCM");
-    assert_eq!(no_pre,    expected_net, "Pre-redeem: NO must be 995,000 CCM");
+    let yes_pre = read_token_amount(&env.svm, &env.depositor_yes_addr);
+    let no_pre = read_token_amount(&env.svm, &env.depositor_no_addr);
+    assert_eq!(
+        vault_pre, expected_net,
+        "Pre-redeem: vault must be 995,000 CCM"
+    );
+    assert_eq!(yes_pre, expected_net, "Pre-redeem: YES must be 995,000 CCM");
+    assert_eq!(no_pre, expected_net, "Pre-redeem: NO must be 995,000 CCM");
     println!("  mint_shares(1,000,000 CCM gross → 995,000 net): OK");
 
     // =====================================================================
@@ -2334,7 +2443,7 @@ fn test_market_redeem_and_settle_with_fees() {
 
     let bh_r = env.svm.latest_blockhash();
     let msg_r = Message::new(&[redeem_ix], Some(&env.depositor.pubkey()));
-    let tx_r  = Transaction::new(&[&env.depositor], msg_r, bh_r);
+    let tx_r = Transaction::new(&[&env.depositor], msg_r, bh_r);
     assert!(
         env.svm.send_transaction(tx_r).is_ok(),
         "redeem_shares(495K) must succeed"
@@ -2395,7 +2504,7 @@ fn test_market_redeem_and_settle_with_fees() {
 
     let bh_v = env.svm.latest_blockhash();
     let msg_v = Message::new(&[resolve_ix], Some(&env.admin.pubkey()));
-    let tx_v  = Transaction::new(&[&env.admin], msg_v, bh_v);
+    let tx_v = Transaction::new(&[&env.admin], msg_v, bh_v);
     assert!(
         env.svm.send_transaction(tx_v).is_ok(),
         "resolve_market must succeed"
@@ -2419,9 +2528,9 @@ fn test_market_redeem_and_settle_with_fees() {
             AccountMeta::new_readonly(env.market_state_pda, false),
             AccountMeta::new_readonly(env.ccm_mint, false),
             AccountMeta::new(env.vault_pda, false),
-            AccountMeta::new(env.yes_mint_pda, false),        // winning_mint (YES wins)
-            AccountMeta::new(env.depositor_yes_addr, false),  // settler_winning
-            AccountMeta::new(env.depositor_ccm_addr, false),  // settler_ccm
+            AccountMeta::new(env.yes_mint_pda, false), // winning_mint (YES wins)
+            AccountMeta::new(env.depositor_yes_addr, false), // settler_winning
+            AccountMeta::new(env.depositor_ccm_addr, false), // settler_ccm
             AccountMeta::new_readonly(env.mint_authority_pda, false),
             AccountMeta::new_readonly(spl_token_2022::id(), false),
             AccountMeta::new_readonly(spl_token_program_id(), false),
@@ -2431,7 +2540,7 @@ fn test_market_redeem_and_settle_with_fees() {
 
     let bh_s = env.svm.latest_blockhash();
     let msg_s = Message::new(&[settle_ix], Some(&env.depositor.pubkey()));
-    let tx_s  = Transaction::new(&[&env.depositor], msg_s, bh_s);
+    let tx_s = Transaction::new(&[&env.depositor], msg_s, bh_s);
     assert!(
         env.svm.send_transaction(tx_s).is_ok(),
         "settle(500K YES) must succeed"
@@ -2546,6 +2655,7 @@ fn setup_market_env_v2() -> Option<MarketTestEnv> {
         admin: admin.pubkey(),
         publisher: admin.pubkey(),
         treasury: Pubkey::new_unique(),
+        oracle_authority: Pubkey::new_unique(),
         mint: ccm_mint,
         paused: false,
         require_receipt: false,
@@ -2654,16 +2764,16 @@ fn setup_market_env_v2() -> Option<MarketTestEnv> {
         program_id: program_id(),
         accounts: vec![
             AccountMeta::new(admin.pubkey(), true),               // payer
-            AccountMeta::new_readonly(protocol_pda, false),        // protocol_state
-            AccountMeta::new(market_state_pda, false),             // market_state
-            AccountMeta::new_readonly(ccm_mint, false),            // ccm_mint
-            AccountMeta::new(vault_pda, false),                    // vault (init)
-            AccountMeta::new(yes_mint_pda, false),                 // yes_mint (manual CPI)
-            AccountMeta::new(no_mint_pda, false),                  // no_mint (manual CPI)
-            AccountMeta::new_readonly(mint_authority_pda, false),  // mint_authority
+            AccountMeta::new_readonly(protocol_pda, false),       // protocol_state
+            AccountMeta::new(market_state_pda, false),            // market_state
+            AccountMeta::new_readonly(ccm_mint, false),           // ccm_mint
+            AccountMeta::new(vault_pda, false),                   // vault (init)
+            AccountMeta::new(yes_mint_pda, false),                // yes_mint (manual CPI)
+            AccountMeta::new(no_mint_pda, false),                 // no_mint (manual CPI)
+            AccountMeta::new_readonly(mint_authority_pda, false), // mint_authority
             AccountMeta::new_readonly(spl_token_2022::id(), false), // token_program (Token-2022 only)
-            AccountMeta::new_readonly(system_program::ID, false),  // system_program
-            AccountMeta::new_readonly(sysvar::rent::ID, false),    // rent
+            AccountMeta::new_readonly(system_program::ID, false),   // system_program
+            AccountMeta::new_readonly(sysvar::rent::ID, false),     // rent
         ],
         data: init_data,
     };
@@ -2851,7 +2961,10 @@ fn test_v2_market_lifecycle() {
     let bh = env.svm.latest_blockhash();
     let msg = Message::new(&[resolve_ix], Some(&env.admin.pubkey()));
     let tx = Transaction::new(&[&env.admin], msg, bh);
-    assert!(env.svm.send_transaction(tx).is_ok(), "V2 resolve_market must succeed");
+    assert!(
+        env.svm.send_transaction(tx).is_ok(),
+        "V2 resolve_market must succeed"
+    );
     println!("  V2 resolve_market(YES wins): OK");
 
     // Phase 3: Settle all winning YES shares
@@ -2867,9 +2980,9 @@ fn test_v2_market_lifecycle() {
             AccountMeta::new_readonly(env.market_state_pda, false),
             AccountMeta::new_readonly(env.ccm_mint, false),
             AccountMeta::new(env.vault_pda, false),
-            AccountMeta::new(env.yes_mint_pda, false),        // winning_mint
-            AccountMeta::new(env.depositor_yes_addr, false),  // settler_winning
-            AccountMeta::new(env.depositor_ccm_addr, false),  // settler_ccm
+            AccountMeta::new(env.yes_mint_pda, false), // winning_mint
+            AccountMeta::new(env.depositor_yes_addr, false), // settler_winning
+            AccountMeta::new(env.depositor_ccm_addr, false), // settler_ccm
             AccountMeta::new_readonly(env.mint_authority_pda, false),
             AccountMeta::new_readonly(spl_token_2022::id(), false), // token_program
             AccountMeta::new_readonly(spl_token_2022::id(), false), // outcome_token_program
@@ -2880,7 +2993,10 @@ fn test_v2_market_lifecycle() {
     let bh = env.svm.latest_blockhash();
     let msg = Message::new(&[settle_ix], Some(&env.depositor.pubkey()));
     let tx = Transaction::new(&[&env.depositor], msg, bh);
-    assert!(env.svm.send_transaction(tx).is_ok(), "V2 settle must succeed");
+    assert!(
+        env.svm.send_transaction(tx).is_ok(),
+        "V2 settle must succeed"
+    );
 
     let vault_final = read_token_amount(&env.svm, &env.vault_pda);
     let yes_final = read_token_amount(&env.svm, &env.depositor_yes_addr);
@@ -2913,7 +3029,9 @@ fn test_v2_close_market_mints() {
     let mut data = disc.to_vec();
     data.extend_from_slice(&env.creator_total.to_le_bytes());
     data.extend_from_slice(&(proof.len() as u32).to_le_bytes());
-    for node in &proof { data.extend_from_slice(node); }
+    for node in &proof {
+        data.extend_from_slice(node);
+    }
 
     let ix = Instruction {
         program_id: program_id(),
@@ -2971,7 +3089,10 @@ fn test_v2_close_market_mints() {
     let bh = env.svm.latest_blockhash();
     let msg = Message::new(&[burn_no_ix], Some(&env.depositor.pubkey()));
     let tx = Transaction::new(&[&env.depositor], msg, bh);
-    assert!(env.svm.send_transaction(tx).is_ok(), "burn loser NO tokens must succeed");
+    assert!(
+        env.svm.send_transaction(tx).is_ok(),
+        "burn loser NO tokens must succeed"
+    );
     println!("  V2 burned remaining NO tokens (loser side): OK");
 
     // Record YES/NO mint lamports before close
@@ -3028,7 +3149,10 @@ fn test_v2_close_market_mints() {
         expected_rent,
     );
 
-    println!("  V2 close_market_mints: OK — rent reclaimed: {} lamports (expected ~{})", rent_reclaimed, expected_rent);
+    println!(
+        "  V2 close_market_mints: OK — rent reclaimed: {} lamports (expected ~{})",
+        rent_reclaimed, expected_rent
+    );
     println!("LiteSVM: V2 close_market_mints PASSED");
 }
 
@@ -3080,7 +3204,11 @@ fn test_v2_redeem_shares() {
     let msg = Message::new(&[redeem_ix], Some(&env.depositor.pubkey()));
     let tx = Transaction::new(&[&env.depositor], msg, bh);
     let result = env.svm.send_transaction(tx);
-    assert!(result.is_ok(), "V2 redeem_shares failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "V2 redeem_shares failed: {:?}",
+        result.err()
+    );
 
     // Verify: equal YES+NO burned, vault decreased
     let remaining = expected_net - redeem_amount;
@@ -3088,16 +3216,35 @@ fn test_v2_redeem_shares() {
     let no_post = read_token_amount(&env.svm, &env.depositor_no_addr);
     let vault_post = read_token_amount(&env.svm, &env.vault_pda);
 
-    assert_eq!(yes_post, remaining, "V2 YES should be {} after redeem", remaining);
-    assert_eq!(no_post, remaining, "V2 NO should be {} after redeem", remaining);
-    assert_eq!(vault_post, remaining, "V2 vault should be {} after redeem", remaining);
+    assert_eq!(
+        yes_post, remaining,
+        "V2 YES should be {} after redeem",
+        remaining
+    );
+    assert_eq!(
+        no_post, remaining,
+        "V2 NO should be {} after redeem",
+        remaining
+    );
+    assert_eq!(
+        vault_post, remaining,
+        "V2 vault should be {} after redeem",
+        remaining
+    );
 
     // Verify depositor got CCM back (net after outbound transfer fee)
     let ccm_post = read_token_amount(&env.svm, &env.depositor_ccm_addr);
     let expected_ccm_returned = net_after_fee(redeem_amount, FEE_BPS);
-    assert_eq!(ccm_post, expected_ccm_returned, "V2 depositor should have received {} CCM", expected_ccm_returned);
+    assert_eq!(
+        ccm_post, expected_ccm_returned,
+        "V2 depositor should have received {} CCM",
+        expected_ccm_returned
+    );
 
-    println!("  V2 redeem_shares({} → {} net returned): OK", redeem_amount, expected_ccm_returned);
+    println!(
+        "  V2 redeem_shares({} → {} net returned): OK",
+        redeem_amount, expected_ccm_returned
+    );
     println!("LiteSVM: V2 redeem_shares PASSED");
 }
 
@@ -3157,6 +3304,7 @@ fn test_v2_no_wins_lifecycle() {
         admin: admin.pubkey(),
         publisher: admin.pubkey(),
         treasury: Pubkey::new_unique(),
+        oracle_authority: Pubkey::new_unique(),
         mint: ccm_mint,
         paused: false,
         require_receipt: false,
@@ -3173,7 +3321,8 @@ fn test_v2_no_wins_lifecycle() {
             executable: false,
             rent_epoch: 0,
         },
-    ).unwrap();
+    )
+    .unwrap();
 
     // Setup global root with low creator total
     let mut roots = [RootEntry::default(); CUMULATIVE_ROOT_HISTORY];
@@ -3202,7 +3351,8 @@ fn test_v2_no_wins_lifecycle() {
             executable: false,
             rent_epoch: 0,
         },
-    ).unwrap();
+    )
+    .unwrap();
 
     // create_market with high target
     let disc = compute_discriminator("create_market");
@@ -3263,14 +3413,33 @@ fn test_v2_no_wins_lifecycle() {
 
     let depositor_ccm_kp = Keypair::new();
     let depositor_ccm_addr = depositor_ccm_kp.pubkey();
-    create_and_fund_token_2022_account(&mut svm, &admin, &depositor, &depositor_ccm_kp, &ccm_mint, deposit_amount);
+    create_and_fund_token_2022_account(
+        &mut svm,
+        &admin,
+        &depositor,
+        &depositor_ccm_kp,
+        &ccm_mint,
+        deposit_amount,
+    );
 
     let depositor_yes_kp = Keypair::new();
     let depositor_no_kp = Keypair::new();
     let depositor_yes_addr = depositor_yes_kp.pubkey();
     let depositor_no_addr = depositor_no_kp.pubkey();
-    create_token_2022_account_for_outcome_mint(&mut svm, &depositor, &depositor_yes_kp, &yes_mint_pda, &depositor.pubkey());
-    create_token_2022_account_for_outcome_mint(&mut svm, &depositor, &depositor_no_kp, &no_mint_pda, &depositor.pubkey());
+    create_token_2022_account_for_outcome_mint(
+        &mut svm,
+        &depositor,
+        &depositor_yes_kp,
+        &yes_mint_pda,
+        &depositor.pubkey(),
+    );
+    create_token_2022_account_for_outcome_mint(
+        &mut svm,
+        &depositor,
+        &depositor_no_kp,
+        &no_mint_pda,
+        &depositor.pubkey(),
+    );
 
     // Mint shares
     let disc_mint = compute_discriminator("mint_shares");
@@ -3307,7 +3476,9 @@ fn test_v2_no_wins_lifecycle() {
     let mut resolve_data = disc_resolve.to_vec();
     resolve_data.extend_from_slice(&creator_total.to_le_bytes());
     resolve_data.extend_from_slice(&(proof.len() as u32).to_le_bytes());
-    for node in &proof { resolve_data.extend_from_slice(node); }
+    for node in &proof {
+        resolve_data.extend_from_slice(node);
+    }
 
     let resolve_ix = Instruction {
         program_id: program_id(),
@@ -3344,8 +3515,8 @@ fn test_v2_no_wins_lifecycle() {
             AccountMeta::new_readonly(market_state_pda, false),
             AccountMeta::new_readonly(ccm_mint, false),
             AccountMeta::new(vault_pda, false),
-            AccountMeta::new(no_mint_pda, false),         // winning_mint = NO
-            AccountMeta::new(depositor_no_addr, false),    // settler_winning = depositor's NO
+            AccountMeta::new(no_mint_pda, false), // winning_mint = NO
+            AccountMeta::new(depositor_no_addr, false), // settler_winning = depositor's NO
             AccountMeta::new(depositor_ccm_addr, false),
             AccountMeta::new_readonly(mint_authority_pda, false),
             AccountMeta::new_readonly(spl_token_2022::id(), false),
@@ -3356,7 +3527,10 @@ fn test_v2_no_wins_lifecycle() {
     let bh = svm.latest_blockhash();
     let msg = Message::new(&[settle_ix], Some(&depositor.pubkey()));
     let tx = Transaction::new(&[&depositor], msg, bh);
-    assert!(svm.send_transaction(tx).is_ok(), "V2 settle with NO tokens must succeed");
+    assert!(
+        svm.send_transaction(tx).is_ok(),
+        "V2 settle with NO tokens must succeed"
+    );
 
     let vault_final = read_token_amount(&svm, &vault_pda);
     let no_final = read_token_amount(&svm, &depositor_no_addr);

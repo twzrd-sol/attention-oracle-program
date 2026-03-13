@@ -52,7 +52,9 @@ fn simulate_deposit(vault: &mut ChannelVault, actual_received: u64) -> u64 {
 
 /// Simulate a compound: move pending_deposits into total_staked.
 fn simulate_compound(vault: &mut ChannelVault) {
-    let stakeable = vault.pending_deposits.saturating_sub(vault.pending_withdrawals);
+    let stakeable = vault
+        .pending_deposits
+        .saturating_sub(vault.pending_withdrawals);
     vault.total_staked += stakeable;
     vault.pending_deposits -= stakeable;
 }
@@ -101,7 +103,12 @@ fn test_shares_diluted_by_appreciation() {
     let shares_2 = vault.calculate_shares(1_000_000_000_000).unwrap();
 
     // Second depositor gets fewer shares because NAV/share is higher
-    assert!(shares_2 < shares_1, "shares_2 ({}) should be less than shares_1 ({})", shares_2, shares_1);
+    assert!(
+        shares_2 < shares_1,
+        "shares_2 ({}) should be less than shares_1 ({})",
+        shares_2,
+        shares_1
+    );
 }
 
 #[test]
@@ -120,13 +127,20 @@ fn test_virtual_offset_prevents_inflation_attack() {
 
     // With virtual offsets, victim should still get reasonable shares
     // Without virtual offsets, victim would get 0 shares (rounding exploit)
-    assert!(victim_shares > 0, "Victim got 0 shares — inflation attack succeeded!");
+    assert!(
+        victim_shares > 0,
+        "Victim got 0 shares — inflation attack succeeded!"
+    );
 
     // Verify victim gets meaningful shares relative to their deposit
     let redeem = vault.calculate_redeem_amount(victim_shares).unwrap();
     // Victim should get back close to what they put in
     // Some loss is expected due to dilution from donation, but not total loss
-    assert!(redeem > 50_000_000_000, "Victim lost >50% to inflation attack: redeems only {}", redeem);
+    assert!(
+        redeem > 50_000_000_000,
+        "Victim lost >50% to inflation attack: redeems only {}",
+        redeem
+    );
 }
 
 #[test]
@@ -157,7 +171,11 @@ fn test_redeem_round_trip() {
     } else {
         1_000_000_000_000 - redeem
     };
-    assert!(diff <= 1_000_000_000, "Round-trip loss {} exceeds 1 token", diff);
+    assert!(
+        diff <= 1_000_000_000,
+        "Round-trip loss {} exceeds 1 token",
+        diff
+    );
 }
 
 #[test]
@@ -172,7 +190,11 @@ fn test_redeem_with_appreciation() {
 
     // Redeem should return > 1000 CCM (depositor captures appreciation)
     let redeem = vault.calculate_redeem_amount(shares).unwrap();
-    assert!(redeem > 1_000_000_000_000, "Redeem {} should exceed 1000 CCM", redeem);
+    assert!(
+        redeem > 1_000_000_000_000,
+        "Redeem {} should exceed 1000 CCM",
+        redeem
+    );
 }
 
 #[test]
@@ -192,7 +214,11 @@ fn test_partial_redeem() {
         half_redeem - full_redeem / 2
     };
     // Allow 1 token rounding tolerance
-    assert!(diff <= 1_000_000_000, "Half-redeem not proportional: diff={}", diff);
+    assert!(
+        diff <= 1_000_000_000,
+        "Half-redeem not proportional: diff={}",
+        diff
+    );
 }
 
 // =========================================================================
@@ -231,7 +257,10 @@ fn test_exchange_rate_increases_with_rewards() {
     vault.total_staked += 100_000_000_000;
 
     let rate_after = vault.exchange_rate().unwrap();
-    assert!(rate_after > rate_before, "Rate didn't increase with rewards");
+    assert!(
+        rate_after > rate_before,
+        "Rate didn't increase with rewards"
+    );
 }
 
 #[test]
@@ -321,7 +350,10 @@ fn test_reserve_included_in_nav() {
     vault.emergency_reserve = 50_000_000_000;
     let rate_after = vault.exchange_rate().unwrap();
 
-    assert!(rate_after > rate_before, "Reserve should increase NAV and rate");
+    assert!(
+        rate_after > rate_before,
+        "Reserve should increase NAV and rate"
+    );
 }
 
 // =========================================================================
@@ -345,7 +377,10 @@ fn test_available_for_instant_redeem_insufficient() {
 
     // Buffer has only 200, but 500 reserved → error
     let result = vault.available_for_instant_redeem(200_000_000_000);
-    assert!(result.is_err(), "Should fail when buffer < pending_withdrawals");
+    assert!(
+        result.is_err(),
+        "Should fail when buffer < pending_withdrawals"
+    );
 }
 
 #[test]
@@ -445,7 +480,10 @@ fn test_compound_with_rewards_increases_rate() {
     vault.total_staked += 100_000_000_000;
 
     let rate_after = vault.exchange_rate().unwrap();
-    assert!(rate_after > rate_before, "Rate should increase after rewards");
+    assert!(
+        rate_after > rate_before,
+        "Rate should increase after rewards"
+    );
 }
 
 // =========================================================================
@@ -459,7 +497,10 @@ fn test_two_depositors_equal_shares_at_parity() {
     let shares_1 = simulate_deposit(&mut vault, 1_000_000_000_000);
     let shares_2 = simulate_deposit(&mut vault, 1_000_000_000_000);
 
-    assert_eq!(shares_1, shares_2, "Equal deposits at same rate should get equal shares");
+    assert_eq!(
+        shares_1, shares_2,
+        "Equal deposits at same rate should get equal shares"
+    );
 }
 
 #[test]
@@ -476,7 +517,10 @@ fn test_late_depositor_shares_diluted_by_appreciation() {
     // Depositor B: 1000 CCM — gets fewer shares (higher price)
     let shares_b = simulate_deposit(&mut vault, 1_000_000_000_000);
 
-    assert!(shares_b < shares_a, "Late depositor should get fewer shares");
+    assert!(
+        shares_b < shares_a,
+        "Late depositor should get fewer shares"
+    );
 
     // But both depositors' share values should reflect their fair portion
     let redeem_a = vault.calculate_redeem_amount(shares_a).unwrap();
@@ -486,8 +530,14 @@ fn test_late_depositor_shares_diluted_by_appreciation() {
     // B deposited 1000 when NAV was 2500 total, gets share proportional to 1000/2500
     assert!(redeem_a > 1_000_000_000_000, "A should have appreciated");
     // B should get roughly their deposit back (just joined, no appreciation for them)
-    assert!(redeem_b <= 1_050_000_000_000, "B shouldn't have significant appreciation");
-    assert!(redeem_b >= 950_000_000_000, "B shouldn't lose value on entry");
+    assert!(
+        redeem_b <= 1_050_000_000_000,
+        "B shouldn't have significant appreciation"
+    );
+    assert!(
+        redeem_b >= 950_000_000_000,
+        "B shouldn't lose value on entry"
+    );
 }
 
 #[test]
@@ -548,7 +598,10 @@ fn test_exchange_rate_precision_with_small_shares() {
 
     // Rate should be very high but not overflow
     let rate = vault.exchange_rate().unwrap();
-    assert!(rate > 0, "Rate should be calculable even with tiny share count");
+    assert!(
+        rate > 0,
+        "Rate should be calculable even with tiny share count"
+    );
 }
 
 #[test]
@@ -562,7 +615,10 @@ fn test_pending_withdrawals_reduce_nav() {
     vault.pending_withdrawals = 200_000_000_000;
 
     let rate_after = vault.exchange_rate().unwrap();
-    assert!(rate_after < rate_before, "Pending withdrawals should reduce NAV and rate");
+    assert!(
+        rate_after < rate_before,
+        "Pending withdrawals should reduce NAV and rate"
+    );
 }
 
 #[test]
@@ -723,7 +779,11 @@ fn test_slippage_protection_with_zero_fee() {
 
     let result = check_slippage(ccm_amount, transfer_fee_bps, min_amount);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), ccm_amount, "No fee means full amount received");
+    assert_eq!(
+        result.unwrap(),
+        ccm_amount,
+        "No fee means full amount received"
+    );
 }
 
 #[test]
@@ -774,10 +834,10 @@ fn calculate_bounty(rewards_claimed: u64, bounty_bps: u64) -> u64 {
 /// Simulate compound bounty payment and restaking
 /// Returns (bounty_paid, amount_restaked)
 fn simulate_compound_with_bounty(
-    unstaked_received: u64,    // Principal returned from Oracle
-    rewards_claimed: u64,      // Rewards claimed from Oracle
-    stakeable_pending: u64,    // New deposits waiting to be staked
-    bounty_bps: u64,           // Bounty rate in bps (should be 10 = 0.1%)
+    unstaked_received: u64, // Principal returned from Oracle
+    rewards_claimed: u64,   // Rewards claimed from Oracle
+    stakeable_pending: u64, // New deposits waiting to be staked
+    bounty_bps: u64,        // Bounty rate in bps (should be 10 = 0.1%)
 ) -> (u64, u64) {
     let mut amount_to_stake = stakeable_pending
         .checked_add(unstaked_received)
@@ -805,8 +865,8 @@ fn test_compound_bounty_is_10_bps_of_rewards() {
     let bounty_bps = 10u64;
 
     let unstaked_principal = 1_000_000_000_000u64; // 1000 CCM principal
-    let rewards_claimed = 100_000_000_000u64;      // 100 CCM rewards
-    let new_deposits = 50_000_000_000u64;          // 50 CCM new
+    let rewards_claimed = 100_000_000_000u64; // 100 CCM rewards
+    let new_deposits = 50_000_000_000u64; // 50 CCM new
 
     let (bounty_paid, amount_restaked) = simulate_compound_with_bounty(
         unstaked_principal,
@@ -817,7 +877,10 @@ fn test_compound_bounty_is_10_bps_of_rewards() {
 
     // Bounty = 100 CCM * 10 / 10000 = 0.1 CCM = 100_000_000 lamports
     let expected_bounty = 100_000_000u64;
-    assert_eq!(bounty_paid, expected_bounty, "Bounty should be 0.1% of rewards");
+    assert_eq!(
+        bounty_paid, expected_bounty,
+        "Bounty should be 0.1% of rewards"
+    );
 
     // Amount restaked = 1000 + 100 + 50 - 0.1 = 1149.9 CCM
     let expected_restaked = unstaked_principal + rewards_claimed + new_deposits - bounty_paid;
@@ -831,8 +894,8 @@ fn test_bounty_comes_from_rewards_not_principal() {
 
     let bounty_bps = 10u64;
     let unstaked_principal = 1_000_000_000_000u64; // 1000 CCM principal
-    let rewards_claimed = 10_000_000_000u64;       // 10 CCM rewards (small)
-    let new_deposits = 500_000_000_000u64;         // 500 CCM new deposits
+    let rewards_claimed = 10_000_000_000u64; // 10 CCM rewards (small)
+    let new_deposits = 500_000_000_000u64; // 500 CCM new deposits
 
     let (bounty_paid, amount_restaked) = simulate_compound_with_bounty(
         unstaked_principal,
@@ -888,12 +951,8 @@ fn test_no_bounty_when_zero_bps() {
     let bounty_bps = 0u64; // Bounty disabled
     let rewards_claimed = 100_000_000_000u64;
 
-    let (bounty_paid, _) = simulate_compound_with_bounty(
-        1_000_000_000_000,
-        rewards_claimed,
-        0,
-        bounty_bps,
-    );
+    let (bounty_paid, _) =
+        simulate_compound_with_bounty(1_000_000_000_000, rewards_claimed, 0, bounty_bps);
 
     assert_eq!(bounty_paid, 0, "No bounty when bps is 0");
 }
@@ -906,14 +965,13 @@ fn test_bounty_small_rewards_rounding() {
     // 1000 lamports rewards * 10 / 10000 = 1 lamport bounty
     let small_rewards = 1_000u64;
 
-    let (bounty_paid, _) = simulate_compound_with_bounty(
-        1_000_000_000_000,
-        small_rewards,
-        0,
-        bounty_bps,
-    );
+    let (bounty_paid, _) =
+        simulate_compound_with_bounty(1_000_000_000_000, small_rewards, 0, bounty_bps);
 
-    assert_eq!(bounty_paid, 1, "Very small bounty should still be paid (1 lamport)");
+    assert_eq!(
+        bounty_paid, 1,
+        "Very small bounty should still be paid (1 lamport)"
+    );
 }
 
 #[test]
@@ -936,9 +994,9 @@ fn test_bounty_large_rewards() {
     let large_rewards = 1_000_000_000_000_000_000u64;
 
     let (bounty_paid, amount_restaked) = simulate_compound_with_bounty(
-        0,             // No principal (first stake scenario)
+        0, // No principal (first stake scenario)
         large_rewards,
-        0,             // No pending
+        0, // No pending
         bounty_bps,
     );
 
@@ -957,12 +1015,8 @@ fn test_bounty_preserves_principal_invariant() {
     let new_deposits = 200_000_000_000u64;
     let rewards = 50_000_000_000u64;
 
-    let (bounty_paid, amount_restaked) = simulate_compound_with_bounty(
-        principal,
-        rewards,
-        new_deposits,
-        bounty_bps,
-    );
+    let (bounty_paid, amount_restaked) =
+        simulate_compound_with_bounty(principal, rewards, new_deposits, bounty_bps);
 
     // The sum going to Oracle should be:
     // principal + deposits + rewards - bounty
@@ -1030,11 +1084,7 @@ fn test_claim_precheck_succeeds_when_funded() {
 
 #[test]
 fn test_claim_precheck_skips_when_no_pending() {
-    let should_claim = claim_precheck(
-        0,
-        10_600_000_000,
-        10_000_000_000,
-    );
+    let should_claim = claim_precheck(0, 10_600_000_000, 10_000_000_000);
     assert!(!should_claim, "Zero pending rewards should skip claim CPI");
 }
 
@@ -1044,7 +1094,8 @@ fn test_claim_precheck_skips_when_no_pending() {
 
 /// Check if vault is solvent (can honor all pending withdrawals).
 fn is_solvent(vault: &ChannelVault) -> bool {
-    let gross = vault.total_staked
+    let gross = vault
+        .total_staked
         .saturating_add(vault.pending_deposits)
         .saturating_add(vault.emergency_reserve);
     gross >= vault.pending_withdrawals
@@ -1052,14 +1103,13 @@ fn is_solvent(vault: &ChannelVault) -> bool {
 
 /// Simulate capital injection: add actual_received to pending_deposits.
 fn simulate_inject_capital(vault: &mut ChannelVault, actual_received: u64) {
-    vault.pending_deposits = vault.pending_deposits
-        .saturating_add(actual_received);
+    vault.pending_deposits = vault.pending_deposits.saturating_add(actual_received);
 }
 
 #[test]
 fn test_insolvency_detection() {
     let mut vault = make_vault();
-    vault.total_staked = 500_000_000_000;    // 500 CCM staked
+    vault.total_staked = 500_000_000_000; // 500 CCM staked
     vault.pending_deposits = 100_000_000_000; // 100 CCM pending
     vault.emergency_reserve = 50_000_000_000; // 50 CCM reserve
     vault.pending_withdrawals = 800_000_000_000; // 800 CCM queued!
@@ -1071,17 +1121,20 @@ fn test_insolvency_detection() {
 
     // Exchange rate should error when insolvent
     let rate_result = vault.exchange_rate();
-    assert!(rate_result.is_err(), "Exchange rate should error when insolvent");
+    assert!(
+        rate_result.is_err(),
+        "Exchange rate should error when insolvent"
+    );
 }
 
 #[test]
 fn test_capital_injection_restores_solvency() {
     let mut vault = make_vault();
-    vault.total_staked = 500_000_000_000;    // 500 CCM staked
+    vault.total_staked = 500_000_000_000; // 500 CCM staked
     vault.pending_deposits = 100_000_000_000; // 100 CCM pending
     vault.emergency_reserve = 50_000_000_000; // 50 CCM reserve
     vault.pending_withdrawals = 800_000_000_000; // 800 CCM queued
-    vault.total_shares = 700_000_000_000;    // For rate calculation
+    vault.total_shares = 700_000_000_000; // For rate calculation
 
     // Insolvent: gross 650, pending_withdrawals 800
     assert!(!is_solvent(&vault));
@@ -1094,7 +1147,10 @@ fn test_capital_injection_restores_solvency() {
     // Now: gross = 500 + 299 + 50 = 849 CCM
     // pending_withdrawals = 800 CCM
     // 849 >= 800 → solvent!
-    assert!(is_solvent(&vault), "Vault should be solvent after injection");
+    assert!(
+        is_solvent(&vault),
+        "Vault should be solvent after injection"
+    );
 
     // Exchange rate should work now
     let rate = vault.exchange_rate().unwrap();
@@ -1115,17 +1171,19 @@ fn test_capital_injection_does_not_mint_shares() {
     simulate_inject_capital(&mut vault, 600_000_000_000);
 
     // Shares should NOT increase - injection is a gift to existing shareholders
-    assert_eq!(vault.total_shares, shares_before,
-        "Capital injection must not mint new shares");
+    assert_eq!(
+        vault.total_shares, shares_before,
+        "Capital injection must not mint new shares"
+    );
 }
 
 #[test]
 fn test_capital_injection_increases_share_value() {
     let mut vault = make_vault();
-    vault.total_staked = 1_000_000_000_000;  // 1000 CCM
+    vault.total_staked = 1_000_000_000_000; // 1000 CCM
     vault.pending_deposits = 0;
-    vault.total_shares = 1_000_000_000_000;  // 1000 shares
-    // Solvent: rate = 1e9 (1:1)
+    vault.total_shares = 1_000_000_000_000; // 1000 shares
+                                            // Solvent: rate = 1e9 (1:1)
 
     let rate_before = vault.exchange_rate().unwrap();
     assert_eq!(rate_before, 1_000_000_000);
@@ -1136,14 +1194,17 @@ fn test_capital_injection_increases_share_value() {
     // Now: NAV = 1100 CCM, shares = 1000
     // Rate = 1100/1000 = 1.1 CCM per share
     let rate_after = vault.exchange_rate().unwrap();
-    assert_eq!(rate_after, 1_100_000_000, "Share value should increase after injection");
+    assert_eq!(
+        rate_after, 1_100_000_000,
+        "Share value should increase after injection"
+    );
 }
 
 #[test]
 fn test_capital_injection_minimum_to_restore_solvency() {
     let mut vault = make_vault();
-    vault.total_staked = 400_000_000_000;    // 400 CCM
-    vault.pending_deposits = 50_000_000_000;  // 50 CCM
+    vault.total_staked = 400_000_000_000; // 400 CCM
+    vault.pending_deposits = 50_000_000_000; // 50 CCM
     vault.emergency_reserve = 0;
     vault.pending_withdrawals = 500_000_000_000; // 500 CCM queued
     vault.total_shares = 450_000_000_000;
@@ -1164,7 +1225,7 @@ fn test_capital_injection_minimum_to_restore_solvency() {
 #[test]
 fn test_injected_capital_available_for_withdrawals() {
     let mut vault = make_vault();
-    vault.total_staked = 0;                   // Nothing staked
+    vault.total_staked = 0; // Nothing staked
     vault.pending_deposits = 100_000_000_000; // 100 CCM in buffer
     vault.pending_withdrawals = 150_000_000_000; // 150 CCM queued
 
@@ -1208,7 +1269,10 @@ fn test_oracle_staleness_detection_fresh() {
 
     // Current slot is 500k slots later (~2.3 days)
     let current_slot = 100_500_000;
-    assert!(!is_oracle_stale(&vault, current_slot), "Oracle should not be stale after 2.3 days");
+    assert!(
+        !is_oracle_stale(&vault, current_slot),
+        "Oracle should not be stale after 2.3 days"
+    );
 }
 
 #[test]
@@ -1218,7 +1282,10 @@ fn test_oracle_staleness_detection_stale() {
 
     // Current slot is 1.5M slots later (~7 days)
     let current_slot = 100_000_000 + EMERGENCY_TIMEOUT_SLOTS;
-    assert!(is_oracle_stale(&vault, current_slot), "Oracle should be stale after 7 days");
+    assert!(
+        is_oracle_stale(&vault, current_slot),
+        "Oracle should be stale after 7 days"
+    );
 }
 
 #[test]
@@ -1228,7 +1295,10 @@ fn test_oracle_staleness_detection_just_under() {
 
     // Current slot is 1 slot under timeout
     let current_slot = 100_000_000 + EMERGENCY_TIMEOUT_SLOTS - 1;
-    assert!(!is_oracle_stale(&vault, current_slot), "Oracle should not be stale 1 slot before timeout");
+    assert!(
+        !is_oracle_stale(&vault, current_slot),
+        "Oracle should not be stale 1 slot before timeout"
+    );
 }
 
 #[test]
@@ -1272,7 +1342,7 @@ fn test_emergency_timeout_does_not_require_oracle() {
 
     let mut vault = make_vault();
     vault.last_compound_slot = 100_000_000;
-    vault.total_staked = 1_000_000_000_000;  // 1000 CCM "in Oracle"
+    vault.total_staked = 1_000_000_000_000; // 1000 CCM "in Oracle"
     vault.pending_deposits = 500_000_000_000; // 500 CCM in buffer
     vault.pending_withdrawals = 200_000_000_000; // 200 CCM queued
     vault.total_shares = 1_500_000_000_000;
@@ -1350,7 +1420,9 @@ fn test_oracle_update_empty_vault() {
     let vault = make_vault();
     let mut oracle = make_oracle(&vault);
 
-    oracle.update_from_vault(&vault, 100_000, 1_700_000_000).unwrap();
+    oracle
+        .update_from_vault(&vault, 100_000, 1_700_000_000)
+        .unwrap();
 
     // Empty vault: 0 shares → 1:1 rate
     assert_eq!(oracle.current_rate, 1_000_000_000);
@@ -1367,7 +1439,9 @@ fn test_oracle_update_after_deposit() {
     simulate_deposit(&mut vault, 1_000_000_000_000); // 1000 CCM
 
     let mut oracle = make_oracle(&vault);
-    oracle.update_from_vault(&vault, 200_000, 1_700_001_000).unwrap();
+    oracle
+        .update_from_vault(&vault, 200_000, 1_700_001_000)
+        .unwrap();
 
     // 1000 CCM backing 1000 shares → 1:1 rate
     assert_eq!(oracle.current_rate, 1_000_000_000);
@@ -1385,11 +1459,15 @@ fn test_oracle_rate_matches_vault_exchange_rate() {
     let vault_rate = vault.exchange_rate().unwrap();
 
     let mut oracle = make_oracle(&vault);
-    oracle.update_from_vault(&vault, 300_000, 1_700_002_000).unwrap();
+    oracle
+        .update_from_vault(&vault, 300_000, 1_700_002_000)
+        .unwrap();
 
     // Oracle rate (u128) should match vault rate (u64) exactly
-    assert_eq!(oracle.current_rate, vault_rate as u128,
-        "Oracle rate must match vault.exchange_rate()");
+    assert_eq!(
+        oracle.current_rate, vault_rate as u128,
+        "Oracle rate must match vault.exchange_rate()"
+    );
 }
 
 #[test]
@@ -1399,19 +1477,25 @@ fn test_oracle_rate_increases_monotonically_with_rewards() {
     simulate_compound(&mut vault);
 
     let mut oracle = make_oracle(&vault);
-    oracle.update_from_vault(&vault, 100_000, 1_700_000_000).unwrap();
+    oracle
+        .update_from_vault(&vault, 100_000, 1_700_000_000)
+        .unwrap();
     let rate_1 = oracle.current_rate;
 
     // Add rewards
     vault.total_staked += 50_000_000_000;
     vault.compound_count += 1;
-    oracle.update_from_vault(&vault, 200_000, 1_700_001_000).unwrap();
+    oracle
+        .update_from_vault(&vault, 200_000, 1_700_001_000)
+        .unwrap();
     let rate_2 = oracle.current_rate;
 
     // More rewards
     vault.total_staked += 50_000_000_000;
     vault.compound_count += 1;
-    oracle.update_from_vault(&vault, 300_000, 1_700_002_000).unwrap();
+    oracle
+        .update_from_vault(&vault, 300_000, 1_700_002_000)
+        .unwrap();
     let rate_3 = oracle.current_rate;
 
     assert!(rate_2 > rate_1, "Rate should increase after first rewards");
@@ -1426,7 +1510,9 @@ fn test_oracle_compound_count_syncs() {
     vault.compound_count = 42;
 
     let mut oracle = make_oracle(&vault);
-    oracle.update_from_vault(&vault, 100_000, 1_700_000_000).unwrap();
+    oracle
+        .update_from_vault(&vault, 100_000, 1_700_000_000)
+        .unwrap();
 
     assert_eq!(oracle.compound_count, 42);
 }
@@ -1440,7 +1526,10 @@ fn test_oracle_update_insolvent_vault_errors() {
     let mut oracle = make_oracle(&vault);
     let result = oracle.update_from_vault(&vault, 100_000, 1_700_000_000);
 
-    assert!(result.is_err(), "Oracle update should fail on insolvent vault");
+    assert!(
+        result.is_err(),
+        "Oracle update should fail on insolvent vault"
+    );
 }
 
 #[test]
@@ -1453,7 +1542,10 @@ fn test_oracle_large_values_no_overflow() {
     let mut oracle = make_oracle(&vault);
     let result = oracle.update_from_vault(&vault, 500_000, 1_700_003_000);
 
-    assert!(result.is_ok(), "Should handle large values without overflow");
+    assert!(
+        result.is_ok(),
+        "Should handle large values without overflow"
+    );
     assert_eq!(oracle.current_rate, 1_000_000_000); // 1:1
 }
 

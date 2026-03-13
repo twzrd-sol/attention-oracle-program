@@ -21,9 +21,9 @@ import * as fs from "fs";
 // Configuration
 const RPC_URL = "https://api.mainnet-beta.solana.com";
 const MULTISIG_PUBKEY = new PublicKey("BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ");
-const PROGRAM_ID = new PublicKey("5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ");
-const BUFFER_PUBKEY = new PublicKey("A1wiPAKUc3mdoRHrx8kCg2Dz3j7oF1nSioWwSbZSEJDd");
-const PROGRAM_DATA_PUBKEY = new PublicKey("2ubXWFAJFCnBqJ1vYCsf4q8SYRcqf5DaTfkC6wASK5SQ");
+const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
+const BUFFER_PUBKEY = new PublicKey("8T5qmmVAtUMEd7aFgV9DmtPKWVeZ32pZJzUFudXfHh6i");
+const PROGRAM_DATA_PUBKEY = new PublicKey("5GyaaVmzRr2r9KcUuzt9SxBVq9ubTT5m3pH9Lzy3Kh4L");
 const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
 async function main() {
@@ -102,7 +102,7 @@ async function main() {
     vaultIndex: 0,
     ephemeralSigners: 0,
     transactionMessage: message,
-    memo: "Upgrade Channel Vault: add security.txt for Solscan verification display",
+    memo: "Upgrade AO: add admin_fix_ccm_authority instruction",
   });
 
   // Create proposal

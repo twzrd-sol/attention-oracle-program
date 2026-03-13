@@ -69,7 +69,11 @@ fn derive_channel_config_v2(mint: &Pubkey, subject_id: &Pubkey) -> (Pubkey, u8) 
 /// Derive claim state V2 PDA
 fn derive_claim_state_v2(channel_config: &Pubkey, wallet: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(
-        &[CLAIM_STATE_V2_SEED, channel_config.as_ref(), wallet.as_ref()],
+        &[
+            CLAIM_STATE_V2_SEED,
+            channel_config.as_ref(),
+            wallet.as_ref(),
+        ],
         &program_id(),
     )
 }
@@ -77,7 +81,11 @@ fn derive_claim_state_v2(channel_config: &Pubkey, wallet: &Pubkey) -> (Pubkey, u
 /// Derive user channel stake PDA (for V3 stake-bound claims)
 fn derive_user_channel_stake(channel_config: &Pubkey, wallet: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(
-        &[CHANNEL_USER_STAKE_SEED, channel_config.as_ref(), wallet.as_ref()],
+        &[
+            CHANNEL_USER_STAKE_SEED,
+            channel_config.as_ref(),
+            wallet.as_ref(),
+        ],
         &program_id(),
     )
 }
@@ -401,20 +409,25 @@ fn test_chaos_inflated_amount_attack() {
 
     // Real amount in tree
     let real_amount = 1_000_000_000u64; // 1 CCM
-    // Attacker tries to claim more
+                                        // Attacker tries to claim more
     let inflated_amount = 100_000_000_000u64; // 100 CCM
 
     // Build tree with real amount
     let real_leaf = compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, real_amount);
     let other_leaf = compute_cumulative_leaf(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 500_000_000
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        500_000_000,
     );
     let leaves = vec![real_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
     let proof = generate_proof(&leaves, 0);
 
     // Compute leaf with INFLATED amount (attacker's forgery attempt)
-    let forged_leaf = compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, inflated_amount);
+    let forged_leaf =
+        compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, inflated_amount);
 
     // Verify proof with forged leaf FAILS
     let mut computed = forged_leaf;
@@ -431,7 +444,10 @@ fn test_chaos_inflated_amount_attack() {
     }
 
     // CHAOS ASSERTION: Forged proof must NOT match root
-    assert_ne!(computed, root, "SECURITY FAILURE: Inflated amount proof should NOT verify!");
+    assert_ne!(
+        computed, root,
+        "SECURITY FAILURE: Inflated amount proof should NOT verify!"
+    );
     println!("✅ CHAOS #1 PASSED: Inflated amount attack correctly rejected");
 }
 
@@ -448,7 +464,13 @@ fn test_chaos_cross_channel_proof_attack() {
 
     // Build tree for channel A
     let leaf_a = compute_cumulative_leaf(&channel_a, &mint, root_seq, &wallet, amount);
-    let other_leaf = compute_cumulative_leaf(&channel_a, &mint, root_seq, &Pubkey::new_unique(), 500_000_000);
+    let other_leaf = compute_cumulative_leaf(
+        &channel_a,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        500_000_000,
+    );
     let leaves_a = vec![leaf_a, other_leaf];
     let root_a = compute_merkle_root(&leaves_a);
     let proof_a = generate_proof(&leaves_a, 0);
@@ -470,7 +492,10 @@ fn test_chaos_cross_channel_proof_attack() {
     }
 
     // CHAOS ASSERTION: Cross-channel proof must fail
-    assert_ne!(computed, root_a, "SECURITY FAILURE: Cross-channel proof should NOT verify!");
+    assert_ne!(
+        computed, root_a,
+        "SECURITY FAILURE: Cross-channel proof should NOT verify!"
+    );
     println!("✅ CHAOS #2 PASSED: Cross-channel proof attack correctly rejected");
 }
 
@@ -485,10 +510,10 @@ fn test_chaos_double_claim_idempotency() {
 
     // Sequence of claims
     let claims = vec![
-        (1u64, 1_000_000_000u64),  // First claim: seq 1, 1 CCM total
-        (1u64, 1_000_000_000u64),  // REPLAY: same seq, same amount
-        (2u64, 2_000_000_000u64),  // Second claim: seq 2, 2 CCM total (delta = 1 CCM)
-        (2u64, 2_000_000_000u64),  // REPLAY: same seq, same amount
+        (1u64, 1_000_000_000u64), // First claim: seq 1, 1 CCM total
+        (1u64, 1_000_000_000u64), // REPLAY: same seq, same amount
+        (2u64, 2_000_000_000u64), // Second claim: seq 2, 2 CCM total (delta = 1 CCM)
+        (2u64, 2_000_000_000u64), // REPLAY: same seq, same amount
     ];
 
     let mut claimed_total = 0u64;
@@ -499,16 +524,25 @@ fn test_chaos_double_claim_idempotency() {
 
         if delta == 0 {
             // Idempotent: no-op when delta is 0
-            println!("  Claim {} (seq={}, total={}): IDEMPOTENT (delta=0)", i, root_seq, cumulative_total);
+            println!(
+                "  Claim {} (seq={}, total={}): IDEMPOTENT (delta=0)",
+                i, root_seq, cumulative_total
+            );
         } else {
             // New rewards to claim
-            println!("  Claim {} (seq={}, total={}): CLAIMED {} tokens", i, root_seq, cumulative_total, delta);
+            println!(
+                "  Claim {} (seq={}, total={}): CLAIMED {} tokens",
+                i, root_seq, cumulative_total, delta
+            );
             claimed_total = *cumulative_total;
         }
     }
 
     // Final state should be cumulative_total from last unique claim
-    assert_eq!(claimed_total, 2_000_000_000, "Final claimed total incorrect");
+    assert_eq!(
+        claimed_total, 2_000_000_000,
+        "Final claimed total incorrect"
+    );
     println!("✅ CHAOS #3 PASSED: Double-claim correctly handled as idempotent");
 }
 
@@ -525,14 +559,22 @@ fn test_chaos_wallet_substitution_attack() {
     let amount = 10_000_000_000u64; // 10 CCM
 
     // Build tree with victim's leaf
-    let victim_leaf = compute_cumulative_leaf(&channel_config, &mint, root_seq, &victim_wallet, amount);
-    let other_leaf = compute_cumulative_leaf(&channel_config, &mint, root_seq, &Pubkey::new_unique(), 500_000_000);
+    let victim_leaf =
+        compute_cumulative_leaf(&channel_config, &mint, root_seq, &victim_wallet, amount);
+    let other_leaf = compute_cumulative_leaf(
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        500_000_000,
+    );
     let leaves = vec![victim_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
     let proof = generate_proof(&leaves, 0);
 
     // Attacker tries to use victim's proof but with their own wallet
-    let attacker_leaf = compute_cumulative_leaf(&channel_config, &mint, root_seq, &attacker_wallet, amount);
+    let attacker_leaf =
+        compute_cumulative_leaf(&channel_config, &mint, root_seq, &attacker_wallet, amount);
 
     let mut computed = attacker_leaf;
     for node in &proof {
@@ -548,7 +590,10 @@ fn test_chaos_wallet_substitution_attack() {
     }
 
     // CHAOS ASSERTION: Wallet substitution must fail
-    assert_ne!(computed, root, "SECURITY FAILURE: Wallet substitution should NOT verify!");
+    assert_ne!(
+        computed, root,
+        "SECURITY FAILURE: Wallet substitution should NOT verify!"
+    );
     println!("✅ CHAOS #4 PASSED: Wallet substitution attack correctly rejected");
 }
 
@@ -568,11 +613,17 @@ fn test_chaos_oversized_proof_attack() {
         .collect();
 
     // CHAOS ASSERTION: Proof length exceeds maximum
-    assert!(oversized_proof.len() > MAX_PROOF_LEN, "Test setup error: proof should exceed max");
+    assert!(
+        oversized_proof.len() > MAX_PROOF_LEN,
+        "Test setup error: proof should exceed max"
+    );
 
     // On-chain would reject with InvalidProofLength
-    println!("✅ CHAOS #5 PASSED: Oversized proof ({} > {}) would be rejected on-chain",
-             oversized_proof.len(), MAX_PROOF_LEN);
+    println!(
+        "✅ CHAOS #5 PASSED: Oversized proof ({} > {}) would be rejected on-chain",
+        oversized_proof.len(),
+        MAX_PROOF_LEN
+    );
 }
 
 /// CHAOS #6: Verify empty proof only works for single-leaf tree
@@ -587,16 +638,28 @@ fn test_chaos_empty_proof_attack() {
     // Single leaf tree - empty proof is valid
     let single_leaf = compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, amount);
     let single_root = compute_merkle_root(&[single_leaf]);
-    assert_eq!(single_leaf, single_root, "Single leaf should be its own root");
+    assert_eq!(
+        single_leaf, single_root,
+        "Single leaf should be its own root"
+    );
     println!("  Single-leaf tree: empty proof valid ✓");
 
     // Multi-leaf tree - empty proof should fail
-    let other_leaf = compute_cumulative_leaf(&channel_config, &mint, root_seq, &Pubkey::new_unique(), 500_000_000);
+    let other_leaf = compute_cumulative_leaf(
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        500_000_000,
+    );
     let multi_leaves = vec![single_leaf, other_leaf];
     let multi_root = compute_merkle_root(&multi_leaves);
 
     // With empty proof, leaf != root for multi-leaf tree
-    assert_ne!(single_leaf, multi_root, "Empty proof should NOT verify for multi-leaf tree!");
+    assert_ne!(
+        single_leaf, multi_root,
+        "Empty proof should NOT verify for multi-leaf tree!"
+    );
     println!("  Multi-leaf tree: empty proof rejected ✓");
 
     println!("✅ CHAOS #6 PASSED: Empty proof attack correctly handled");
@@ -615,8 +678,14 @@ fn test_chaos_channel_case_sensitivity() {
     let id_mixed = derive_subject_id(channel_mixed);
 
     // All should derive to same subject_id
-    assert_eq!(id_lower, id_upper, "Case sensitivity attack: upper case differs!");
-    assert_eq!(id_lower, id_mixed, "Case sensitivity attack: mixed case differs!");
+    assert_eq!(
+        id_lower, id_upper,
+        "Case sensitivity attack: upper case differs!"
+    );
+    assert_eq!(
+        id_lower, id_mixed,
+        "Case sensitivity attack: mixed case differs!"
+    );
 
     println!("✅ CHAOS #7 PASSED: Channel names are case-insensitive");
 }
@@ -633,7 +702,10 @@ fn test_chaos_pda_collision_resistance() {
     let (config_a, _) = derive_channel_config_v2(&mint, &subject_a);
     let (config_b, _) = derive_channel_config_v2(&mint, &subject_b);
 
-    assert_ne!(config_a, config_b, "PDA COLLISION: Different channels have same PDA!");
+    assert_ne!(
+        config_a, config_b,
+        "PDA COLLISION: Different channels have same PDA!"
+    );
 
     // Same channel should always have same PDA
     let (config_a2, _) = derive_channel_config_v2(&mint, &subject_a);
@@ -642,7 +714,10 @@ fn test_chaos_pda_collision_resistance() {
     // Different mints should have different PDAs
     let mint2 = Pubkey::new_unique();
     let (config_a_mint2, _) = derive_channel_config_v2(&mint2, &subject_a);
-    assert_ne!(config_a, config_a_mint2, "PDA COLLISION: Different mints have same PDA!");
+    assert_ne!(
+        config_a, config_a_mint2,
+        "PDA COLLISION: Different mints have same PDA!"
+    );
 
     println!("✅ CHAOS #8 PASSED: PDA derivation is collision-resistant");
 }
@@ -658,8 +733,15 @@ fn test_chaos_stale_root_attack() {
     // Sequence 1: User has earned 1 CCM
     let old_root_seq = 1u64;
     let old_amount = 1_000_000_000u64;
-    let old_leaf = compute_cumulative_leaf(&channel_config, &mint, old_root_seq, &wallet, old_amount);
-    let old_other = compute_cumulative_leaf(&channel_config, &mint, old_root_seq, &Pubkey::new_unique(), 500_000_000);
+    let old_leaf =
+        compute_cumulative_leaf(&channel_config, &mint, old_root_seq, &wallet, old_amount);
+    let old_other = compute_cumulative_leaf(
+        &channel_config,
+        &mint,
+        old_root_seq,
+        &Pubkey::new_unique(),
+        500_000_000,
+    );
     let old_leaves = vec![old_leaf, old_other];
     let old_root = compute_merkle_root(&old_leaves);
     let old_proof = generate_proof(&old_leaves, 0);
@@ -667,46 +749,80 @@ fn test_chaos_stale_root_attack() {
     // Verify old proof works for old leaf
     let mut computed = old_leaf;
     for node in &old_proof {
-        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let (a, b) = if computed <= *node {
+            (computed, *node)
+        } else {
+            (*node, computed)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
         computed = hasher.finalize().into();
     }
-    assert_eq!(computed, old_root, "Old proof should verify against old root");
+    assert_eq!(
+        computed, old_root,
+        "Old proof should verify against old root"
+    );
     println!("  Old proof (seq=1, amount=1 CCM) verifies ✓");
 
     // Attacker tries to use old proof with inflated amount
-    let inflated_leaf = compute_cumulative_leaf(&channel_config, &mint, old_root_seq, &wallet, 100_000_000_000u64);
+    let inflated_leaf = compute_cumulative_leaf(
+        &channel_config,
+        &mint,
+        old_root_seq,
+        &wallet,
+        100_000_000_000u64,
+    );
     let mut computed_inflated = inflated_leaf;
     for node in &old_proof {
-        let (a, b) = if computed_inflated <= *node { (computed_inflated, *node) } else { (*node, computed_inflated) };
+        let (a, b) = if computed_inflated <= *node {
+            (computed_inflated, *node)
+        } else {
+            (*node, computed_inflated)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
         computed_inflated = hasher.finalize().into();
     }
-    assert_ne!(computed_inflated, old_root, "SECURITY FAILURE: Inflated amount should NOT verify!");
+    assert_ne!(
+        computed_inflated, old_root,
+        "SECURITY FAILURE: Inflated amount should NOT verify!"
+    );
     println!("  Inflated amount with old proof rejected ✓");
 
     // Attacker tries to use old proof against newer root
     let new_root_seq = 2u64;
     let new_amount = 2_000_000_000u64;
-    let new_leaf = compute_cumulative_leaf(&channel_config, &mint, new_root_seq, &wallet, new_amount);
-    let new_other = compute_cumulative_leaf(&channel_config, &mint, new_root_seq, &Pubkey::new_unique(), 700_000_000);
+    let new_leaf =
+        compute_cumulative_leaf(&channel_config, &mint, new_root_seq, &wallet, new_amount);
+    let new_other = compute_cumulative_leaf(
+        &channel_config,
+        &mint,
+        new_root_seq,
+        &Pubkey::new_unique(),
+        700_000_000,
+    );
     let new_leaves = vec![new_leaf, new_other];
     let new_root = compute_merkle_root(&new_leaves);
 
     // Try old proof against new root
     let mut computed_old_vs_new = old_leaf;
     for node in &old_proof {
-        let (a, b) = if computed_old_vs_new <= *node { (computed_old_vs_new, *node) } else { (*node, computed_old_vs_new) };
+        let (a, b) = if computed_old_vs_new <= *node {
+            (computed_old_vs_new, *node)
+        } else {
+            (*node, computed_old_vs_new)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
         computed_old_vs_new = hasher.finalize().into();
     }
-    assert_ne!(computed_old_vs_new, new_root, "SECURITY FAILURE: Old proof should NOT verify against new root!");
+    assert_ne!(
+        computed_old_vs_new, new_root,
+        "SECURITY FAILURE: Old proof should NOT verify against new root!"
+    );
     println!("  Old proof rejected against new root ✓");
 
     println!("✅ CHAOS #9 PASSED: Stale root attack correctly rejected");
@@ -723,8 +839,15 @@ fn test_chaos_root_seq_manipulation() {
     // Current published root is seq=5
     let current_seq = 5u64;
     let current_amount = 5_000_000_000u64;
-    let current_leaf = compute_cumulative_leaf(&channel_config, &mint, current_seq, &wallet, current_amount);
-    let other_leaf = compute_cumulative_leaf(&channel_config, &mint, current_seq, &Pubkey::new_unique(), 500_000_000);
+    let current_leaf =
+        compute_cumulative_leaf(&channel_config, &mint, current_seq, &wallet, current_amount);
+    let other_leaf = compute_cumulative_leaf(
+        &channel_config,
+        &mint,
+        current_seq,
+        &Pubkey::new_unique(),
+        500_000_000,
+    );
     let leaves = vec![current_leaf, other_leaf];
     let current_root = compute_merkle_root(&leaves);
     let current_proof = generate_proof(&leaves, 0);
@@ -732,11 +855,16 @@ fn test_chaos_root_seq_manipulation() {
     // Attacker tries to claim with seq=10 (not yet published)
     let future_seq = 10u64;
     let future_amount = 100_000_000_000u64; // Attacker claims 100 CCM
-    let future_leaf = compute_cumulative_leaf(&channel_config, &mint, future_seq, &wallet, future_amount);
+    let future_leaf =
+        compute_cumulative_leaf(&channel_config, &mint, future_seq, &wallet, future_amount);
 
     let mut computed = future_leaf;
     for node in &current_proof {
-        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let (a, b) = if computed <= *node {
+            (computed, *node)
+        } else {
+            (*node, computed)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -744,7 +872,10 @@ fn test_chaos_root_seq_manipulation() {
     }
 
     // CHAOS ASSERTION: Future seq proof must fail against current root
-    assert_ne!(computed, current_root, "SECURITY FAILURE: Future seq should NOT verify against current root!");
+    assert_ne!(
+        computed, current_root,
+        "SECURITY FAILURE: Future seq should NOT verify against current root!"
+    );
     println!("✅ CHAOS #10 PASSED: Root sequence manipulation correctly rejected");
 }
 
@@ -777,16 +908,29 @@ fn test_chaos_migration_bounds_check() {
             println!("  {} ({} bytes): valid ✓", description, len);
         } else {
             // Would return InvalidChannelState error
-            println!("  {} ({} bytes): rejected (< {} required) ✓", description, len, MIN_MIGRATION_DATA_LEN);
+            println!(
+                "  {} ({} bytes): rejected (< {} required) ✓",
+                description, len, MIN_MIGRATION_DATA_LEN
+            );
         }
 
-        assert!(!is_valid, "Malformed data should be rejected: {}", description);
+        assert!(
+            !is_valid,
+            "Malformed data should be rejected: {}",
+            description
+        );
     }
 
     // Valid length should pass bounds check
     let valid_data = vec![0u8; MIN_MIGRATION_DATA_LEN];
-    assert!(valid_data.len() >= MIN_MIGRATION_DATA_LEN, "Valid data should pass bounds check");
-    println!("  valid data ({} bytes): accepted ✓", MIN_MIGRATION_DATA_LEN);
+    assert!(
+        valid_data.len() >= MIN_MIGRATION_DATA_LEN,
+        "Valid data should pass bounds check"
+    );
+    println!(
+        "  valid data ({} bytes): accepted ✓",
+        MIN_MIGRATION_DATA_LEN
+    );
 
     println!("✅ CHAOS #11 PASSED: Migration bounds check prevents panic");
 }
@@ -804,7 +948,13 @@ fn test_chaos_mint_confusion() {
 
     // Build tree for mint A
     let leaf_a = compute_cumulative_leaf(&channel_config, &mint_a, root_seq, &wallet, amount);
-    let other_leaf_a = compute_cumulative_leaf(&channel_config, &mint_a, root_seq, &Pubkey::new_unique(), 500_000_000);
+    let other_leaf_a = compute_cumulative_leaf(
+        &channel_config,
+        &mint_a,
+        root_seq,
+        &Pubkey::new_unique(),
+        500_000_000,
+    );
     let leaves_a = vec![leaf_a, other_leaf_a];
     let root_a = compute_merkle_root(&leaves_a);
     let proof_a = generate_proof(&leaves_a, 0);
@@ -812,7 +962,11 @@ fn test_chaos_mint_confusion() {
     // Verify original proof works
     let mut computed = leaf_a;
     for node in &proof_a {
-        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let (a, b) = if computed <= *node {
+            (computed, *node)
+        } else {
+            (*node, computed)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -825,7 +979,11 @@ fn test_chaos_mint_confusion() {
     let leaf_b = compute_cumulative_leaf(&channel_config, &mint_b, root_seq, &wallet, amount);
     let mut computed_b = leaf_b;
     for node in &proof_a {
-        let (a, b) = if computed_b <= *node { (computed_b, *node) } else { (*node, computed_b) };
+        let (a, b) = if computed_b <= *node {
+            (computed_b, *node)
+        } else {
+            (*node, computed_b)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -833,14 +991,20 @@ fn test_chaos_mint_confusion() {
     }
 
     // CHAOS ASSERTION: Mint confusion must fail
-    assert_ne!(computed_b, root_a, "SECURITY FAILURE: Mint confusion should NOT verify!");
+    assert_ne!(
+        computed_b, root_a,
+        "SECURITY FAILURE: Mint confusion should NOT verify!"
+    );
     println!("  Mint confusion (proof A → mint B) rejected ✓");
 
     // Verify PDAs are different per mint
     let subject_id = derive_subject_id("test_channel");
     let (config_mint_a, _) = derive_channel_config_v2(&mint_a, &subject_id);
     let (config_mint_b, _) = derive_channel_config_v2(&mint_b, &subject_id);
-    assert_ne!(config_mint_a, config_mint_b, "Same channel should have different PDAs for different mints!");
+    assert_ne!(
+        config_mint_a, config_mint_b,
+        "Same channel should have different PDAs for different mints!"
+    );
     println!("  Channel PDAs differ per mint ✓");
 
     println!("✅ CHAOS #12 PASSED: Mint confusion attack correctly rejected");
@@ -872,8 +1036,11 @@ fn test_chaos_withdrawal_limits() {
     let over_limit_tx = MAX_WITHDRAW_PER_TX + 1;
     let tx1_valid = over_limit_tx <= MAX_WITHDRAW_PER_TX;
     assert!(!tx1_valid, "Over-limit TX should be rejected");
-    println!("  TX exceeding per-TX limit ({} > {}) rejected ✓",
-             over_limit_tx / 1_000_000_000, MAX_WITHDRAW_PER_TX / 1_000_000_000);
+    println!(
+        "  TX exceeding per-TX limit ({} > {}) rejected ✓",
+        over_limit_tx / 1_000_000_000,
+        MAX_WITHDRAW_PER_TX / 1_000_000_000
+    );
 
     // Test 2: Valid TX within limits
     let valid_tx = 10_000_000_000_000_000u64; // 10M CCM
@@ -897,10 +1064,12 @@ fn test_chaos_withdrawal_limits() {
     let new_daily_3 = tracker.withdrawn_today.saturating_add(third_tx);
     let tx4_valid = third_tx <= MAX_WITHDRAW_PER_TX && new_daily_3 <= MAX_WITHDRAW_PER_DAY;
     assert!(!tx4_valid, "TX exceeding daily limit should be rejected");
-    println!("  TX exceeding daily limit ({} + {} > {}) rejected ✓",
-             tracker.withdrawn_today / 1_000_000_000_000_000,
-             third_tx / 1_000_000_000_000_000,
-             MAX_WITHDRAW_PER_DAY / 1_000_000_000_000_000);
+    println!(
+        "  TX exceeding daily limit ({} + {} > {}) rejected ✓",
+        tracker.withdrawn_today / 1_000_000_000_000_000,
+        third_tx / 1_000_000_000_000_000,
+        MAX_WITHDRAW_PER_DAY / 1_000_000_000_000_000
+    );
 
     // Test 5: Day rollover resets daily limit
     let new_day_start = tracker.day_start + SECONDS_PER_DAY;
@@ -914,7 +1083,8 @@ fn test_chaos_withdrawal_limits() {
 
     // Now the same TX should be valid (within per-TX and new day's daily limit)
     let new_daily_after_rollover = tracker.withdrawn_today.saturating_add(third_tx);
-    let tx5_valid = third_tx <= MAX_WITHDRAW_PER_TX && new_daily_after_rollover <= MAX_WITHDRAW_PER_DAY;
+    let tx5_valid =
+        third_tx <= MAX_WITHDRAW_PER_TX && new_daily_after_rollover <= MAX_WITHDRAW_PER_DAY;
     assert!(tx5_valid, "TX should be valid after day rollover");
     println!("  Same TX valid after day rollover ✓");
 
@@ -935,11 +1105,15 @@ fn test_chaos_treasury_ata_ownership() {
         Pubkey::find_program_address(
             &[owner.as_ref(), b"token", mint.as_ref()],
             &Pubkey::new_from_array([6u8; 32]), // Mock token program
-        ).0
+        )
+        .0
     }
 
     let legit_treasury = derive_ata(&protocol_state_pda, &mint);
-    println!("  Legitimate treasury ATA: {} (owned by protocol PDA)", legit_treasury);
+    println!(
+        "  Legitimate treasury ATA: {} (owned by protocol PDA)",
+        legit_treasury
+    );
 
     // Attacker's fake treasury (owned by attacker, not protocol PDA)
     let attacker = Pubkey::new_unique();
@@ -947,7 +1121,10 @@ fn test_chaos_treasury_ata_ownership() {
     println!("  Fake treasury ATA: {} (owned by attacker)", fake_treasury);
 
     // CHAOS ASSERTION: ATAs must be different
-    assert_ne!(legit_treasury, fake_treasury, "Fake treasury should NOT match legitimate!");
+    assert_ne!(
+        legit_treasury, fake_treasury,
+        "Fake treasury should NOT match legitimate!"
+    );
     println!("  Ownership check: fake treasury rejected ✓");
 
     // On-chain, Anchor constraint verifies:
@@ -1027,7 +1204,13 @@ fn test_chaos_proof_index_bounds() {
             if i == 0 {
                 compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, amount)
             } else {
-                compute_cumulative_leaf(&channel_config, &mint, root_seq, &Pubkey::new_unique(), 100_000_000 * (i as u64))
+                compute_cumulative_leaf(
+                    &channel_config,
+                    &mint,
+                    root_seq,
+                    &Pubkey::new_unique(),
+                    100_000_000 * (i as u64),
+                )
             }
         })
         .collect();
@@ -1038,7 +1221,11 @@ fn test_chaos_proof_index_bounds() {
     let valid_proof = generate_proof(&leaves, 0);
     let mut computed = leaves[0];
     for node in &valid_proof {
-        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let (a, b) = if computed <= *node {
+            (computed, *node)
+        } else {
+            (*node, computed)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -1050,16 +1237,24 @@ fn test_chaos_proof_index_bounds() {
     // Attacker claims leaf index 10 (doesn't exist)
     // On-chain, the leaf is recomputed from claim data, so index doesn't matter
     // But attacker might try to construct proof for non-existent position
-    let fake_leaf = compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, amount * 1000); // Inflated
+    let fake_leaf =
+        compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, amount * 1000); // Inflated
     let mut computed_fake = fake_leaf;
     for node in &valid_proof {
-        let (a, b) = if computed_fake <= *node { (computed_fake, *node) } else { (*node, computed_fake) };
+        let (a, b) = if computed_fake <= *node {
+            (computed_fake, *node)
+        } else {
+            (*node, computed_fake)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
         computed_fake = hasher.finalize().into();
     }
-    assert_ne!(computed_fake, root, "SECURITY FAILURE: Fake leaf should NOT verify!");
+    assert_ne!(
+        computed_fake, root,
+        "SECURITY FAILURE: Fake leaf should NOT verify!"
+    );
     println!("  Fake leaf with valid proof structure rejected ✓");
 
     println!("✅ CHAOS #16 PASSED: Proof verification is index-agnostic (leaf-based)");
@@ -1087,10 +1282,22 @@ fn test_claim_cumulative_v3_success() {
 
     // Build V3 merkle tree with stake_snapshot and snapshot_slot in leaf
     let user_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_snapshot,
+        snapshot_slot,
     );
     let other_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        5_000_000_000,
+        2_000_000_000,
+        snapshot_slot,
     );
     let leaves = vec![user_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
@@ -1099,7 +1306,11 @@ fn test_claim_cumulative_v3_success() {
     // Verify proof
     let mut computed = user_leaf;
     for node in &proof {
-        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let (a, b) = if computed <= *node {
+            (computed, *node)
+        } else {
+            (*node, computed)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -1111,7 +1322,10 @@ fn test_claim_cumulative_v3_success() {
     // Simulate on-chain stake check: user_stake.amount >= stake_snapshot
     let stake_check_passes = current_stake >= stake_snapshot;
     assert!(stake_check_passes, "User has sufficient stake");
-    println!("  Stake check (current {} >= snapshot {}): PASSED", current_stake, stake_snapshot);
+    println!(
+        "  Stake check (current {} >= snapshot {}): PASSED",
+        current_stake, stake_snapshot
+    );
 
     // Verify PDA derivation for user_channel_stake
     let (stake_pda, _) = derive_user_channel_stake(&channel_config, &wallet);
@@ -1142,10 +1356,22 @@ fn test_claim_cumulative_v3_insufficient_stake() {
 
     // Build V3 tree (proof is valid)
     let attacker_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_snapshot,
+        snapshot_slot,
     );
     let other_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        5_000_000_000,
+        2_000_000_000,
+        snapshot_slot,
     );
     let leaves = vec![attacker_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
@@ -1154,7 +1380,11 @@ fn test_claim_cumulative_v3_insufficient_stake() {
     // Verify merkle proof is valid (attacker has correct proof data)
     let mut computed = attacker_leaf;
     for node in &proof {
-        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let (a, b) = if computed <= *node {
+            (computed, *node)
+        } else {
+            (*node, computed)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -1166,8 +1396,14 @@ fn test_claim_cumulative_v3_insufficient_stake() {
     // SECURITY CHECK: On-chain would fail here
     // require!(user_stake.amount >= stake_snapshot, OracleError::StakeSnapshotMismatch)
     let stake_check_passes = current_stake >= stake_snapshot;
-    assert!(!stake_check_passes, "Stake check should FAIL for boost gamer");
-    println!("  Stake check (current {} < snapshot {}): REJECTED", current_stake, stake_snapshot);
+    assert!(
+        !stake_check_passes,
+        "Stake check should FAIL for boost gamer"
+    );
+    println!(
+        "  Stake check (current {} < snapshot {}): REJECTED",
+        current_stake, stake_snapshot
+    );
 
     // On-chain error would be: StakeSnapshotMismatch (error code 0x1775 / 6005)
     println!("  On-chain would return: OracleError::StakeSnapshotMismatch");
@@ -1186,24 +1422,36 @@ fn test_claim_cumulative_v3_backwards_compat() {
     let cumulative_total = 10_000_000_000u64;
 
     // V2 leaf (no stake_snapshot)
-    let v2_leaf = compute_cumulative_leaf(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total
-    );
+    let v2_leaf =
+        compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, cumulative_total);
 
     // V3 leaf with stake_snapshot = 0 (equivalent to "no stake requirement")
     let snapshot_slot = 12345u64;
     let v3_leaf_zero_stake = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, 0, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        0,
+        snapshot_slot,
     );
 
     // KEY INSIGHT: V2 and V3 leaves are DIFFERENT even with zero stake
     // This is due to domain separation (CUMULATIVE_V2_DOMAIN vs CUMULATIVE_V3_DOMAIN)
-    assert_ne!(v2_leaf, v3_leaf_zero_stake, "V2 and V3 leaves should differ (domain separation)");
+    assert_ne!(
+        v2_leaf, v3_leaf_zero_stake,
+        "V2 and V3 leaves should differ (domain separation)"
+    );
     println!("  Domain separation: V2 leaf != V3 leaf (even with stake=0)");
 
     // Build separate V2 tree
     let v2_other = compute_cumulative_leaf(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        5_000_000_000,
     );
     let v2_leaves = vec![v2_leaf, v2_other];
     let v2_root = compute_merkle_root(&v2_leaves);
@@ -1212,7 +1460,11 @@ fn test_claim_cumulative_v3_backwards_compat() {
     // Verify V2 proof still works
     let mut computed_v2 = v2_leaf;
     for node in &v2_proof {
-        let (a, b) = if computed_v2 <= *node { (computed_v2, *node) } else { (*node, computed_v2) };
+        let (a, b) = if computed_v2 <= *node {
+            (computed_v2, *node)
+        } else {
+            (*node, computed_v2)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -1223,7 +1475,13 @@ fn test_claim_cumulative_v3_backwards_compat() {
 
     // Build separate V3 tree
     let v3_other = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 1_000_000_000, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        5_000_000_000,
+        1_000_000_000,
+        snapshot_slot,
     );
     let v3_leaves = vec![v3_leaf_zero_stake, v3_other];
     let v3_root = compute_merkle_root(&v3_leaves);
@@ -1232,7 +1490,11 @@ fn test_claim_cumulative_v3_backwards_compat() {
     // Verify V3 proof works
     let mut computed_v3 = v3_leaf_zero_stake;
     for node in &v3_proof {
-        let (a, b) = if computed_v3 <= *node { (computed_v3, *node) } else { (*node, computed_v3) };
+        let (a, b) = if computed_v3 <= *node {
+            (computed_v3, *node)
+        } else {
+            (*node, computed_v3)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -1242,19 +1504,29 @@ fn test_claim_cumulative_v3_backwards_compat() {
     println!("  V3 claim path: WORKS");
 
     // Verify roots are different (can't reuse V2 proofs for V3 claims)
-    assert_ne!(v2_root, v3_root, "V2 and V3 trees should have different roots");
+    assert_ne!(
+        v2_root, v3_root,
+        "V2 and V3 trees should have different roots"
+    );
     println!("  Tree isolation: V2 root != V3 root");
 
     // Cross-version attack: V2 proof against V3 root should fail
     let mut cross_computed = v2_leaf;
     for node in &v2_proof {
-        let (a, b) = if cross_computed <= *node { (cross_computed, *node) } else { (*node, cross_computed) };
+        let (a, b) = if cross_computed <= *node {
+            (cross_computed, *node)
+        } else {
+            (*node, cross_computed)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
         cross_computed = hasher.finalize().into();
     }
-    assert_ne!(cross_computed, v3_root, "V2 proof should NOT verify against V3 root");
+    assert_ne!(
+        cross_computed, v3_root,
+        "V2 proof should NOT verify against V3 root"
+    );
     println!("  Cross-version attack: BLOCKED");
 
     println!("✅ V3 TEST #3 PASSED: Backwards compatibility maintained");
@@ -1276,45 +1548,95 @@ fn test_v3_leaf_computation() {
     let stake_2 = 2_000_000_000u64;
 
     let leaf_stake_1 = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_1, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_1,
+        snapshot_slot,
     );
     let leaf_stake_2 = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_2, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_2,
+        snapshot_slot,
     );
 
-    assert_ne!(leaf_stake_1, leaf_stake_2, "Different stake_snapshot should produce different leaves");
+    assert_ne!(
+        leaf_stake_1, leaf_stake_2,
+        "Different stake_snapshot should produce different leaves"
+    );
     println!("  stake_snapshot binding: Different stakes produce different leaves ✓");
 
     // Test 2: Zero stake_snapshot produces unique leaf
     let leaf_zero_stake = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, 0, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        0,
+        snapshot_slot,
     );
-    assert_ne!(leaf_zero_stake, leaf_stake_1, "Zero stake should differ from non-zero stake");
+    assert_ne!(
+        leaf_zero_stake, leaf_stake_1,
+        "Zero stake should differ from non-zero stake"
+    );
     println!("  Zero stake leaf: Unique ✓");
 
     // Test 3: Maximum stake_snapshot produces unique leaf
     let max_stake = u64::MAX;
     let leaf_max_stake = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, max_stake, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        max_stake,
+        snapshot_slot,
     );
-    assert_ne!(leaf_max_stake, leaf_stake_1, "Max stake should differ from other stakes");
-    assert_ne!(leaf_max_stake, leaf_zero_stake, "Max stake should differ from zero stake");
+    assert_ne!(
+        leaf_max_stake, leaf_stake_1,
+        "Max stake should differ from other stakes"
+    );
+    assert_ne!(
+        leaf_max_stake, leaf_zero_stake,
+        "Max stake should differ from zero stake"
+    );
     println!("  Max stake (u64::MAX) leaf: Unique ✓");
 
     // Test 4: Verify V3 domain is included (compare against V2 with same params minus stake)
-    let v2_leaf = compute_cumulative_leaf(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total
-    );
+    let v2_leaf =
+        compute_cumulative_leaf(&channel_config, &mint, root_seq, &wallet, cumulative_total);
     // Even if we could somehow strip the stake from V3, domain separation keeps them apart
-    assert_ne!(v2_leaf, leaf_stake_1, "V3 leaf differs from V2 (domain separation)");
-    assert_ne!(v2_leaf, leaf_zero_stake, "V3 zero-stake leaf differs from V2 (domain separation)");
+    assert_ne!(
+        v2_leaf, leaf_stake_1,
+        "V3 leaf differs from V2 (domain separation)"
+    );
+    assert_ne!(
+        v2_leaf, leaf_zero_stake,
+        "V3 zero-stake leaf differs from V2 (domain separation)"
+    );
     println!("  Domain separation (TWZRD:CUMULATIVE_V3): Enforced ✓");
 
     // Test 5: Leaf is deterministic
     let leaf_stake_1_again = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_1, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_1,
+        snapshot_slot,
     );
-    assert_eq!(leaf_stake_1, leaf_stake_1_again, "Leaf computation must be deterministic");
+    assert_eq!(
+        leaf_stake_1, leaf_stake_1_again,
+        "Leaf computation must be deterministic"
+    );
     println!("  Deterministic computation: Same inputs produce same leaf ✓");
 
     // Test 6: Each component affects the leaf
@@ -1326,30 +1648,84 @@ fn test_v3_leaf_computation() {
     let different_slot = snapshot_slot + 1;
 
     let leaf_diff_mint = compute_cumulative_leaf_v3(
-        &channel_config, &different_mint, root_seq, &wallet, cumulative_total, stake_1, snapshot_slot
+        &channel_config,
+        &different_mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_1,
+        snapshot_slot,
     );
     let leaf_diff_channel = compute_cumulative_leaf_v3(
-        &different_channel, &mint, root_seq, &wallet, cumulative_total, stake_1, snapshot_slot
+        &different_channel,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_1,
+        snapshot_slot,
     );
     let leaf_diff_wallet = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &different_wallet, cumulative_total, stake_1, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &different_wallet,
+        cumulative_total,
+        stake_1,
+        snapshot_slot,
     );
     let leaf_diff_seq = compute_cumulative_leaf_v3(
-        &channel_config, &mint, different_seq, &wallet, cumulative_total, stake_1, snapshot_slot
+        &channel_config,
+        &mint,
+        different_seq,
+        &wallet,
+        cumulative_total,
+        stake_1,
+        snapshot_slot,
     );
     let leaf_diff_total = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, different_total, stake_1, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        different_total,
+        stake_1,
+        snapshot_slot,
     );
     let leaf_diff_slot = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_1, different_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_1,
+        different_slot,
     );
 
-    assert_ne!(leaf_stake_1, leaf_diff_mint, "Different mint should change leaf");
-    assert_ne!(leaf_stake_1, leaf_diff_channel, "Different channel should change leaf");
-    assert_ne!(leaf_stake_1, leaf_diff_wallet, "Different wallet should change leaf");
-    assert_ne!(leaf_stake_1, leaf_diff_seq, "Different root_seq should change leaf");
-    assert_ne!(leaf_stake_1, leaf_diff_total, "Different cumulative_total should change leaf");
-    assert_ne!(leaf_stake_1, leaf_diff_slot, "Different snapshot_slot should change leaf");
+    assert_ne!(
+        leaf_stake_1, leaf_diff_mint,
+        "Different mint should change leaf"
+    );
+    assert_ne!(
+        leaf_stake_1, leaf_diff_channel,
+        "Different channel should change leaf"
+    );
+    assert_ne!(
+        leaf_stake_1, leaf_diff_wallet,
+        "Different wallet should change leaf"
+    );
+    assert_ne!(
+        leaf_stake_1, leaf_diff_seq,
+        "Different root_seq should change leaf"
+    );
+    assert_ne!(
+        leaf_stake_1, leaf_diff_total,
+        "Different cumulative_total should change leaf"
+    );
+    assert_ne!(
+        leaf_stake_1, leaf_diff_slot,
+        "Different snapshot_slot should change leaf"
+    );
     println!("  All components affect leaf hash: mint, channel, wallet, seq, total, stake, slot ✓");
 
     // Test 7: Verify expected leaf structure matches on-chain
@@ -1364,7 +1740,10 @@ fn test_v3_leaf_computation() {
     hasher.update(&stake_1.to_le_bytes());
     hasher.update(&snapshot_slot.to_le_bytes());
     let expected_leaf: [u8; 32] = hasher.finalize().into();
-    assert_eq!(leaf_stake_1, expected_leaf, "Leaf computation should match manual keccak");
+    assert_eq!(
+        leaf_stake_1, expected_leaf,
+        "Leaf computation should match manual keccak"
+    );
     println!("  Manual keccak verification: Matches compute_cumulative_leaf_v3 ✓");
 
     println!("✅ V3 TEST #4 PASSED: V3 leaf computation correctly includes stake_snapshot and snapshot_slot");
@@ -1386,10 +1765,22 @@ fn test_chaos_v3_stake_snapshot_forgery() {
 
     // Build tree with REAL stake_snapshot
     let real_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, real_stake_snapshot, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        real_stake_snapshot,
+        snapshot_slot,
     );
     let other_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        5_000_000_000,
+        2_000_000_000,
+        snapshot_slot,
     );
     let leaves = vec![real_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
@@ -1406,26 +1797,43 @@ fn test_chaos_v3_stake_snapshot_forgery() {
 
     // BUT the forged leaf doesn't match what's in the tree
     let forged_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, forged_stake_snapshot, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        forged_stake_snapshot,
+        snapshot_slot,
     );
 
     // Verify forged leaf against real root - should FAIL
     let mut computed_forged = forged_leaf;
     for node in &proof {
-        let (a, b) = if computed_forged <= *node { (computed_forged, *node) } else { (*node, computed_forged) };
+        let (a, b) = if computed_forged <= *node {
+            (computed_forged, *node)
+        } else {
+            (*node, computed_forged)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
         computed_forged = hasher.finalize().into();
     }
 
-    assert_ne!(computed_forged, root, "SECURITY FAILURE: Forged stake_snapshot should NOT verify!");
+    assert_ne!(
+        computed_forged, root,
+        "SECURITY FAILURE: Forged stake_snapshot should NOT verify!"
+    );
     println!("  Forged stake_snapshot proof: REJECTED (leaf mismatch)");
 
     // Real leaf would verify but fail stake check
     let mut computed_real = real_leaf;
     for node in &proof {
-        let (a, b) = if computed_real <= *node { (computed_real, *node) } else { (*node, computed_real) };
+        let (a, b) = if computed_real <= *node {
+            (computed_real, *node)
+        } else {
+            (*node, computed_real)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -1473,10 +1881,22 @@ fn test_v3_proof_expired() {
 
     // Build V3 merkle tree
     let user_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_snapshot,
+        snapshot_slot,
     );
     let other_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        5_000_000_000,
+        2_000_000_000,
+        snapshot_slot,
     );
     let leaves = vec![user_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
@@ -1485,7 +1905,11 @@ fn test_v3_proof_expired() {
     // Verify merkle proof is technically valid
     let mut computed = user_leaf;
     for node in &proof {
-        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let (a, b) = if computed <= *node {
+            (computed, *node)
+        } else {
+            (*node, computed)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -1497,12 +1921,21 @@ fn test_v3_proof_expired() {
     // Stake check passes (user still has sufficient stake)
     let stake_check_passes = current_stake >= stake_snapshot;
     assert!(stake_check_passes, "Stake check should pass");
-    println!("  Stake check (current {} >= snapshot {}): PASSED", current_stake, stake_snapshot);
+    println!(
+        "  Stake check (current {} >= snapshot {}): PASSED",
+        current_stake, stake_snapshot
+    );
 
     // SECURITY CHECK: Proof age exceeds maximum
     let proof_age_check_passes = proof_age <= MAX_PROOF_AGE_SLOTS;
-    assert!(!proof_age_check_passes, "Proof age check should FAIL for expired proof");
-    println!("  Proof age check ({} > {}): REJECTED (ProofExpired)", proof_age, MAX_PROOF_AGE_SLOTS);
+    assert!(
+        !proof_age_check_passes,
+        "Proof age check should FAIL for expired proof"
+    );
+    println!(
+        "  Proof age check ({} > {}): REJECTED (ProofExpired)",
+        proof_age, MAX_PROOF_AGE_SLOTS
+    );
 
     // On-chain error would be: OracleError::ProofExpired
     println!("  On-chain would return: OracleError::ProofExpired");
@@ -1532,10 +1965,22 @@ fn test_v3_proof_fresh() {
 
     // Build V3 merkle tree
     let user_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_snapshot,
+        snapshot_slot,
     );
     let other_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        5_000_000_000,
+        2_000_000_000,
+        snapshot_slot,
     );
     let leaves = vec![user_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
@@ -1544,7 +1989,11 @@ fn test_v3_proof_fresh() {
     // Verify merkle proof is valid
     let mut computed = user_leaf;
     for node in &proof {
-        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let (a, b) = if computed <= *node {
+            (computed, *node)
+        } else {
+            (*node, computed)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
@@ -1556,12 +2005,21 @@ fn test_v3_proof_fresh() {
     // Stake check passes
     let stake_check_passes = current_stake >= stake_snapshot;
     assert!(stake_check_passes, "Stake check should pass");
-    println!("  Stake check (current {} >= snapshot {}): PASSED", current_stake, stake_snapshot);
+    println!(
+        "  Stake check (current {} >= snapshot {}): PASSED",
+        current_stake, stake_snapshot
+    );
 
     // Proof age check passes (within window)
     let proof_age_check_passes = proof_age <= MAX_PROOF_AGE_SLOTS;
-    assert!(proof_age_check_passes, "Proof age check should pass for fresh proof");
-    println!("  Proof age check ({} <= {}): PASSED", proof_age, MAX_PROOF_AGE_SLOTS);
+    assert!(
+        proof_age_check_passes,
+        "Proof age check should pass for fresh proof"
+    );
+    println!(
+        "  Proof age check ({} <= {}): PASSED",
+        proof_age, MAX_PROOF_AGE_SLOTS
+    );
 
     // All checks pass - claim would succeed
     println!("  All V3 checks: PASSED (claim would succeed)");
@@ -1582,12 +2040,32 @@ fn test_v3_proof_boundary() {
 
     // Boundary test cases
     let test_cases = vec![
-        (10_000u64, 10_000u64 + MAX_PROOF_AGE_SLOTS, true, "exactly at boundary"),
-        (10_000u64, 10_000u64 + MAX_PROOF_AGE_SLOTS + 1, false, "one slot over boundary"),
-        (10_000u64, 10_000u64 + MAX_PROOF_AGE_SLOTS - 1, true, "one slot under boundary"),
+        (
+            10_000u64,
+            10_000u64 + MAX_PROOF_AGE_SLOTS,
+            true,
+            "exactly at boundary",
+        ),
+        (
+            10_000u64,
+            10_000u64 + MAX_PROOF_AGE_SLOTS + 1,
+            false,
+            "one slot over boundary",
+        ),
+        (
+            10_000u64,
+            10_000u64 + MAX_PROOF_AGE_SLOTS - 1,
+            true,
+            "one slot under boundary",
+        ),
         (10_000u64, 10_000u64, true, "same slot (age = 0)"),
         (0u64, MAX_PROOF_AGE_SLOTS, true, "snapshot at slot 0"),
-        (0u64, MAX_PROOF_AGE_SLOTS + 1, false, "snapshot at slot 0, over boundary"),
+        (
+            0u64,
+            MAX_PROOF_AGE_SLOTS + 1,
+            false,
+            "snapshot at slot 0, over boundary",
+        ),
     ];
 
     for (snapshot_slot, current_slot, should_pass, description) in test_cases {
@@ -1596,18 +2074,34 @@ fn test_v3_proof_boundary() {
 
         // Build V3 leaf for this test case
         let user_leaf = compute_cumulative_leaf_v3(
-            &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
+            &channel_config,
+            &mint,
+            root_seq,
+            &wallet,
+            cumulative_total,
+            stake_snapshot,
+            snapshot_slot,
         );
         let other_leaf = compute_cumulative_leaf_v3(
-            &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, snapshot_slot
+            &channel_config,
+            &mint,
+            root_seq,
+            &Pubkey::new_unique(),
+            5_000_000_000,
+            2_000_000_000,
+            snapshot_slot,
         );
         let leaves = vec![user_leaf, other_leaf];
         let _root = compute_merkle_root(&leaves);
 
         assert_eq!(
-            check_passes, should_pass,
+            check_passes,
+            should_pass,
             "Test case '{}' failed: age={}, max={}, expected {}",
-            description, proof_age, MAX_PROOF_AGE_SLOTS, if should_pass { "pass" } else { "fail" }
+            description,
+            proof_age,
+            MAX_PROOF_AGE_SLOTS,
+            if should_pass { "pass" } else { "fail" }
         );
 
         let status = if check_passes { "PASS" } else { "REJECT" };
@@ -1643,30 +2137,57 @@ fn test_v3_proof_underflow_protection() {
     // saturating_sub returns 0 for underflow
     let proof_age = current_slot.saturating_sub(snapshot_slot);
     assert_eq!(proof_age, 0, "saturating_sub should return 0 for underflow");
-    println!("  Underflow case: current({}) - snapshot({}) = {} (saturating)", current_slot, snapshot_slot, proof_age);
+    println!(
+        "  Underflow case: current({}) - snapshot({}) = {} (saturating)",
+        current_slot, snapshot_slot, proof_age
+    );
 
     // This would pass the age check, BUT:
     // 1. The merkle proof would be invalid (aggregator never produced this proof)
     // 2. The aggregator only generates proofs with snapshot_slot <= current_slot
     let age_check_passes = proof_age <= MAX_PROOF_AGE_SLOTS;
-    assert!(age_check_passes, "Underflow saturates to 0, which passes age check");
+    assert!(
+        age_check_passes,
+        "Underflow saturates to 0, which passes age check"
+    );
     println!("  Age check: PASS (saturated to 0)");
 
     // Verify that the leaf with future snapshot_slot is unique
     let legit_snapshot = 10_000u64;
     let legit_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, legit_snapshot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_snapshot,
+        legit_snapshot,
     );
     let future_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &wallet, cumulative_total, stake_snapshot, snapshot_slot
+        &channel_config,
+        &mint,
+        root_seq,
+        &wallet,
+        cumulative_total,
+        stake_snapshot,
+        snapshot_slot,
     );
 
-    assert_ne!(legit_leaf, future_leaf, "Different snapshot_slots produce different leaves");
+    assert_ne!(
+        legit_leaf, future_leaf,
+        "Different snapshot_slots produce different leaves"
+    );
     println!("  Leaf isolation: Future snapshot produces different leaf hash");
 
     // Build tree with legitimate leaf
     let other_leaf = compute_cumulative_leaf_v3(
-        &channel_config, &mint, root_seq, &Pubkey::new_unique(), 5_000_000_000, 2_000_000_000, legit_snapshot
+        &channel_config,
+        &mint,
+        root_seq,
+        &Pubkey::new_unique(),
+        5_000_000_000,
+        2_000_000_000,
+        legit_snapshot,
     );
     let leaves = vec![legit_leaf, other_leaf];
     let root = compute_merkle_root(&leaves);
@@ -1675,14 +2196,23 @@ fn test_v3_proof_underflow_protection() {
     // Future leaf won't verify against legitimate root
     let mut computed = future_leaf;
     for node in &proof {
-        let (a, b) = if computed <= *node { (computed, *node) } else { (*node, computed) };
+        let (a, b) = if computed <= *node {
+            (computed, *node)
+        } else {
+            (*node, computed)
+        };
         let mut hasher = Keccak256::new();
         hasher.update(&a);
         hasher.update(&b);
         computed = hasher.finalize().into();
     }
-    assert_ne!(computed, root, "Future snapshot leaf should NOT verify against legitimate root");
+    assert_ne!(
+        computed, root,
+        "Future snapshot leaf should NOT verify against legitimate root"
+    );
     println!("  Merkle verification: Future snapshot REJECTED");
 
-    println!("✅ V3 EXPIRY TEST #4 PASSED: Underflow attack blocked by merkle proof (defense in depth)");
+    println!(
+        "✅ V3 EXPIRY TEST #4 PASSED: Underflow attack blocked by merkle proof (defense in depth)"
+    );
 }
