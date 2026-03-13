@@ -42,7 +42,8 @@
   },
   "pnpm": {
     "overrides": {
-      "diff": "4.0.4"
+      "diff": "4.0.4",
+      "rollup": ">=4.59.0"
     }
   },
   "description": "Open-source Solana infrastructure for verifiable, engagement-based reward distribution.",
