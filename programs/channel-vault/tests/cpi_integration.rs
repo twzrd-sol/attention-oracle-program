@@ -13,7 +13,6 @@
 use litesvm::LiteSVM;
 use sha2::{Digest, Sha256};
 use sha3::Keccak256;
-use token_2022::constants::{BPS_DENOMINATOR, MAX_APR_BPS, SLOTS_PER_YEAR};
 use solana_sdk::{
     account::Account as SolanaAccount,
     instruction::{AccountMeta, Instruction},
@@ -28,6 +27,7 @@ use spl_token_2022::{
     state::Mint as Token2022Mint,
 };
 use std::path::Path;
+use token_2022::constants::{BPS_DENOMINATOR, MAX_APR_BPS, SLOTS_PER_YEAR};
 
 // =============================================================================
 // PROGRAM IDS
@@ -131,7 +131,11 @@ fn calculate_transfer_fee(amount: u64, fee_bps: u16) -> u64 {
     let fee = (amount as u128) * (fee_bps as u128) / 10_000u128;
     // Token-2022 rounds up
     let remainder = (amount as u128) * (fee_bps as u128) % 10_000u128;
-    if remainder > 0 { fee as u64 + 1 } else { fee as u64 }
+    if remainder > 0 {
+        fee as u64 + 1
+    } else {
+        fee as u64
+    }
 }
 
 /// Amount received after transfer fee
@@ -169,15 +173,16 @@ fn derive_stake_pool(channel_config: &Pubkey) -> (Pubkey, u8) {
 }
 
 fn derive_stake_vault(stake_pool: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(
-        &[STAKE_VAULT_SEED, stake_pool.as_ref()],
-        &ao_program_id(),
-    )
+    Pubkey::find_program_address(&[STAKE_VAULT_SEED, stake_pool.as_ref()], &ao_program_id())
 }
 
 fn derive_user_channel_stake(channel_config: &Pubkey, user: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(
-        &[CHANNEL_USER_STAKE_SEED, channel_config.as_ref(), user.as_ref()],
+        &[
+            CHANNEL_USER_STAKE_SEED,
+            channel_config.as_ref(),
+            user.as_ref(),
+        ],
         &ao_program_id(),
     )
 }
@@ -190,10 +195,7 @@ fn derive_nft_mint(stake_pool: &Pubkey, user: &Pubkey) -> (Pubkey, u8) {
 }
 
 fn derive_vault(channel_config: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(
-        &[VAULT_SEED, channel_config.as_ref()],
-        &vault_program_id(),
-    )
+    Pubkey::find_program_address(&[VAULT_SEED, channel_config.as_ref()], &vault_program_id())
 }
 
 fn derive_vault_ccm_buffer(vault: &Pubkey) -> (Pubkey, u8) {
@@ -204,10 +206,7 @@ fn derive_vault_ccm_buffer(vault: &Pubkey) -> (Pubkey, u8) {
 }
 
 fn derive_vlofi_mint(vault: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(
-        &[VLOFI_MINT_SEED, vault.as_ref()],
-        &vault_program_id(),
-    )
+    Pubkey::find_program_address(&[VLOFI_MINT_SEED, vault.as_ref()], &vault_program_id())
 }
 
 fn derive_vault_oracle_position(vault: &Pubkey) -> (Pubkey, u8) {
@@ -218,15 +217,17 @@ fn derive_vault_oracle_position(vault: &Pubkey) -> (Pubkey, u8) {
 }
 
 fn derive_exchange_rate_oracle(vault: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(
-        &[EXCHANGE_RATE_SEED, vault.as_ref()],
-        &vault_program_id(),
-    )
+    Pubkey::find_program_address(&[EXCHANGE_RATE_SEED, vault.as_ref()], &vault_program_id())
 }
 
 fn derive_withdraw_request(vault: &Pubkey, user: &Pubkey, request_id: u64) -> (Pubkey, u8) {
     Pubkey::find_program_address(
-        &[WITHDRAW_REQUEST_SEED, vault.as_ref(), user.as_ref(), &request_id.to_le_bytes()],
+        &[
+            WITHDRAW_REQUEST_SEED,
+            vault.as_ref(),
+            user.as_ref(),
+            &request_id.to_le_bytes(),
+        ],
         &vault_program_id(),
     )
 }
@@ -240,7 +241,9 @@ fn derive_user_vault_state(vault: &Pubkey, user: &Pubkey) -> (Pubkey, u8) {
 
 fn derive_ata(owner: &Pubkey, mint: &Pubkey, token_program: &Pubkey) -> Pubkey {
     spl_associated_token_account::get_associated_token_address_with_program_id(
-        owner, mint, token_program,
+        owner,
+        mint,
+        token_program,
     )
 }
 
@@ -366,7 +369,7 @@ fn create_ccm_mint(svm: &mut LiteSVM, admin: &Keypair) -> Keypair {
     let init_mint_ix = spl_token_2022::instruction::initialize_mint2(
         &token_2022_program_id(),
         &mint.pubkey(),
-        &admin.pubkey(), // mint authority
+        &admin.pubkey(),       // mint authority
         Some(&admin.pubkey()), // freeze authority
         CCM_DECIMALS,
     )
@@ -378,8 +381,7 @@ fn create_ccm_mint(svm: &mut LiteSVM, admin: &Keypair) -> Keypair {
         Some(&admin.pubkey()),
     );
     let tx = Transaction::new(&[admin, &mint], msg, blockhash);
-    svm.send_transaction(tx)
-        .expect("Failed to create CCM mint");
+    svm.send_transaction(tx).expect("Failed to create CCM mint");
 
     mint
 }
@@ -406,8 +408,7 @@ fn create_and_fund_token_2022_ata(
     let blockhash = svm.latest_blockhash();
     let msg = Message::new(&[create_ata_ix], Some(&payer.pubkey()));
     let tx = Transaction::new(&[payer], msg, blockhash);
-    svm.send_transaction(tx)
-        .expect("Failed to create ATA");
+    svm.send_transaction(tx).expect("Failed to create ATA");
 
     if amount > 0 {
         // Mint tokens
@@ -424,8 +425,7 @@ fn create_and_fund_token_2022_ata(
         let blockhash = svm.latest_blockhash();
         let msg = Message::new(&[mint_ix], Some(&payer.pubkey()));
         let tx = Transaction::new(&[payer, mint_authority], msg, blockhash);
-        svm.send_transaction(tx)
-            .expect("Failed to mint tokens");
+        svm.send_transaction(tx).expect("Failed to mint tokens");
     }
 
     ata
@@ -447,15 +447,15 @@ fn inject_ao_protocol_state(
 
     // Serialize ProtocolState
     let protocol_data = serialize_protocol_state(
-        true,             // is_initialized
-        1,                // version
-        *admin,           // admin
-        *admin,           // publisher (same as admin for tests)
-        protocol_pda,     // treasury (self, like prod)
-        *ccm_mint,        // mint
-        false,            // paused
-        false,            // require_receipt
-        protocol_bump,    // bump
+        true,          // is_initialized
+        1,             // version
+        *admin,        // admin
+        *admin,        // publisher (same as admin for tests)
+        protocol_pda,  // treasury (self, like prod)
+        *ccm_mint,     // mint
+        false,         // paused
+        false,         // require_receipt
+        protocol_bump, // bump
     );
 
     // Inject ProtocolState
@@ -468,17 +468,18 @@ fn inject_ao_protocol_state(
             executable: false,
             rent_epoch: 0,
         },
-    ).unwrap();
+    )
+    .unwrap();
 
     // Serialize FeeConfig
     let fee_config_data = serialize_fee_config(
-        50,                                         // basis_points
-        1_000_000,                                  // max_fee
-        1_000_000_000_000_000u64,                  // drip_threshold
-        5,                                          // treasury_fee_bps
-        5,                                          // creator_fee_bps
-        [2000, 4000, 6000, 8000, 10000, 10000],   // tier_multipliers
-        fee_config_bump,                            // bump
+        50,                                     // basis_points
+        1_000_000,                              // max_fee
+        1_000_000_000_000_000u64,               // drip_threshold
+        5,                                      // treasury_fee_bps
+        5,                                      // creator_fee_bps
+        [2000, 4000, 6000, 8000, 10000, 10000], // tier_multipliers
+        fee_config_bump,                        // bump
     );
 
     // Inject FeeConfig
@@ -491,7 +492,8 @@ fn inject_ao_protocol_state(
             executable: false,
             rent_epoch: 0,
         },
-    ).unwrap();
+    )
+    .unwrap();
 
     (protocol_pda, fee_config_pda)
 }
@@ -968,10 +970,16 @@ fn setup_full_environment_with_params(
 
     // Load both programs
     if let Err(e) = load_ao_program(&mut svm) {
-        panic!("Failed to load AO program: {}. Run `anchor build` first.", e);
+        panic!(
+            "Failed to load AO program: {}. Run `anchor build` first.",
+            e
+        );
     }
     if let Err(e) = load_vault_program(&mut svm) {
-        panic!("Failed to load Vault program: {}. Run `anchor build` first.", e);
+        panic!(
+            "Failed to load Vault program: {}. Run `anchor build` first.",
+            e
+        );
     }
 
     let admin = Keypair::new();
@@ -1058,8 +1066,7 @@ fn setup_full_environment_with_params(
     let blockhash = svm.latest_blockhash();
     let msg = Message::new(&[set_rate_ix], Some(&admin.pubkey()));
     let tx = Transaction::new(&[&admin], msg, blockhash);
-    svm.send_transaction(tx)
-        .expect("Failed to set reward rate");
+    svm.send_transaction(tx).expect("Failed to set reward rate");
 
     // 7. Initialize vault (Vault program)
     let (init_vault_ix, vault) = build_init_vault_ix(
@@ -1082,11 +1089,8 @@ fn setup_full_environment_with_params(
     let (oracle_position, _) = derive_vault_oracle_position(&vault);
 
     // 8. Initialize exchange rate oracle (Vault program)
-    let (init_oracle_ix, exchange_rate_oracle) = build_init_exchange_rate_ix(
-        &admin.pubkey(),
-        &vault,
-        &channel_config,
-    );
+    let (init_oracle_ix, exchange_rate_oracle) =
+        build_init_exchange_rate_ix(&admin.pubkey(), &vault, &channel_config);
     let blockhash = svm.latest_blockhash();
     let msg = Message::new(&[init_oracle_ix], Some(&admin.pubkey()));
     let tx = Transaction::new(&[&admin], msg, blockhash);
@@ -1130,7 +1134,7 @@ fn send_tx(svm: &mut LiteSVM, signers: &[&Keypair], ixs: &[Instruction]) {
     let msg = Message::new(ixs, Some(&signers[0].pubkey()));
     let tx = Transaction::new(signers, msg, blockhash);
     match svm.send_transaction(tx) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => {
             eprintln!("TX FAILED: {:?}", e.err);
             for log in &e.meta.logs {
@@ -1159,15 +1163,13 @@ fn warp_to_slot_and_expire(env: &mut TestEnv, slot: u64) {
     env.svm.expire_blockhash();
 }
 
-fn try_send_tx(
-    svm: &mut LiteSVM,
-    signers: &[&Keypair],
-    ixs: &[Instruction],
-) -> Result<(), String> {
+fn try_send_tx(svm: &mut LiteSVM, signers: &[&Keypair], ixs: &[Instruction]) -> Result<(), String> {
     let blockhash = svm.latest_blockhash();
     let msg = Message::new(ixs, Some(&signers[0].pubkey()));
     let tx = Transaction::new(signers, msg, blockhash);
-    svm.send_transaction(tx).map(|_| ()).map_err(|e| format!("{:?}", e))
+    svm.send_transaction(tx)
+        .map(|_| ())
+        .map_err(|e| format!("{:?}", e))
 }
 
 // =============================================================================
@@ -1194,14 +1196,13 @@ fn test_deposit_and_first_compound() {
     let vault_state = read_vault_state(&env.svm, &env.vault);
     let expected_received = amount_after_fee(deposit_amount, TRANSFER_FEE_BPS);
     assert_eq!(vault_state.pending_deposits, expected_received);
-    assert!(vault_state.total_shares > 0, "Should have minted vLOFI shares");
+    assert!(
+        vault_state.total_shares > 0,
+        "Should have minted vLOFI shares"
+    );
 
     // Verify vLOFI minted to user
-    let user_vlofi_ata = derive_ata(
-        &env.user.pubkey(),
-        &env.vlofi_mint,
-        &spl_token_program_id(),
-    );
+    let user_vlofi_ata = derive_ata(&env.user.pubkey(), &env.vlofi_mint, &spl_token_program_id());
     let vlofi_balance = get_token_balance(&env.svm, &user_vlofi_ata);
     assert!(vlofi_balance > 0, "User should have vLOFI shares");
 
@@ -1230,8 +1231,14 @@ fn test_deposit_and_first_compound() {
 
     // Verify vault state after compound
     let vault_state = read_vault_state(&env.svm, &env.vault);
-    assert_eq!(vault_state.pending_deposits, 0, "Pending should be 0 after compound");
-    assert!(vault_state.total_staked > 0, "Should have staked into Oracle");
+    assert_eq!(
+        vault_state.pending_deposits, 0,
+        "Pending should be 0 after compound"
+    );
+    assert!(
+        vault_state.total_staked > 0,
+        "Should have staked into Oracle"
+    );
     assert_eq!(vault_state.compound_count, 1);
 
     // Verify vault.total_staked matches AO's UserChannelStake.amount
@@ -1431,7 +1438,10 @@ fn test_compound_no_rewards_skips_claim() {
         &token_2022_program_id(),
     );
     let keeper_balance = get_token_balance(&env.svm, &keeper_ccm_ata);
-    assert_eq!(keeper_balance, 0, "Keeper bounty should be 0 with no rewards");
+    assert_eq!(
+        keeper_balance, 0,
+        "Keeper bounty should be 0 with no rewards"
+    );
 
     println!("Test 3 PASSED: compound with no rewards skips claim");
 }
@@ -1508,8 +1518,7 @@ fn test_exchange_rate_oracle_updates_on_compound() {
     println!("Test 11 PASSED: exchange rate oracle updates on compound");
     println!(
         "  Rate 1: {}, Rate 2: {}, Assets: {} → {}",
-        rate1.current_rate, rate2.current_rate,
-        rate1.total_ccm_assets, rate2.total_ccm_assets
+        rate1.current_rate, rate2.current_rate, rate1.total_ccm_assets, rate2.total_ccm_assets
     );
 }
 
@@ -1557,7 +1566,10 @@ fn test_exchange_rate_oracle_missing_graceful() {
     let rate = read_exchange_rate(&env.svm, &env.exchange_rate_oracle);
     // The oracle was initialized with vault values at init time,
     // but NOT updated during this compound (no remaining account)
-    assert_eq!(rate.compound_count, 0, "Oracle should not have been updated");
+    assert_eq!(
+        rate.compound_count, 0,
+        "Oracle should not have been updated"
+    );
 
     println!("Test 12 PASSED: compound succeeds without exchange rate oracle");
 }
@@ -1811,9 +1823,7 @@ fn build_emergency_timeout_withdraw_ix(
 fn read_token_balance(svm: &LiteSVM, ata: &Pubkey) -> u64 {
     let acc = svm.get_account(ata);
     match acc {
-        Some(a) if a.data.len() >= 72 => {
-            u64::from_le_bytes(a.data[64..72].try_into().unwrap())
-        }
+        Some(a) if a.data.len() >= 72 => u64::from_le_bytes(a.data[64..72].try_into().unwrap()),
         _ => 0,
     }
 }
@@ -1822,9 +1832,7 @@ fn read_token_balance(svm: &LiteSVM, ata: &Pubkey) -> u64 {
 fn read_spl_token_balance(svm: &LiteSVM, ata: &Pubkey) -> u64 {
     let acc = svm.get_account(ata);
     match acc {
-        Some(a) if a.data.len() >= 72 => {
-            u64::from_le_bytes(a.data[64..72].try_into().unwrap())
-        }
+        Some(a) if a.data.len() >= 72 => u64::from_le_bytes(a.data[64..72].try_into().unwrap()),
         _ => 0,
     }
 }
@@ -1841,7 +1849,11 @@ fn deposit_and_compound(env: &mut TestEnv, deposit_amount: u64) {
     send_tx(&mut env.svm, &[&env.user], &[deposit_ix]);
 
     // Ensure keeper has CCM ATA
-    let keeper_ccm_ata = derive_ata(&env.keeper.pubkey(), &env.ccm_mint.pubkey(), &token_2022_program_id());
+    let keeper_ccm_ata = derive_ata(
+        &env.keeper.pubkey(),
+        &env.ccm_mint.pubkey(),
+        &token_2022_program_id(),
+    );
     if env.svm.get_account(&keeper_ccm_ata).is_none() {
         create_and_fund_token_2022_ata(
             &mut env.svm,
@@ -1903,14 +1915,21 @@ fn test_queued_withdraw_from_buffer() {
 
     let vault_state = read_vault_state(&env.svm, &env.vault);
     assert_eq!(vault_state.total_shares, 0, "All shares should be burned");
-    assert!(vault_state.pending_withdrawals > 0, "Should have pending withdrawal");
+    assert!(
+        vault_state.pending_withdrawals > 0,
+        "Should have pending withdrawal"
+    );
 
     // Advance past queue period
     env.svm.warp_to_slot(WITHDRAW_QUEUE_SLOTS + 100);
     env.svm.expire_blockhash();
 
     // Ensure user has CCM ATA for receiving
-    let user_ccm_ata = derive_ata(&env.user.pubkey(), &env.ccm_mint.pubkey(), &token_2022_program_id());
+    let user_ccm_ata = derive_ata(
+        &env.user.pubkey(),
+        &env.ccm_mint.pubkey(),
+        &token_2022_program_id(),
+    );
     let user_ccm_before = read_token_balance(&env.svm, &user_ccm_ata);
 
     // Complete withdraw
@@ -1932,10 +1951,16 @@ fn test_queued_withdraw_from_buffer() {
     assert!(received > 0, "User should receive CCM");
 
     let vault_state = read_vault_state(&env.svm, &env.vault);
-    assert_eq!(vault_state.pending_withdrawals, 0, "Pending withdrawals should be cleared");
+    assert_eq!(
+        vault_state.pending_withdrawals, 0,
+        "Pending withdrawals should be cleared"
+    );
 
     println!("Test 4 PASSED: queued withdraw from buffer");
-    println!("  Deposited net: {}, Received: {} (after transfer fee on exit)", deposited_net, received);
+    println!(
+        "  Deposited net: {}, Received: {} (after transfer fee on exit)",
+        deposited_net, received
+    );
 }
 
 #[test]
@@ -1947,8 +1972,14 @@ fn test_queued_withdraw_triggers_unstake() {
     deposit_and_compound(&mut env, deposit_amount);
 
     let vault_state = read_vault_state(&env.svm, &env.vault);
-    assert!(vault_state.total_staked > 0, "Should have active Oracle stake");
-    assert_eq!(vault_state.pending_deposits, 0, "All deposited should be staked");
+    assert!(
+        vault_state.total_staked > 0,
+        "Should have active Oracle stake"
+    );
+    assert_eq!(
+        vault_state.pending_deposits, 0,
+        "All deposited should be staked"
+    );
     let user_shares = vault_state.total_shares;
     let request_shares = user_shares / 2;
     assert!(request_shares > 0, "request shares should be non-zero");
@@ -2071,7 +2102,11 @@ fn test_queued_withdraw_triggers_unstake() {
 
     // Instead: verify that after multiple compounds, the vault has grown and the
     // withdraw request is still pending (the queue completed long ago).
-    let user_ccm_ata = derive_ata(&env.user.pubkey(), &env.ccm_mint.pubkey(), &token_2022_program_id());
+    let user_ccm_ata = derive_ata(
+        &env.user.pubkey(),
+        &env.ccm_mint.pubkey(),
+        &token_2022_program_id(),
+    );
     let user_ccm_before = read_token_balance(&env.svm, &user_ccm_ata);
 
     // Use admin_emergency_unstake to break the lock, then buffer has enough for complete_withdraw
@@ -2112,8 +2147,14 @@ fn test_queued_withdraw_triggers_unstake() {
         user_shares - request_shares,
         "requested shares should burn, remainder should stay minted"
     );
-    assert_eq!(vault_state.total_staked, 0, "Oracle stake should be zero after unstake");
-    assert_eq!(vault_state.pending_withdrawals, 0, "Pending withdrawals cleared");
+    assert_eq!(
+        vault_state.total_staked, 0,
+        "Oracle stake should be zero after unstake"
+    );
+    assert_eq!(
+        vault_state.pending_withdrawals, 0,
+        "Pending withdrawals cleared"
+    );
 
     // Oracle position should be inactive
     let position = read_oracle_position(&env.svm, &env.oracle_position);
@@ -2153,7 +2194,11 @@ fn test_instant_redeem_with_penalty() {
     let new_total_shares = vault_state.total_shares;
     let shares_to_redeem = new_total_shares / 10; // Redeem 10% of shares
 
-    let user_ccm_ata = derive_ata(&env.user.pubkey(), &env.ccm_mint.pubkey(), &token_2022_program_id());
+    let user_ccm_ata = derive_ata(
+        &env.user.pubkey(),
+        &env.ccm_mint.pubkey(),
+        &token_2022_program_id(),
+    );
     let user_ccm_before = read_token_balance(&env.svm, &user_ccm_ata);
 
     // Instant redeem — 20% penalty
@@ -2283,7 +2328,9 @@ fn test_compound_cycles_with_five_minute_intervals_and_rate_alternation() {
 
     // Cycle 2 (low reward): set reward rate to zero, wait 5 minutes, add another entry.
     set_reward_rate(&mut env, LOW_REWARD_PER_SLOT);
-    slot_cursor = slot_cursor.saturating_add(FIVE_MINUTE_SLOTS).saturating_add(1);
+    slot_cursor = slot_cursor
+        .saturating_add(FIVE_MINUTE_SLOTS)
+        .saturating_add(1);
     warp_to_slot_and_expire(&mut env, slot_cursor);
     send_tx(
         &mut env.svm,
@@ -2315,7 +2362,9 @@ fn test_compound_cycles_with_five_minute_intervals_and_rate_alternation() {
 
     // Cycle 3 (high reward again): raise the rate and add a final entry before re-staking.
     high_reward_per_slot = set_reward_rate_bounded(&mut env, HIGH_REWARD_REQUESTED);
-    slot_cursor = slot_cursor.saturating_add(FIVE_MINUTE_SLOTS).saturating_add(1);
+    slot_cursor = slot_cursor
+        .saturating_add(FIVE_MINUTE_SLOTS)
+        .saturating_add(1);
     warp_to_slot_and_expire(&mut env, slot_cursor);
     send_tx(
         &mut env.svm,
@@ -2346,8 +2395,16 @@ fn test_compound_cycles_with_five_minute_intervals_and_rate_alternation() {
     observed_staked.push(read_vault_state(&env.svm, &env.vault).total_staked);
 
     // Confirm alternating reward behavior stayed in expected bounds.
-    assert_eq!(observed_rates.len(), 4, "expected 4 exchange-rate snapshots");
-    assert_eq!(observed_staked.len(), 4, "expected 4 total_staked snapshots");
+    assert_eq!(
+        observed_rates.len(),
+        4,
+        "expected 4 exchange-rate snapshots"
+    );
+    assert_eq!(
+        observed_staked.len(),
+        4,
+        "expected 4 total_staked snapshots"
+    );
 
     let r1_delta = observed_rates[1].saturating_sub(observed_rates[0]);
     let r2_delta = observed_rates[2].saturating_sub(observed_rates[1]);
@@ -2403,7 +2460,10 @@ fn test_compound_cycles_with_five_minute_intervals_and_rate_alternation() {
         high_reward_per_slot > LOW_REWARD_PER_SLOT,
         "upper-rate phase should be non-zero when capped APR allows it"
     );
-    assert!(weighted_total > 0, "pool should have positive weighted stake after seeding");
+    assert!(
+        weighted_total > 0,
+        "pool should have positive weighted stake after seeding"
+    );
 
     // Pause rewards and unwind via complete_withdraw from Oracle once lock+queue expires.
     set_reward_rate(&mut env, LOW_REWARD_PER_SLOT);
@@ -2426,7 +2486,11 @@ fn test_compound_cycles_with_five_minute_intervals_and_rate_alternation() {
     env.svm.expire_blockhash();
     send_tx(&mut env.svm, &[&env.user], &[request_ix]);
 
-    let user_ccm_ata = derive_ata(&env.user.pubkey(), &env.ccm_mint.pubkey(), &token_2022_program_id());
+    let user_ccm_ata = derive_ata(
+        &env.user.pubkey(),
+        &env.ccm_mint.pubkey(),
+        &token_2022_program_id(),
+    );
     let user_ccm_before = read_token_balance(&env.svm, &user_ccm_ata);
 
     slot_cursor = slot_cursor
@@ -2458,10 +2522,16 @@ fn test_compound_cycles_with_five_minute_intervals_and_rate_alternation() {
         shares_before_request - request_shares,
         "requested half should remain minted"
     );
-    assert_eq!(vault_state.pending_withdrawals, 0, "pending withdrawals should clear");
+    assert_eq!(
+        vault_state.pending_withdrawals, 0,
+        "pending withdrawals should clear"
+    );
 
     let position = read_oracle_position(&env.svm, &env.oracle_position);
-    assert!(!position.is_active, "oracle position should be inactive after unwind");
+    assert!(
+        !position.is_active,
+        "oracle position should be inactive after unwind"
+    );
 
     println!(
         "Test 7 PASSED: compound cycles every {} slots with alternating reward rates",
@@ -2572,7 +2642,11 @@ fn test_emergency_timeout_withdraw() {
     env.svm.warp_to_slot(EMERGENCY_TIMEOUT_SLOTS + 100);
     env.svm.expire_blockhash();
 
-    let user_ccm_ata = derive_ata(&env.user.pubkey(), &env.ccm_mint.pubkey(), &token_2022_program_id());
+    let user_ccm_ata = derive_ata(
+        &env.user.pubkey(),
+        &env.ccm_mint.pubkey(),
+        &token_2022_program_id(),
+    );
     let user_ccm_before = read_token_balance(&env.svm, &user_ccm_ata);
 
     // Emergency timeout withdraw — 20% penalty, no Oracle touch
@@ -2590,10 +2664,16 @@ fn test_emergency_timeout_withdraw() {
     assert!(received > 0, "User should receive CCM");
 
     let vault_state = read_vault_state(&env.svm, &env.vault);
-    assert_eq!(vault_state.pending_withdrawals, 0, "Pending withdrawals should be cleared");
+    assert_eq!(
+        vault_state.pending_withdrawals, 0,
+        "Pending withdrawals should be cleared"
+    );
 
     println!("Test 8 PASSED: emergency timeout withdraw");
-    println!("  Received: {} CCM (after 20% penalty + transfer fee)", received);
+    println!(
+        "  Received: {} CCM (after 20% penalty + transfer fee)",
+        received
+    );
 }
 
 // =============================================================================
@@ -2655,15 +2735,27 @@ fn test_cross_channel_isolation() {
 
     // Verify vaults are independent
     let vault_b_state = read_vault_state(&env.svm, &vault_b);
-    assert_eq!(vault_b_state.total_staked, 0, "Channel B should have no stake");
-    assert_eq!(vault_b_state.total_shares, 0, "Channel B should have no shares");
+    assert_eq!(
+        vault_b_state.total_staked, 0,
+        "Channel B should have no stake"
+    );
+    assert_eq!(
+        vault_b_state.total_shares, 0,
+        "Channel B should have no shares"
+    );
 
     // Verify channel A vault is unchanged
     let vault_a_state = read_vault_state(&env.svm, &channel_a_vault);
-    assert_eq!(vault_a_state.total_staked, staked_a, "Channel A stake should be unchanged");
+    assert_eq!(
+        vault_a_state.total_staked, staked_a,
+        "Channel A stake should be unchanged"
+    );
 
     // Channel A and B use different channel_config PDAs
-    assert_ne!(channel_a_config, channel_b_config, "Channel configs should differ");
+    assert_ne!(
+        channel_a_config, channel_b_config,
+        "Channel configs should differ"
+    );
 
     println!("Test 10 PASSED: cross-channel isolation");
     println!(

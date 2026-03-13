@@ -15,6 +15,8 @@ pub struct ProtocolState {
     pub admin: Pubkey,
     pub publisher: Pubkey,
     pub treasury: Pubkey,
+    /// Added in realloc migration (realloc_legacy_protocol). Sits between treasury and mint.
+    pub oracle_authority: Pubkey,
     pub mint: Pubkey,
     pub paused: bool,
     /// Legacy field (no longer enforced).
@@ -23,7 +25,7 @@ pub struct ProtocolState {
 }
 
 impl ProtocolState {
-    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 32 + 32 + 1 + 1 + 1;
+    pub const LEN: usize = 8 + 1 + 1 + 32 + 32 + 32 + 32 + 32 + 1 + 1 + 1; // 173
 }
 
 /// Fee configuration (PDA account)
@@ -177,8 +179,8 @@ impl MarketState {
     // + creator_wallet(32) + target(8) + resolution_root_seq(8)
     // + resolution_cumulative_total(8) + created_slot(8) + resolved_slot(8)
     // + vault(32) + yes_mint(32) + no_mint(32) + mint_authority(32)
-    pub const LEN: usize = 8 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8
-        + 32 + 32 + 32 + 32;
+    pub const LEN: usize =
+        8 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 32 + 32 + 32 + 32;
 }
 
 // =============================================================================
@@ -254,4 +256,3 @@ impl UserChannelStake {
     // 8 + 1 + 32 + 32 + 8 + 8 + 8 + 8 + 32 + 16 + 8 = 161
     pub const LEN: usize = 161;
 }
-

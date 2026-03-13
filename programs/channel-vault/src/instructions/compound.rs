@@ -14,24 +14,19 @@ use anchor_spl::{
 };
 
 use crate::constants::{
-    BPS_DENOMINATOR,
-    COMPOUND_BOUNTY_BPS,
-    TOKEN_2022_PROGRAM_ID,
-    VAULT_CCM_BUFFER_SEED,
-    VAULT_ORACLE_POSITION_SEED,
-    VAULT_SEED,
+    BPS_DENOMINATOR, COMPOUND_BOUNTY_BPS, TOKEN_2022_PROGRAM_ID, VAULT_CCM_BUFFER_SEED,
+    VAULT_ORACLE_POSITION_SEED, VAULT_SEED,
 };
 use crate::errors::VaultError;
-use crate::events::{Compounded, CompoundBountyPaid, ExchangeRateUpdated};
+use crate::events::{CompoundBountyPaid, Compounded, ExchangeRateUpdated};
 use crate::state::{ChannelVault, ExchangeRateOracle, VaultOraclePosition};
 
 // Import Oracle types, CPI, and state for pre-check
 use token_2022::{
     self,
     cpi::accounts::{ClaimChannelRewards, StakeChannel, UnstakeChannel},
-    ChannelConfigV2, ChannelStakePool, ProtocolState, UserChannelStake,
-    BOOST_PRECISION, CHANNEL_STAKE_POOL_SEED, PROTOCOL_SEED,
-    REWARD_PRECISION, STAKE_VAULT_SEED,
+    ChannelConfigV2, ChannelStakePool, ProtocolState, UserChannelStake, BOOST_PRECISION,
+    CHANNEL_STAKE_POOL_SEED, PROTOCOL_SEED, REWARD_PRECISION, STAKE_VAULT_SEED,
 };
 
 /// Pre-check whether the Oracle has pending rewards for this vault.
@@ -56,8 +51,7 @@ fn has_claimable_rewards(
 
     // Ensure there are spendable rewards beyond principal.
     // This mirrors claim_channel_rewards' excess check to avoid CPI failure.
-    let excess_rewards = oracle_vault_balance
-        .saturating_sub(pool.total_staked) as u128;
+    let excess_rewards = oracle_vault_balance.saturating_sub(pool.total_staked) as u128;
     if excess_rewards == 0 {
         return false;
     }
@@ -92,12 +86,9 @@ fn has_claimable_rewards(
         return false;
     };
 
-    let weighted = (us.amount as u128)
-        .saturating_mul(us.multiplier_bps as u128)
-        / (BOOST_PRECISION as u128);
-    let accumulated = weighted
-        .saturating_mul(simulated_acc)
-        / REWARD_PRECISION;
+    let weighted =
+        (us.amount as u128).saturating_mul(us.multiplier_bps as u128) / (BOOST_PRECISION as u128);
+    let accumulated = weighted.saturating_mul(simulated_acc) / REWARD_PRECISION;
     let pending = accumulated
         .saturating_sub(us.reward_debt)
         .saturating_add(us.pending_rewards as u128);
@@ -151,7 +142,6 @@ pub struct Compound<'info> {
     // -------------------------------------------------------------------------
     // Oracle Accounts
     // -------------------------------------------------------------------------
-
     /// Oracle program
     /// CHECK: Validated by address
     #[account(address = token_2022::ID)]
@@ -205,7 +195,6 @@ pub struct Compound<'info> {
     // -------------------------------------------------------------------------
     // Programs
     // -------------------------------------------------------------------------
-
     #[account(
         constraint = token_2022_program.key() == TOKEN_2022_PROGRAM_ID @ VaultError::InvalidTokenProgram,
     )]
@@ -236,12 +225,14 @@ fn maybe_update_exchange_rate_oracle<'a>(
     let vault_key = Pubkey::create_program_address(
         &[VAULT_SEED, vault.channel_config.as_ref(), &[vault.bump]],
         program_id,
-    ).map_err(|_| error!(VaultError::MathOverflow))?;
+    )
+    .map_err(|_| error!(VaultError::MathOverflow))?;
 
     let expected_oracle = Pubkey::find_program_address(
         &[crate::constants::EXCHANGE_RATE_SEED, vault_key.as_ref()],
         program_id,
-    ).0;
+    )
+    .0;
 
     if oracle_info.key() != expected_oracle
         || !oracle_info.is_writable
@@ -250,8 +241,7 @@ fn maybe_update_exchange_rate_oracle<'a>(
         return Ok(());
     }
 
-    let mut oracle_account: Account<ExchangeRateOracle> =
-        Account::try_from(oracle_info)?;
+    let mut oracle_account: Account<ExchangeRateOracle> = Account::try_from(oracle_info)?;
 
     if oracle_account.vault != vault_key {
         return Ok(());
@@ -284,10 +274,7 @@ fn maybe_update_exchange_rate_oracle<'a>(
 /// Claim pending Oracle rewards into vault_ccm_buffer.
 /// Returns the CCM amount claimed.
 #[inline(never)]
-fn do_claim_rewards<'info>(
-    accs: &mut Compound<'info>,
-    signer_seeds: &[&[&[u8]]],
-) -> Result<u64> {
+fn do_claim_rewards<'info>(accs: &mut Compound<'info>, signer_seeds: &[&[&[u8]]]) -> Result<u64> {
     msg!("Claiming pending rewards before unstake...");
     let buffer_before = accs.vault_ccm_buffer.amount;
 
@@ -355,11 +342,16 @@ fn do_unstake<'info>(
     // Using stake_amount directly would cause phantom inflation since
     // the Oracle holds less due to inbound transfer fee.
     accs.vault_ccm_buffer.reload()?;
-    let unstaked_received = accs.vault_ccm_buffer.amount
+    let unstaked_received = accs
+        .vault_ccm_buffer
+        .amount
         .checked_sub(buffer_before)
         .ok_or(VaultError::MathOverflow)?;
 
-    msg!("Unstaked {} CCM from Oracle (actual received)", unstaked_received);
+    msg!(
+        "Unstaked {} CCM from Oracle (actual received)",
+        unstaked_received
+    );
     Ok(unstaked_received)
 }
 
@@ -392,11 +384,7 @@ fn do_pay_bounty<'info>(
         },
         signer_seeds,
     );
-    anchor_spl::token_interface::transfer_checked(
-        bounty_ctx,
-        bounty_paid,
-        accs.ccm_mint.decimals,
-    )?;
+    anchor_spl::token_interface::transfer_checked(bounty_ctx, bounty_paid, accs.ccm_mint.decimals)?;
 
     emit!(CompoundBountyPaid {
         vault: accs.vault.key(),
@@ -413,7 +401,8 @@ fn do_pay_bounty<'info>(
 /// The gross amount sent != net amount recorded — this function returns AO's truth.
 #[inline(never)]
 fn read_oracle_stake_amount(oracle_user_stake_info: &AccountInfo) -> Result<u64> {
-    let data = oracle_user_stake_info.try_borrow_data()
+    let data = oracle_user_stake_info
+        .try_borrow_data()
         .map_err(|_| error!(VaultError::InvalidOracleAccount))?;
     let mut slice: &[u8] = &data;
     let stake = UserChannelStake::try_deserialize(&mut slice)
@@ -429,7 +418,11 @@ fn do_stake<'info>(
     amount: u64,
     lock_slots: u64,
 ) -> Result<()> {
-    msg!("Staking {} CCM in Oracle with {} slot lock", amount, lock_slots);
+    msg!(
+        "Staking {} CCM in Oracle with {} slot lock",
+        amount,
+        lock_slots
+    );
 
     let stake_accounts = StakeChannel {
         user: accs.vault.to_account_info(),
@@ -469,18 +462,17 @@ pub fn handler<'info>(mut ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -
     let unstaked_reserve_for_withdrawals = reserved_for_withdrawals.saturating_sub(pending);
     let is_active = ctx.accounts.vault_oracle_position.is_active;
 
-    require!(stakeable_pending > 0 || is_active, VaultError::NothingToCompound);
+    require!(
+        stakeable_pending > 0 || is_active,
+        VaultError::NothingToCompound
+    );
 
     let channel_config_key = ctx.accounts.vault.channel_config;
     let vault_bump = ctx.accounts.vault.bump;
     let lock_duration_slots = ctx.accounts.vault.lock_duration_slots;
 
     // Vault signer seeds
-    let signer_seeds: &[&[&[u8]]] = &[&[
-        VAULT_SEED,
-        channel_config_key.as_ref(),
-        &[vault_bump],
-    ]];
+    let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, channel_config_key.as_ref(), &[vault_bump]]];
 
     let mut amount_to_stake = stakeable_pending;
     let mut rewards_claimed: u64 = 0;
@@ -522,7 +514,10 @@ pub fn handler<'info>(mut ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -
     let mut bounty_paid = 0u64;
     if rewards_claimed > 0 && COMPOUND_BOUNTY_BPS > 0 {
         bounty_paid = do_pay_bounty(
-            &ctx.accounts, signer_seeds, rewards_claimed, clock.unix_timestamp,
+            &ctx.accounts,
+            signer_seeds,
+            rewards_claimed,
+            clock.unix_timestamp,
         )?;
     }
     if bounty_paid > 0 {
@@ -536,7 +531,12 @@ pub fn handler<'info>(mut ctx: Context<'_, '_, 'info, 'info, Compound<'info>>) -
     }
 
     if amount_to_stake > 0 {
-        do_stake(&ctx.accounts, signer_seeds, amount_to_stake, lock_duration_slots)?;
+        do_stake(
+            &ctx.accounts,
+            signer_seeds,
+            amount_to_stake,
+            lock_duration_slots,
+        )?;
     }
 
     // Read actual staked amount from AO (net of Token-2022 transfer fee).

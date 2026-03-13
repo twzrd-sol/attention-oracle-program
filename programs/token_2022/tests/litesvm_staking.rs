@@ -29,9 +29,9 @@ use std::path::Path;
 // Import program types and functions via the crate's public API
 use token_2022::{
     calculate_boost_bps, calculate_pending_rewards, calculate_reward_debt, update_pool_rewards,
-    ChannelConfigV2, ChannelStakePool, ProtocolState, RootEntry, UserChannelStake,
-    BOOST_PRECISION, CHANNEL_STAKE_POOL_SEED, CUMULATIVE_ROOT_HISTORY,
-    MIN_RUNWAY_SLOTS, PROTOCOL_SEED, REWARD_PRECISION, SLOTS_PER_DAY,
+    ChannelConfigV2, ChannelStakePool, ProtocolState, RootEntry, UserChannelStake, BOOST_PRECISION,
+    CHANNEL_STAKE_POOL_SEED, CUMULATIVE_ROOT_HISTORY, MIN_RUNWAY_SLOTS, PROTOCOL_SEED,
+    REWARD_PRECISION, SLOTS_PER_DAY,
 };
 
 // Local constant matching cumulative.rs internal value
@@ -188,11 +188,15 @@ fn test_pending_rewards_with_debt() {
     update_pool_rewards(&mut pool, 1000).unwrap();
 
     // User with reward_debt matching accumulated (just staked)
-    let debt = calculate_reward_debt(5_000_000_000, BOOST_PRECISION, pool.acc_reward_per_share).unwrap();
+    let debt =
+        calculate_reward_debt(5_000_000_000, BOOST_PRECISION, pool.acc_reward_per_share).unwrap();
     let user_stake = make_user_stake(5_000_000_000, BOOST_PRECISION, debt);
 
     let pending = calculate_pending_rewards(&user_stake, &pool).unwrap();
-    assert_eq!(pending, 0, "Newly staked user should have zero pending rewards");
+    assert_eq!(
+        pending, 0,
+        "Newly staked user should have zero pending rewards"
+    );
 }
 
 #[test]
@@ -204,7 +208,8 @@ fn test_pending_rewards_accrue_after_stake() {
     update_pool_rewards(&mut pool, 1000).unwrap();
 
     // User stakes 5 CCM at slot 1000 (debt set to current accumulator)
-    let debt = calculate_reward_debt(5_000_000_000, BOOST_PRECISION, pool.acc_reward_per_share).unwrap();
+    let debt =
+        calculate_reward_debt(5_000_000_000, BOOST_PRECISION, pool.acc_reward_per_share).unwrap();
 
     // Add user to pool
     pool.total_staked += 5_000_000_000;
@@ -221,7 +226,10 @@ fn test_pending_rewards_accrue_after_stake() {
     // acc_increase = (1000 * 500 * 1e12) / 15e9 = 500_000e12 / 15e9 = 33_333
     // user_accumulated = 5e9 * (old_acc + 33_333) / 1e12
     // user_pending = user_accumulated - debt
-    assert!(pending > 0, "User should have accrued rewards after staking");
+    assert!(
+        pending > 0,
+        "User should have accrued rewards after staking"
+    );
 }
 
 #[test]
@@ -260,7 +268,11 @@ fn test_boosted_rewards() {
     let pending_3x = calculate_pending_rewards(&user_3x, &pool).unwrap();
 
     // 3x user should earn 3x the rewards of 1x user
-    assert_eq!(pending_3x, pending_1x * 3, "3x boost should yield 3x rewards");
+    assert_eq!(
+        pending_3x,
+        pending_1x * 3,
+        "3x boost should yield 3x rewards"
+    );
 }
 
 // ============================================================================
@@ -346,7 +358,11 @@ fn test_boost_boundary_slots() {
     let just_under_7 = SLOTS_PER_DAY * 7 - 1;
     let exactly_7 = SLOTS_PER_DAY * 7;
 
-    assert_eq!(calculate_boost_bps(just_under_7), 10_000, "6.99 days = 1.0x");
+    assert_eq!(
+        calculate_boost_bps(just_under_7),
+        10_000,
+        "6.99 days = 1.0x"
+    );
     assert_eq!(calculate_boost_bps(exactly_7), 12_500, "7.00 days = 1.25x");
 }
 
@@ -478,10 +494,10 @@ fn unstake_guard(
 fn test_unstake_blocked_when_rewards_claimable() {
     // User has 100 pending, vault has 100 excess -> must claim first
     let result = unstake_guard(
-        100_000_000,      // pending
-        false,            // not shutdown
-        10_100_000_000,   // vault_balance (staked + rewards)
-        10_000_000_000,   // total_staked
+        100_000_000,    // pending
+        false,          // not shutdown
+        10_100_000_000, // vault_balance (staked + rewards)
+        10_000_000_000, // total_staked
     );
     assert_eq!(result, Err("PendingRewardsOnUnstake"));
 }
@@ -490,10 +506,10 @@ fn test_unstake_blocked_when_rewards_claimable() {
 fn test_unstake_allowed_when_no_pending() {
     // No pending rewards -> unstake proceeds
     let result = unstake_guard(
-        0,                // no pending
-        false,            // not shutdown
-        10_000_000_000,   // vault_balance
-        10_000_000_000,   // total_staked
+        0,              // no pending
+        false,          // not shutdown
+        10_000_000_000, // vault_balance
+        10_000_000_000, // total_staked
     );
     assert!(result.is_ok());
 }
@@ -502,10 +518,10 @@ fn test_unstake_allowed_when_no_pending() {
 fn test_unstake_allowed_when_shutdown() {
     // Pool shutdown -> unstake always proceeds regardless of pending
     let result = unstake_guard(
-        100_000_000,      // has pending
-        true,             // SHUTDOWN
-        10_100_000_000,   // vault with rewards
-        10_000_000_000,   // total_staked
+        100_000_000,    // has pending
+        true,           // SHUTDOWN
+        10_100_000_000, // vault with rewards
+        10_000_000_000, // total_staked
     );
     assert!(result.is_ok(), "Shutdown should bypass pending check");
 }
@@ -514,10 +530,10 @@ fn test_unstake_allowed_when_shutdown() {
 fn test_unstake_allowed_when_underfunded() {
     // Pending = 100, but vault has no excess (underfunded) -> forfeit + proceed
     let result = unstake_guard(
-        100_000_000,      // pending
-        false,            // not shutdown
-        10_000_000_000,   // vault_balance == total_staked (no excess)
-        10_000_000_000,   // total_staked
+        100_000_000,    // pending
+        false,          // not shutdown
+        10_000_000_000, // vault_balance == total_staked (no excess)
+        10_000_000_000, // total_staked
     );
     assert!(
         result.is_ok(),
@@ -529,10 +545,10 @@ fn test_unstake_allowed_when_underfunded() {
 fn test_unstake_allowed_when_partially_funded() {
     // Pending = 100M, but only 50M available -> underfunded, allow exit
     let result = unstake_guard(
-        100_000_000,      // pending 100M lamports
-        false,            // not shutdown
-        10_050_000_000,   // vault = staked + 50M
-        10_000_000_000,   // total_staked
+        100_000_000,    // pending 100M lamports
+        false,          // not shutdown
+        10_050_000_000, // vault = staked + 50M
+        10_000_000_000, // total_staked
     );
     assert!(
         result.is_ok(),
@@ -544,10 +560,10 @@ fn test_unstake_allowed_when_partially_funded() {
 fn test_unstake_blocked_when_exactly_funded() {
     // Pending = exactly available excess -> claimable, block unstake
     let result = unstake_guard(
-        100_000_000,      // pending
-        false,            // not shutdown
-        10_100_000_000,   // vault = staked + exactly pending
-        10_000_000_000,   // total_staked
+        100_000_000,    // pending
+        false,          // not shutdown
+        10_100_000_000, // vault = staked + exactly pending
+        10_000_000_000, // total_staked
     );
     assert_eq!(
         result,
@@ -561,7 +577,11 @@ fn test_unstake_blocked_when_exactly_funded() {
 // ============================================================================
 
 /// Simulates the claim invariant check from claim_channel_rewards
-fn claim_invariant(pending: u64, vault_balance: u64, total_staked: u64) -> Result<(), &'static str> {
+fn claim_invariant(
+    pending: u64,
+    vault_balance: u64,
+    total_staked: u64,
+) -> Result<(), &'static str> {
     if pending == 0 {
         return Err("NoRewardsToClaim");
     }
@@ -575,9 +595,9 @@ fn claim_invariant(pending: u64, vault_balance: u64, total_staked: u64) -> Resul
 #[test]
 fn test_claim_succeeds_when_funded() {
     let result = claim_invariant(
-        100_000_000,      // pending 0.1 CCM
-        10_500_000_000,   // vault has 0.5 CCM excess
-        10_000_000_000,   // total_staked
+        100_000_000,    // pending 0.1 CCM
+        10_500_000_000, // vault has 0.5 CCM excess
+        10_000_000_000, // total_staked
     );
     assert!(result.is_ok());
 }
@@ -585,7 +605,7 @@ fn test_claim_succeeds_when_funded() {
 #[test]
 fn test_claim_blocked_when_no_rewards() {
     let result = claim_invariant(
-        0,                // no pending
+        0, // no pending
         10_500_000_000,
         10_000_000_000,
     );
@@ -595,9 +615,9 @@ fn test_claim_blocked_when_no_rewards() {
 #[test]
 fn test_claim_blocked_when_underfunded() {
     let result = claim_invariant(
-        500_000_000,      // pending 0.5 CCM
-        10_100_000_000,   // only 0.1 CCM excess
-        10_000_000_000,   // total_staked
+        500_000_000,    // pending 0.5 CCM
+        10_100_000_000, // only 0.1 CCM excess
+        10_000_000_000, // total_staked
     );
     assert_eq!(result, Err("ClaimExceedsAvailableRewards"));
 }
@@ -606,9 +626,9 @@ fn test_claim_blocked_when_underfunded() {
 fn test_claim_blocked_when_fee_deficit() {
     // Fee deficit: vault < total_staked (buggy pre-fee accounting)
     let result = claim_invariant(
-        1,                // even 1 lamport fails
-        9_950_000_000,    // vault (post-fee)
-        10_000_000_000,   // total_staked (pre-fee BUG)
+        1,              // even 1 lamport fails
+        9_950_000_000,  // vault (post-fee)
+        10_000_000_000, // total_staked (pre-fee BUG)
     );
     assert_eq!(
         result,
@@ -621,11 +641,14 @@ fn test_claim_blocked_when_fee_deficit() {
 fn test_claim_exactly_available() {
     // Claim exactly the available excess
     let result = claim_invariant(
-        500_000_000,      // pending = excess
-        10_500_000_000,   // vault
-        10_000_000_000,   // staked
+        500_000_000,    // pending = excess
+        10_500_000_000, // vault
+        10_000_000_000, // staked
     );
-    assert!(result.is_ok(), "Claim should succeed when pending == excess");
+    assert!(
+        result.is_ok(),
+        "Claim should succeed when pending == excess"
+    );
 }
 
 // ============================================================================
@@ -647,7 +670,8 @@ fn test_full_reward_lifecycle() {
 
     // Update pool before adding user
     update_pool_rewards(&mut pool, 0).unwrap();
-    let debt = calculate_reward_debt(user_received, BOOST_PRECISION, pool.acc_reward_per_share).unwrap();
+    let debt =
+        calculate_reward_debt(user_received, BOOST_PRECISION, pool.acc_reward_per_share).unwrap();
 
     pool.total_staked += user_received;
     pool.total_weighted += user_received;
@@ -659,7 +683,10 @@ fn test_full_reward_lifecycle() {
 
     // 4. Calculate pending
     let pending = calculate_pending_rewards(&user, &pool).unwrap();
-    assert!(pending > 0, "User should have pending rewards after 10000 slots");
+    assert!(
+        pending > 0,
+        "User should have pending rewards after 10000 slots"
+    );
 
     // 5. Verify claim invariant holds
     let vault_balance = pool.total_staked + pending + 1_000_000; // some buffer
@@ -955,8 +982,10 @@ fn test_close_stake_pool_fails_when_not_shutdown() {
 
     // Channel config can be any account; stake pool PDA derives from it
     let channel_config = Pubkey::new_unique();
-    let (stake_pool, stake_bump) =
-        Pubkey::find_program_address(&[CHANNEL_STAKE_POOL_SEED, channel_config.as_ref()], &program_id());
+    let (stake_pool, stake_bump) = Pubkey::find_program_address(
+        &[CHANNEL_STAKE_POOL_SEED, channel_config.as_ref()],
+        &program_id(),
+    );
 
     let vault = Pubkey::new_unique();
     let destination = Pubkey::new_unique();
@@ -968,6 +997,7 @@ fn test_close_stake_pool_fails_when_not_shutdown() {
         admin: admin.pubkey(),
         publisher: Pubkey::new_unique(),
         treasury: Pubkey::new_unique(),
+        oracle_authority: Pubkey::new_unique(),
         mint: mint.pubkey(),
         paused: false,
         require_receipt: false,
@@ -1142,5 +1172,8 @@ fn test_close_stake_pool_fails_when_not_shutdown() {
     let tx = Transaction::new(&[&admin], message, blockhash);
 
     let result = svm.send_transaction(tx);
-    assert!(result.is_err(), "Expected failure when pool is not shutdown");
+    assert!(
+        result.is_err(),
+        "Expected failure when pool is not shutdown"
+    );
 }

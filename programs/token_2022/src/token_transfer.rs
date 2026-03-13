@@ -25,10 +25,9 @@ pub fn transfer_checked_with_remaining<'info>(
     // Only allow accounts owned by Token-2022 program or system/sysvar accounts
     // This prevents CPI injection attacks via malicious extension programs
     for account in remaining_accounts.iter() {
-        let is_valid_owner =
-            account.owner == &spl_token_2022::ID ||
-            account.owner == &anchor_lang::solana_program::system_program::ID ||
-            account.owner == &anchor_lang::solana_program::sysvar::ID;
+        let is_valid_owner = account.owner == &spl_token_2022::ID
+            || account.owner == &anchor_lang::solana_program::system_program::ID
+            || account.owner == &anchor_lang::solana_program::sysvar::ID;
 
         require!(is_valid_owner, OracleError::InvalidTokenProgram);
     }
@@ -44,11 +43,12 @@ pub fn transfer_checked_with_remaining<'info>(
         decimals,
     )?;
 
-    ix.accounts.extend(remaining_accounts.iter().map(|ai| AccountMeta {
-        pubkey: *ai.key,
-        is_signer: ai.is_signer,
-        is_writable: ai.is_writable,
-    }));
+    ix.accounts
+        .extend(remaining_accounts.iter().map(|ai| AccountMeta {
+            pubkey: *ai.key,
+            is_signer: ai.is_signer,
+            is_writable: ai.is_writable,
+        }));
 
     let mut account_infos = Vec::with_capacity(4 + remaining_accounts.len());
     account_infos.push(from.clone());

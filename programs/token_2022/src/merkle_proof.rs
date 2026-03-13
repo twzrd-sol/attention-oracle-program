@@ -1,5 +1,5 @@
-use anchor_lang::prelude::Pubkey;
 use crate::constants::{CUMULATIVE_V2_DOMAIN, CUMULATIVE_V3_DOMAIN, GLOBAL_V4_DOMAIN};
+use anchor_lang::prelude::Pubkey;
 use sha3::{Digest, Keccak256};
 
 pub fn keccak_hashv(parts: &[&[u8]]) -> [u8; 32] {

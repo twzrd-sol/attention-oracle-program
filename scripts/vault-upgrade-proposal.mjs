@@ -1,11 +1,11 @@
 import * as multisig from "@sqds/multisig";
-import { Connection, Keypair, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, TransactionMessage, VersionedTransaction, SYSVAR_CLOCK_PUBKEY, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
 import fs from "fs";
 
 const RPC_URL = "https://api.mainnet-beta.solana.com";
 const MULTISIG = new PublicKey("BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ");
 const VAULT_PROGRAM = new PublicKey("5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ");
-const BUFFER = new PublicKey("HRWjZAU5d4Pb9FQ2mTMdPffWq5ykRUwgpnkkgGhN76az");
+const BUFFER = new PublicKey("5gTcsTvCCHXh31mHEcibcq78tnEXvprATX7C9aDDKfZ4");
 const BPF_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
 // Load both member keypairs
@@ -42,7 +42,8 @@ const upgradeIx = {
     { pubkey: VAULT_PROGRAM, isSigner: false, isWritable: true },
     { pubkey: BUFFER, isSigner: false, isWritable: true },
     { pubkey: member1.publicKey, isSigner: false, isWritable: true },
-    { pubkey: new PublicKey("11111111111111111111111111111111"), isSigner: false, isWritable: false },
+    { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+    { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
     { pubkey: vaultPda, isSigner: true, isWritable: false },
   ],
   data: upgradeIxData,

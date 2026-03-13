@@ -25,8 +25,8 @@ use crate::state::{ChannelVault, UserVaultState, VaultOraclePosition, WithdrawRe
 use token_2022::{
     self,
     cpi::accounts::{ClaimChannelRewards, EmergencyUnstakeChannel, UnstakeChannel},
-    ChannelConfigV2, ChannelStakePool, ProtocolState, UserChannelStake,
-    BOOST_PRECISION, CHANNEL_STAKE_POOL_SEED, PROTOCOL_SEED, REWARD_PRECISION, STAKE_VAULT_SEED,
+    ChannelConfigV2, ChannelStakePool, ProtocolState, UserChannelStake, BOOST_PRECISION,
+    CHANNEL_STAKE_POOL_SEED, PROTOCOL_SEED, REWARD_PRECISION, STAKE_VAULT_SEED,
 };
 
 // =============================================================================
@@ -54,8 +54,7 @@ fn has_claimable_rewards(
 
     // Ensure there are spendable rewards beyond principal.
     // This mirrors claim_channel_rewards' excess check to avoid CPI failure.
-    let excess_rewards = oracle_vault_balance
-        .saturating_sub(pool.total_staked) as u128;
+    let excess_rewards = oracle_vault_balance.saturating_sub(pool.total_staked) as u128;
     if excess_rewards == 0 {
         return false;
     }
@@ -90,12 +89,9 @@ fn has_claimable_rewards(
         return false;
     };
 
-    let weighted = (us.amount as u128)
-        .saturating_mul(us.multiplier_bps as u128)
-        / (BOOST_PRECISION as u128);
-    let accumulated = weighted
-        .saturating_mul(simulated_acc)
-        / REWARD_PRECISION;
+    let weighted =
+        (us.amount as u128).saturating_mul(us.multiplier_bps as u128) / (BOOST_PRECISION as u128);
+    let accumulated = weighted.saturating_mul(simulated_acc) / REWARD_PRECISION;
     let pending = accumulated
         .saturating_sub(us.reward_debt)
         .saturating_add(us.pending_rewards as u128);
@@ -314,7 +310,6 @@ pub struct CompleteWithdraw<'info> {
     // -------------------------------------------------------------------------
     // Oracle Accounts (for potential unstake)
     // -------------------------------------------------------------------------
-
     /// CHECK: Oracle program
     #[account(address = token_2022::ID)]
     pub oracle_program: AccountInfo<'info>,
@@ -403,11 +398,8 @@ pub fn complete_withdraw(
         );
 
         // Unstake all from Oracle
-        let signer_seeds: &[&[&[u8]]] = &[&[
-            VAULT_SEED,
-            channel_config_key.as_ref(),
-            &[vault_bump],
-        ]];
+        let signer_seeds: &[&[&[u8]]] =
+            &[&[VAULT_SEED, channel_config_key.as_ref(), &[vault_bump]]];
 
         let unstake_accounts = UnstakeChannel {
             user: ctx.accounts.vault.to_account_info(),
@@ -451,8 +443,12 @@ pub fn complete_withdraw(
                 .pending_deposits
                 .checked_add(excess)
                 .ok_or(VaultError::MathOverflow)?;
-            msg!("Unstake returned {} CCM, using {}, excess {} to pending",
-                 actual_received, ccm_amount, excess);
+            msg!(
+                "Unstake returned {} CCM, using {}, excess {} to pending",
+                actual_received,
+                ccm_amount,
+                excess
+            );
         }
     }
 
@@ -461,11 +457,7 @@ pub fn complete_withdraw(
     // Vault accounting is based on what we send (ccm_amount), not what user receives.
     // This is correct: the fee is borne by the recipient on exit, not the vault.
     let user_balance_before = ctx.accounts.user_ccm.amount;
-    let signer_seeds: &[&[&[u8]]] = &[&[
-        VAULT_SEED,
-        channel_config_key.as_ref(),
-        &[vault_bump],
-    ]];
+    let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, channel_config_key.as_ref(), &[vault_bump]]];
 
     let transfer_ctx = CpiContext::new_with_signer(
         ctx.accounts.token_2022_program.to_account_info(),
@@ -640,11 +632,7 @@ pub fn instant_redeem(ctx: Context<InstantRedeem>, shares: u64, min_amount: u64)
 
     // Transfer CCM to user (80%)
     let user_balance_before = ctx.accounts.user_ccm.amount;
-    let signer_seeds: &[&[&[u8]]] = &[&[
-        VAULT_SEED,
-        channel_config_key.as_ref(),
-        &[vault_bump],
-    ]];
+    let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, channel_config_key.as_ref(), &[vault_bump]]];
 
     let transfer_ctx = CpiContext::new_with_signer(
         ctx.accounts.token_2022_program.to_account_info(),
@@ -772,7 +760,6 @@ pub struct AdminEmergencyUnstake<'info> {
     // -------------------------------------------------------------------------
     // Oracle Accounts
     // -------------------------------------------------------------------------
-
     /// CHECK: Oracle program
     #[account(address = token_2022::ID)]
     pub oracle_program: AccountInfo<'info>,
@@ -845,11 +832,7 @@ pub fn admin_emergency_unstake<'info>(
     let vault_bump = vault.bump;
 
     // Vault signer seeds
-    let signer_seeds: &[&[&[u8]]] = &[&[
-        VAULT_SEED,
-        channel_config_key.as_ref(),
-        &[vault_bump],
-    ]];
+    let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, channel_config_key.as_ref(), &[vault_bump]]];
 
     // Track rewards claimed for event
     let mut rewards_claimed: u64 = 0;
@@ -892,7 +875,10 @@ pub fn admin_emergency_unstake<'info>(
         ctx.accounts.vault_ccm_buffer.reload()?;
         let buffer_after_claim = ctx.accounts.vault_ccm_buffer.amount;
         rewards_claimed = buffer_after_claim.saturating_sub(buffer_before_claim);
-        msg!("Claimed {} CCM in rewards (would have been forfeited)", rewards_claimed);
+        msg!(
+            "Claimed {} CCM in rewards (would have been forfeited)",
+            rewards_claimed
+        );
     } else {
         msg!("No claimable rewards, skipping claim CPI");
     }
@@ -1061,7 +1047,7 @@ pub fn emergency_timeout_withdraw(
     let slots_since_compound = clock.slot.saturating_sub(vault.last_compound_slot);
     require!(
         slots_since_compound >= EMERGENCY_TIMEOUT_SLOTS,
-        VaultError::OracleStakeNotLocked  // Reusing error - Oracle not stale enough
+        VaultError::OracleStakeNotLocked // Reusing error - Oracle not stale enough
     );
 
     let ccm_requested = request.ccm_amount;
@@ -1084,14 +1070,13 @@ pub fn emergency_timeout_withdraw(
     // Note: We're paying from buffer, which may include pending_deposits.
     // In a true emergency (Oracle dead), we prioritize user exit over accounting purity.
     let buffer_balance = ctx.accounts.vault_ccm_buffer.amount;
-    require!(buffer_balance >= ccm_returned, VaultError::InsufficientVaultBalance);
+    require!(
+        buffer_balance >= ccm_returned,
+        VaultError::InsufficientVaultBalance
+    );
 
     // Transfer CCM to user (80% of requested)
-    let signer_seeds: &[&[&[u8]]] = &[&[
-        VAULT_SEED,
-        channel_config_key.as_ref(),
-        &[vault_bump],
-    ]];
+    let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, channel_config_key.as_ref(), &[vault_bump]]];
 
     let transfer_ctx = CpiContext::new_with_signer(
         ctx.accounts.token_2022_program.to_account_info(),

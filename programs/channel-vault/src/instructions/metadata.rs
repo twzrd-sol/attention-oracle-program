@@ -87,7 +87,10 @@ pub fn handler(
     uri: String,
 ) -> Result<()> {
     require!(name.len() <= MAX_NAME_LEN, VaultError::MetadataFieldTooLong);
-    require!(symbol.len() <= MAX_SYMBOL_LEN, VaultError::MetadataFieldTooLong);
+    require!(
+        symbol.len() <= MAX_SYMBOL_LEN,
+        VaultError::MetadataFieldTooLong
+    );
     require!(uri.len() <= MAX_URI_LEN, VaultError::MetadataFieldTooLong);
 
     let vault = &ctx.accounts.vault;
@@ -113,11 +116,7 @@ pub fn handler(
         // Vault PDA signs as mint_authority for CreateMetadataAccountV3
         let channel_config_key = vault.channel_config;
         let bump = vault.bump;
-        let signer_seeds: &[&[&[u8]]] = &[&[
-            VAULT_SEED,
-            channel_config_key.as_ref(),
-            &[bump],
-        ]];
+        let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, channel_config_key.as_ref(), &[bump]]];
 
         // Borsh: enum variant 33 = CreateMetadataAccountV3
         let mut data = vec![33u8];
@@ -130,8 +129,8 @@ pub fn handler(
             accounts: vec![
                 AccountMeta::new(ctx.accounts.metadata.key(), false),
                 AccountMeta::new_readonly(ctx.accounts.vlofi_mint.key(), false),
-                AccountMeta::new_readonly(ctx.accounts.vault.key(), true),  // mint_authority (PDA signer)
-                AccountMeta::new(ctx.accounts.admin.key(), true),           // payer
+                AccountMeta::new_readonly(ctx.accounts.vault.key(), true), // mint_authority (PDA signer)
+                AccountMeta::new(ctx.accounts.admin.key(), true),          // payer
                 AccountMeta::new_readonly(ctx.accounts.admin.key(), false), // update_authority
                 AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
             ],
