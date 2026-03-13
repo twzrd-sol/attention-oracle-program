@@ -85,6 +85,23 @@ Developers integrating with the Attention Oracle (e.g., wallets, analytics dashb
 * `INTEGRATION.md`: Technical guide for generating proofs and claiming rewards.
 * `DEPLOYMENTS.md`: List of active deployments and Program IDs.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing changes.
+
+## Environment Variables
+
+This repo uses a shared Solana/Anchor script environment and a large script set with per-command overrides.
+At minimum, keep these ready:
+
+- `RPC_URL` (required by most deployment and admin scripts)
+- `CLUSTER` (must match your target cluster)
+- `KEYPAIR` or `ANCHOR_WALLET` (signer keypair for on-chain actions)
+- `ANCHOR_PROVIDER_URL` (Anchor/RPC config)
+- `I_UNDERSTAND_MAINNET=1` (explicit acknowledgement when operating against mainnet)
+
+For a full command-by-command matrix, see inline script headers and `scripts/` usage docs.
+
 ## Security
 
 This project takes security seriously.
@@ -94,4 +111,4 @@ This project takes security seriously.
 
 ## License
 
-Licensed under Apache 2.0 / MIT. See `LICENSE` for details.
+Licensed under Apache 2.0 / MIT. See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT).
