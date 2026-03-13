@@ -27,7 +27,7 @@ import * as fs from "fs";
 const MULTISIG_PDA = new PublicKey("BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ");
 const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 const PROGRAM_DATA = new PublicKey("5GyaaVmzRr2r9KcUuzt9SxBVq9ubTT5m3pH9Lzy3Kh4L");
-const BUFFER = new PublicKey("3dNieHtHmA2CjdZjoYGXyMtJW6yGSQ1moekjxL8uofoe");
+const BUFFER = new PublicKey("8T5qmmVAtUMEd7aFgV9DmtPKWVeZ32pZJzUFudXfHh6i");
 const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
 const KEYPAIR_PATHS = [
