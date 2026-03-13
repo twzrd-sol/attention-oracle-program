@@ -5,8 +5,17 @@ import fs from "fs";
 const RPC_URL = "https://api.mainnet-beta.solana.com";
 const MULTISIG = new PublicKey("BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ");
 const VAULT_PROGRAM = new PublicKey("5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ");
-const BUFFER = new PublicKey("5gTcsTvCCHXh31mHEcibcq78tnEXvprATX7C9aDDKfZ4");
 const BPF_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
+const UPGRADABLE_PROGRAM_PUBKEY = process.env.UPGRADE_BUFFER || process.argv[2];
+
+if (!UPGRADABLE_PROGRAM_PUBKEY) {
+  console.error("ERROR: upgrade buffer not provided");
+  console.error("Usage: UPGRADE_BUFFER=<pubkey> node scripts/vault-upgrade-proposal.mjs");
+  console.error("Tip: create one with: solana program write-buffer target/deploy/token_2022.so --url <RPC> --keypair <payer>");
+  process.exit(1);
+}
+
+const BUFFER = new PublicKey(UPGRADABLE_PROGRAM_PUBKEY);
 
 // Load both member keypairs
 const member1 = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(`${process.env.HOME}/.config/solana/id.json`, "utf-8"))));
@@ -50,6 +59,17 @@ const upgradeIx = {
 };
 
 const { blockhash } = await connection.getLatestBlockhash();
+const bufferInfo = await connection.getAccountInfo(BUFFER);
+if (!bufferInfo) {
+  throw new Error(`Buffer account not found: ${BUFFER.toBase58()}`);
+}
+if (!bufferInfo.owner.equals(BPF_UPGRADEABLE)) {
+  throw new Error(`Invalid buffer owner: ${bufferInfo.owner.toBase58()} (expected ${BPF_UPGRADEABLE.toBase58()})`);
+}
+if (bufferInfo.data.length >= 37 && bufferInfo.data[4] === 1) {
+  const auth = new PublicKey(bufferInfo.data.slice(5, 37));
+  console.log(`Buffer authority: ${auth.toBase58()}`);
+}
 
 // Create vault transaction
 const createTxIx = multisig.instructions.vaultTransactionCreate({

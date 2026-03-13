@@ -22,23 +22,61 @@ import * as fs from "fs";
 const RPC_URL = "https://api.mainnet-beta.solana.com";
 const MULTISIG_PUBKEY = new PublicKey("BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ");
 const PROGRAM_ID = new PublicKey("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
-const BUFFER_PUBKEY = new PublicKey("8T5qmmVAtUMEd7aFgV9DmtPKWVeZ32pZJzUFudXfHh6i");
 const PROGRAM_DATA_PUBKEY = new PublicKey("5GyaaVmzRr2r9KcUuzt9SxBVq9ubTT5m3pH9Lzy3Kh4L");
 const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
+
+function resolveBufferPubkey(): PublicKey {
+  const raw = process.env.UPGRADE_BUFFER || process.argv[2] || "";
+  if (!raw || !raw.trim()) {
+    console.error("ERROR: upgrade buffer not provided");
+    console.error("Usage: UPGRADE_BUFFER=<pubkey> npx ts-node scripts/propose-upgrade.ts");
+    console.error("Tip: create one with: solana program write-buffer target/deploy/token_2022.so --url <RPC> --keypair <payer>");
+    process.exit(1);
+  }
+  try {
+    return new PublicKey(raw.trim());
+  } catch {
+    console.error(`ERROR: invalid buffer pubkey: ${raw}`);
+    process.exit(1);
+  }
+}
 
 async function main() {
   // Load keypair
   const keypairPath = process.env.SOLANA_KEYPAIR || `${process.env.HOME}/.config/solana/id.json`;
   const keypairData = JSON.parse(fs.readFileSync(keypairPath, "utf-8"));
   const payer = Keypair.fromSecretKey(new Uint8Array(keypairData));
+  const bufferPubkey = resolveBufferPubkey();
 
   console.log("=== Squads V4 Program Upgrade Proposal ===");
   console.log("Proposer:", payer.publicKey.toBase58());
   console.log("Multisig:", MULTISIG_PUBKEY.toBase58());
   console.log("Program:", PROGRAM_ID.toBase58());
-  console.log("Buffer:", BUFFER_PUBKEY.toBase58());
+  console.log("Buffer:", bufferPubkey.toBase58());
 
   const connection = new Connection(RPC_URL, "confirmed");
+  const bufferInfo = await connection.getAccountInfo(bufferPubkey);
+  if (!bufferInfo) {
+    console.error("ERROR: Buffer account not found");
+    process.exit(1);
+  }
+  if (!bufferInfo.owner.equals(BPF_LOADER_UPGRADEABLE)) {
+    console.error(`ERROR: Buffer account has unexpected owner: ${bufferInfo.owner.toBase58()}`);
+    process.exit(1);
+  }
+  if (bufferInfo.data.length >= 37 && bufferInfo.data[4] === 1) {
+    const auth = new PublicKey(bufferInfo.data.slice(5, 37));
+    console.log(`  Buffer authority: ${auth.toBase58()}`);
+  }
+  const payerLamports = await connection.getBalance(payer.publicKey);
+  if (payerLamports < bufferInfo.lamports + 5_000_000) {
+    console.error(
+      `ERROR: Fee payer balance too low to execute proposal flow. Needed at least ${(
+        bufferInfo.lamports + 5_000_000
+      ) / 1e9} SOL`,
+    );
+    process.exit(1);
+  }
 
   // Get vault PDA (authority for program upgrades)
   const [vaultPda] = multisig.getVaultPda({
@@ -69,7 +107,7 @@ async function main() {
     keys: [
       { pubkey: PROGRAM_DATA_PUBKEY, isSigner: false, isWritable: true },
       { pubkey: PROGRAM_ID, isSigner: false, isWritable: true },
-      { pubkey: BUFFER_PUBKEY, isSigner: false, isWritable: true },
+      { pubkey: bufferPubkey, isSigner: false, isWritable: true },
       { pubkey: payer.publicKey, isSigner: false, isWritable: true }, // spill account
       { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
       { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
