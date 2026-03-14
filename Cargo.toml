@@ -1,15 +1,13 @@
 [workspace]
 members = [
-  "programs/token_2022",
-  "programs/channel-vault",
+  "programs/attention-oracle",
 ]
 resolver = "2"
 
-
 [profile.release]
-opt-level = "z"
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
+opt-level = 3
 strip = true
 panic = "abort"
