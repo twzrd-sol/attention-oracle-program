@@ -6,7 +6,7 @@ on:
       binary_path:
         description: 'Path to new program binary'
         required: true
-        default: 'programs/target/deploy/token_2022.so'
+        default: 'target/deploy/attention_oracle.so'
       skip_devnet:
         description: 'Skip devnet preflight (dangerous!)'
         required: false
@@ -293,7 +293,7 @@ jobs:
           ROLLBACK_TAG=$(cat ROLLBACK_TAG.txt)
 
           echo "Rolling back to: $ROLLBACK_TAG"
-          gh release download "$ROLLBACK_TAG" -p "token_2022.so" -O rollback.so
+          gh release download "$ROLLBACK_TAG" -p "attention_oracle.so" -O rollback.so
 
           echo "✅ Downloaded rollback binary ($(stat -c%s rollback.so) bytes)"
 

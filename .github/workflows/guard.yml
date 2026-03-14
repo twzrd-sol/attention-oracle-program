@@ -39,10 +39,10 @@ jobs:
           fi
 
           # 1) Allow only certain subtrees under programs/ and oracles/ for CHANGED files
-          ALLOWED="^(programs/(token_2022|attention_oracle_program)|oracles/x402-switchboard)(/|$)"
+          ALLOWED="^(programs/(attention-oracle|attention_oracle)|oracles/x402-switchboard)(/|$)"
           FORBIDDEN_DIRS=$(echo "$CHANGED_FILES" | grep -E '^(programs|oracles)/' | grep -Ev "$ALLOWED" || true)
           if [ -n "$FORBIDDEN_DIRS" ]; then
-            echo "❌ Forbidden paths detected (only token_2022, attention_oracle_program, x402-switchboard allowed):"
+            echo "❌ Forbidden paths detected (only attention-oracle, x402-switchboard allowed):"
             echo "$FORBIDDEN_DIRS"
             exit 1
           fi
@@ -89,10 +89,10 @@ jobs:
           echo "Changed files:\n$CHANGED_FILES"
 
           # 1) Allow only certain subtrees under programs/ and oracles/
-          ALLOWED='^(programs/(token_2022|attention_oracle_program)|oracles/x402-switchboard)(/|$)'
+          ALLOWED='^(programs/(attention-oracle|attention_oracle)|oracles/x402-switchboard)(/|$)'
           FORBIDDEN_DIRS=$(echo "$CHANGED_FILES" | grep -E '^(programs|oracles)/' | grep -Ev "$ALLOWED" || true)
           if [ -n "$FORBIDDEN_DIRS" ]; then
-            echo "❌ Forbidden paths detected (only token_2022, attention_oracle_program, x402-switchboard allowed):"
+            echo "❌ Forbidden paths detected (only attention-oracle, x402-switchboard allowed):"
             echo "$FORBIDDEN_DIRS"
             exit 1
           fi

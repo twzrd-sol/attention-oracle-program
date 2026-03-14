@@ -1,15 +1,14 @@
-# attention-oracle-program — On-Chain Programs
+# attention-oracle-program — On-Chain Program
 
 ## Overview
 
-Anchor workspace containing the two Solana programs that power the WZRD protocol's on-chain layer. Both programs are deployed to mainnet under Squads V4 multisig governance and have verified builds on Solscan.
+Pinocchio-based Solana program powering the WZRD protocol's on-chain layer. Deployed to mainnet under Squads V4 multisig governance. Upgraded from Anchor to Pinocchio on 2026-03-14 (Proposal #135, slot 406276901).
 
-## Programs
+## Program
 
 | Program | ID | Purpose |
 |---------|----|---------|
-| **Attention Oracle (AO)** | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | Merkle-based cumulative reward claims (V2). Stores published roots, verifies proofs, transfers CCM to claimants. |
-| **Channel Vault** | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | vLOFI staking vault. Deposits, withdrawals, compound (auto-reinvest transfer fees), ExchangeRateOracle. |
+| **Attention Oracle (AO) v2** | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | Merkle-based cumulative reward claims, channel staking, prediction markets, strategy vaults, price feeds. 45 instructions across 9 modules. |
 
 ## Key Accounts
 
@@ -18,56 +17,67 @@ Anchor workspace containing the two Solana programs that power the WZRD protocol
 | CCM Mint | `Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM` | Token-2022 mint (TransferFeeConfig only) |
 | vLOFI Mint | `E9Kt33axpCy3ve2PCY9BSrbPhcR9wdDsWQECAahzw2dS` | Lofi 3h receipt token |
 | Protocol State PDA | `596VBoVvzASAhe38CcBSJnv1LdVFPu4EdB8gw1Ko2nx3` | AO global state |
-| Vault PDA | `7tjCgZcsK4sgV65wsNajUVRuGHQ7GZELWfTaWYbCBDTw` | Channel Vault state |
-| ExchangeRateOracle | `9QaDWJESP1vYWGSpxRHKLmqvcQvXLkUt45aQeVRTGgZY` | CCM/vLOFI rate (bump 253) |
 | Treasury ATA | `95qQ4kePYadvMQETjjqCmHJLzJq9YnrAEBwtVfzqMwAF` | Locked to claims only |
-| Multisig (Squads V4) | `BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ` | 3-of-5 upgrade authority for AO |
+| Multisig (Squads V4) | `BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ` | 3-of-5 upgrade authority |
 
 ## Architecture
 
 ```
-wzrd-core (backend)
-  ├── Publishes merkle roots → AO program (claim_cumulative IX)
-  ├── Relays gasless claims → AO program (claim_cumulative_sponsored IX)
-  └── Triggers compound    → Channel Vault (compound IX)
-
 programs/
-  ├── token_2022/          # Attention Oracle (AO) — the "token_2022" name is historical
-  │   └── src/lib.rs       # Claims, merkle verification, protocol state
-  └── channel-vault/
-      └── src/lib.rs       # Vault logic, staking, compound, exchange rate oracle
+  └── attention-oracle/          # AO v2 — Pinocchio (153KB binary)
+      └── src/
+          ├── lib.rs             # Entry point, 27-arm discriminator router
+          ├── state.rs           # Account structs, PDA seeds, discriminators
+          ├── error.rs           # 84 error variants
+          ├── keccak.rs          # Custom Keccak-256 (no external dep)
+          ├── klend.rs           # Kamino K-Lend CPI helpers
+          └── instructions/
+              ├── vault.rs       # Market vault operations (8 IX)
+              ├── global.rs      # Merkle root + claims (6 IX)
+              ├── governance.rs  # Fee harvesting + treasury (3 IX)
+              ├── admin.rs       # Admin operations (5 IX)
+              ├── channel_staking.rs  # Channel staking (5 IX)
+              ├── markets.rs     # Prediction markets (11 IX)
+              ├── strategy.rs    # Strategy vault CPI (5 IX)
+              └── price_feed.rs  # Price feed oracle (3 IX)
 ```
 
 ## Tech Stack
 
-- **Framework**: Anchor 0.32.1
-- **Solana SDK**: solana-program 2.x
+- **Framework**: Pinocchio 0.9 (no Anchor)
 - **Token standard**: Token-2022 (NOT legacy SPL)
-- **Build**: `anchor build --verifiable` (Docker deterministic builds)
-- **Deploy**: Squads V4 proposal workflow (3-of-5 multisig) for both programs
+- **Build**: `cargo build-sbf` (deterministic builds via Docker)
+- **Deploy**: Squads V4 proposal workflow (3-of-5 multisig)
+- **Binary**: ~153KB active code (vs 867KB Anchor predecessor)
 
 ## Build & Test
 
 ```bash
-# Local build (for testing only — NOT for deployment)
-anchor build
+# Local build
+cargo build-sbf
 
-# Verifiable build (required for deployment)
-anchor build --verifiable --program-name token_2022
-anchor build --verifiable --program-name channel_vault
+# Tests (require localtest feature)
+cargo test -p attention-oracle --features localtest
 
-# Tests
-anchor test                                    # Full suite
-cargo test -p channel-vault --lib              # Vault unit tests (57 tests)
+# Feature-gated builds
+cargo build-sbf --features channel_staking,strategy,prediction_markets,price_feed
 ```
+
+## Feature Flags
+
+| Flag | Instructions | Purpose |
+|------|-------------|---------|
+| `channel_staking` | 5 | Channel staking + fee config |
+| `strategy` | 5 | K-Lend strategy vault CPI |
+| `prediction_markets` | 11 | Creator prediction markets |
+| `price_feed` | 3 | On-chain price oracle |
+| `localtest` | — | Enables litesvm integration tests |
 
 ## Deployment
 
-**CRITICAL**: Never deploy from `anchor build` (host). Always use verifiable builds.
+**CRITICAL**: Never deploy from host build. Always use deterministic Docker builds.
 
-Pipeline: `anchor build --verifiable` → deploy `.so` from `target/verifiable/` → `solana-verify verify-from-repo`
-
-AO upgrades require Squads V4 3-of-5 multisig approval. See `~/private_twzrd/defi/scripts/propose-ao-upgrade.ts`.
+Pipeline: `cargo build-sbf` (Docker) → write buffer to mainnet → Squads 3/5 proposal → `solana-verify verify-from-repo`
 
 ## SBF Constraints
 
@@ -75,6 +85,8 @@ AO upgrades require Squads V4 3-of-5 multisig approval. See `~/private_twzrd/def
 - Pattern: extract heavy logic to `#[inline(never)]` functions
 - Minimize Pubkey arguments (32 bytes each on caller stack)
 - Use `crate::id()` inside callees instead of passing program_id
+- Manual byte-packing for CPI instruction data (no Borsh)
+- All discriminators computed as `const fn` at compile time
 
 ## Gitignore Policy
 
