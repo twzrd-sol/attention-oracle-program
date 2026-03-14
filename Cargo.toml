@@ -2,6 +2,13 @@
 members = [
   "programs/attention-oracle",
 ]
+# channel-vault is excluded — it's still Anchor and depends on the old
+# token_2022 CPI stubs. Its source is kept for reference (still deployed
+# at 5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ). A future Pinocchio
+# port would re-add it as a workspace member.
+exclude = [
+  "programs/channel-vault",
+]
 resolver = "2"
 
 [profile.release]
