@@ -1,659 +1,646 @@
-# Programs with Pinocchio
+---
+name: pinocchio-development
+description: Comprehensive guide for building high-performance Solana programs using Pinocchio - the zero-dependency, zero-copy framework. Covers account validation, CPI patterns, optimization techniques, and migration from Anchor.
+---
 
-Pinocchio is a minimalist Rust library for crafting Solana programs without the heavyweight `solana-program` crate. It delivers significant performance gains through zero-copy techniques and minimal dependencies.
+# Pinocchio Development Guide
 
-## When to Use Pinocchio
+Build blazing-fast Solana programs with Pinocchio - a zero-dependency, zero-copy framework that delivers **88-95% compute unit reduction** and **40% smaller binaries** compared to traditional approaches.
 
-Use Pinocchio when you need:
-- **Maximum compute efficiency**: 84% CU savings compared to Anchor
-- **Minimal binary size**: Leaner code paths and smaller deployments
-- **Zero external dependencies**: Only Solana SDK types required
-- **Fine-grained control**: Direct memory access and byte-level operations
-- **no_std environments**: Embedded or constrained contexts
+## Overview
 
-## Core Architecture
+Pinocchio is Anza's minimalist Rust library for writing Solana programs without the heavyweight `solana-program` crate. It treats incoming transaction data as a single byte slice, reading it in-place via zero-copy techniques.
 
-### Program Structure Validation Checklist
+### Performance Comparison
 
-Before building/deploying, verify lib.rs contains all required components:
+| Metric | Anchor | Native (solana-program) | Pinocchio |
+|--------|--------|------------------------|-----------|
+| Token Transfer CU | ~6,000 | ~4,500 | ~600-800 |
+| Binary Size | Large | Medium | Small (-40%) |
+| Heap Allocation | Required | Required | Optional |
+| Dependencies | Many | Several | Zero* |
 
-- [ ] `entrypoint!(process_instruction)` macro
-- [ ] `pub const ID: Address = Address::new_from_array([...])` with correct program ID
-- [ ] `fn process_instruction(program_id: &Address, accounts: &[AccountView], data: &[u8]) -> ProgramResult`
-- [ ] Instruction routing logic with proper discriminators
-- [ ] `pub mod instructions; pub use instructions::*;`
+*Only Solana SDK types for on-chain execution
 
-### Entrypoint Pattern
+### When to Use Pinocchio
+
+**Use Pinocchio When:**
+- Building high-throughput programs (DEXs, orderbooks, games)
+- Compute units are a bottleneck
+- Binary size matters (program deployment costs)
+- You need maximum control over memory
+- Building infrastructure (tokens, vaults, escrows)
+
+**Consider Anchor Instead When:**
+- Rapid prototyping / MVPs
+- Team unfamiliar with low-level Rust
+- Complex account relationships
+- Need extensive ecosystem tooling
+- Audit timeline is tight (more auditors know Anchor)
+
+## Quick Start
+
+### 1. Project Setup
+
+```toml
+# Cargo.toml
+[package]
+name = "my-program"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+bpf-entrypoint = []
+
+[dependencies]
+pinocchio = "0.10"
+pinocchio-system = "0.4"      # System Program CPI helpers
+pinocchio-token = "0.4"       # Token Program CPI helpers
+bytemuck = { version = "1.14", features = ["derive"] }
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+```
+
+### 2. Basic Program Structure
 
 ```rust
 use pinocchio::{
-    account::AccountView,
-    address::Address,
+    account_info::AccountInfo,
     entrypoint,
-    error::ProgramError,
+    program_error::ProgramError,
+    pubkey::Pubkey,
     ProgramResult,
 };
 
+// Declare entrypoint
 entrypoint!(process_instruction);
 
-fn process_instruction(
-    _program_id: &Address,
-    accounts: &[AccountView],
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    match instruction_data.split_first() {
-        Some((0, data)) => Deposit::try_from((data, accounts))?.process(),
-        Some((1, _)) => Withdraw::try_from(accounts)?.process(),
-        _ => Err(ProgramError::InvalidInstructionData)
+    // Route instructions by discriminator (first byte)
+    match instruction_data.first() {
+        Some(0) => initialize(accounts, &instruction_data[1..]),
+        Some(1) => execute(accounts, &instruction_data[1..]),
+        _ => Err(ProgramError::InvalidInstructionData),
     }
 }
 ```
 
-Single-byte discriminators support 255 instructions; use two bytes for up to 65,535 variants.
-
-### Panic Handler Configuration
-
-**For std environments (SBF builds):**
-```rust
-entrypoint!(process_instruction);
-// Remove nostd_panic_handler!() - std provides panic handling
-```
-
-**For no_std environments:**
-```rust
-#![no_std]
-entrypoint!(process_instruction);
-nostd_panic_handler!();
-```
-
-**Critical**: Never include both - causes duplicate lang item error in SBF builds.
-
-### Program ID Declaration
+### 3. Account Definition with Bytemuck
 
 ```rust
-pub const ID: Address = Address::new_from_array([
-    // Your 32-byte program ID as bytes
-    0xXX, 0xXX, ..., 0xXX,
-]);
-```
-// Note: Use `Address::new_from_array()` not `Address::new()`
+use bytemuck::{Pod, Zeroable};
 
-### Recommended Import Structure
+// Single-byte discriminator for account type
+pub const VAULT_DISCRIMINATOR: u8 = 1;
 
-```rust
-use pinocchio::{
-    account::AccountView,
-    address::Address,
-    entrypoint,
-    error::ProgramError,
-    ProgramResult,
-};
-// Add CPI imports only when needed:
-// cpi::{invoke_signed, Seed, Signer},
-// Add system program imports only when needed:
-// pinocchio_system::instructions::Transfer,
-```
-
-### Instruction Structure
-
-Separate validation from business logic using the `TryFrom` trait:
-
-```rust
-pub struct Deposit<'a> {
-    pub accounts: DepositAccounts<'a>,
-    pub data: DepositData,
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct Vault {
+    pub discriminator: u8,
+    pub owner: [u8; 32],      // Pubkey as bytes
+    pub balance: u64,
+    pub bump: u8,
+    pub _padding: [u8; 6],    // Align to 8 bytes
 }
 
-impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for Deposit<'a> {
-    type Error = ProgramError;
+impl Vault {
+    pub const LEN: usize = std::mem::size_of::<Self>();
 
-    fn try_from((data, accounts): (&'a [u8], &'a [AccountView])) -> Result<Self, Self::Error> {
-        let accounts = DepositAccounts::try_from(accounts)?;
-        let data = DepositData::try_from(data)?;
-        Ok(Self { accounts, data })
+    pub fn from_account(account: &AccountInfo) -> Result<&Self, ProgramError> {
+        let data = account.try_borrow_data()?;
+        if data.len() < Self::LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[0] != VAULT_DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        Ok(bytemuck::from_bytes(&data[..Self::LEN]))
     }
-}
 
-impl<'a> Deposit<'a> {
-    pub const DISCRIMINATOR: &'a u8 = &0;
-
-    pub fn process(&self) -> ProgramResult {
-        // Business logic only - validation already complete
-        Ok(())
+    pub fn from_account_mut(account: &AccountInfo) -> Result<&mut Self, ProgramError> {
+        let mut data = account.try_borrow_mut_data()?;
+        if data.len() < Self::LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        Ok(bytemuck::from_bytes_mut(&mut data[..Self::LEN]))
     }
 }
 ```
 
-## Account Validation
+## Instructions
 
-Pinocchio requires manual validation. Wrap all checks in `TryFrom` implementations:
+### Step 1: Define Account Validation
 
-### Account Struct Validation
+Create a struct to hold validated accounts:
 
 ```rust
-pub struct DepositAccounts<'a> {
-    pub owner: &'a AccountView,
-    pub vault: &'a AccountView,
-    pub system_program: &'a AccountView,
+pub struct InitializeAccounts<'a> {
+    pub vault: &'a AccountInfo,
+    pub owner: &'a AccountInfo,
+    pub system_program: &'a AccountInfo,
 }
 
-impl<'a> TryFrom<&'a [AccountView]> for DepositAccounts<'a> {
-    type Error = ProgramError;
-
-    fn try_from(accounts: &'a [AccountView]) -> Result<Self, Self::Error> {
-        let [owner, vault, system_program, _remaining @ ..] = accounts else {
+impl<'a> InitializeAccounts<'a> {
+    pub fn parse(accounts: &'a [AccountInfo]) -> Result<Self, ProgramError> {
+        let [vault, owner, system_program, ..] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
 
-        // Signer check
+        // Validate owner is signer
         if !owner.is_signer() {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        // Owner check
-        if !vault.owned_by(&pinocchio_system::ID) {
-            return Err(ProgramError::InvalidAccountOwner);
-        }
-
-        // Program ID check (prevents arbitrary CPI)
-        if system_program.address() != &pinocchio_system::ID {
+        // Validate system program
+        if system_program.key() != &pinocchio_system::ID {
             return Err(ProgramError::IncorrectProgramId);
         }
 
-        Ok(Self { owner, vault, system_program })
-    }
-}
-
-
-
-        // Owner check
-        if !vault.is_owned_by(&pinocchio_system::ID) {
-            return Err(ProgramError::InvalidAccountOwner);
-        }
-
-        // Program ID check (prevents arbitrary CPI)
-        if system_program.address() != &pinocchio_system::ID {
-            return Err(ProgramError::IncorrectProgramId);
-        }
-
-        Ok(Self { owner, vault, system_program })
+        Ok(Self {
+            vault,
+            owner,
+            system_program,
+        })
     }
 }
 ```
 
-### Instruction Data Validation
+### Step 2: Implement Instruction Handler
 
 ```rust
-pub struct DepositData {
-    pub amount: u64,
-}
+use pinocchio_system::instructions::CreateAccount;
 
-impl<'a> TryFrom<&'a [u8]> for DepositData {
-    type Error = ProgramError;
+pub fn initialize(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let ctx = InitializeAccounts::parse(accounts)?;
 
-    fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
-        if data.len() != core::mem::size_of::<u64>() {
-            return Err(ProgramError::InvalidInstructionData);
-        }
+    // Derive PDA
+    let (pda, bump) = Pubkey::find_program_address(
+        &[b"vault", ctx.owner.key().as_ref()],
+        &crate::ID,
+    );
 
-        let amount = u64::from_le_bytes(data.try_into().unwrap());
-
-        if amount == 0 {
-            return Err(ProgramError::InvalidInstructionData);
-        }
-
-        Ok(Self { amount })
-    }
-}
-```
-
-## Token Account Helpers
-
-### SPL Token Validation
-
-```rust
-pub struct Mint;
-
-impl Mint {
-    pub fn check(account: &AccountView) -> Result<(), ProgramError> {
-        if !account.owned_by(&pinocchio_token::ID) {
-            return Err(ProgramError::InvalidAccountOwner);
-        }
-        if account.data_len() != pinocchio_token::state::Mint::LEN {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        Ok(())
+    // Verify PDA matches
+    if ctx.vault.key() != &pda {
+        return Err(ProgramError::InvalidSeeds);
     }
 
-    pub fn init(
-        account: &AccountView,
-        payer: &AccountView,
-        decimals: u8,
-        mint_authority: &[u8; 32],
-        freeze_authority: Option<&[u8; 32]>,
-    ) -> ProgramResult {
-        let lamports = Rent::get()?.minimum_balance(pinocchio_token::state::Mint::LEN);
+    // Create account via CPI
+    let space = Vault::LEN as u64;
+    let rent = pinocchio::sysvar::rent::Rent::get()?;
+    let lamports = rent.minimum_balance(space as usize);
 
-        CreateAccount {
-            from: payer,
-            to: account,
-            lamports,
-            space: pinocchio_token::state::Mint::LEN as u64,
-            owner: &pinocchio_token::ID,
-        }.invoke()?;
-
-        InitializeMint2 {
-            mint: account,
-            decimals,
-            mint_authority,
-            freeze_authority,
-        }.invoke()
+    CreateAccount {
+        from: ctx.owner,
+        to: ctx.vault,
+        lamports,
+        space,
+        owner: &crate::ID,
     }
-}
-```
-
-### Token2022 Support
-
-Token2022 requires discriminator-based validation due to variable account sizes with extensions:
-
-```rust
-pub const TOKEN_2022_PROGRAM_ID: [u8; 32] = [...];
-const TOKEN_2022_ACCOUNT_DISCRIMINATOR_OFFSET: usize = 165;
-pub const TOKEN_2022_MINT_DISCRIMINATOR: u8 = 0x01;
-pub const TOKEN_2022_TOKEN_ACCOUNT_DISCRIMINATOR: u8 = 0x02;
-
-pub struct Mint2022;
-
-impl Mint2022 {
-    pub fn check(account: &AccountView) -> Result<(), ProgramError> {
-        if !account.is_owned_by(&TOKEN_2022_PROGRAM_ID) {
-            return Err(ProgramError::InvalidAccountOwner);
-        }
-
-        let data = account.try_borrow_data()?;
-
-        if data.len() != pinocchio_token::state::Mint::LEN {
-            if data.len() <= TOKEN_2022_ACCOUNT_DISCRIMINATOR_OFFSET {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            if data[TOKEN_2022_ACCOUNT_DISCRIMINATOR_OFFSET] != TOKEN_2022_MINT_DISCRIMINATOR {
-                return Err(ProgramError::InvalidAccountData);
-            }
-        }
-        Ok(())
-    }
-}
-```
-
-### Token Interface (Both Programs)
-
-```rust
-pub struct MintInterface;
-
-impl MintInterface {
-    pub fn check(account: &AccountView) -> Result<(), ProgramError> {
-        if account.is_owned_by(&pinocchio_token::ID) {
-            if account.data_len() != pinocchio_token::state::Mint::LEN {
-                return Err(ProgramError::InvalidAccountData);
-            }
-        } else if account.is_owned_by(&TOKEN_2022_PROGRAM_ID) {
-            Mint2022::check(account)?;
-        } else {
-            return Err(ProgramError::InvalidAccountOwner);
-        }
-        Ok(())
-    }
-}
-```
-
-## Cross-Program Invocations (CPIs)
-
-### Basic CPI
-
-```rust
-use pinocchio_system::instructions::Transfer;
-
-Transfer {
-    from: self.accounts.owner,
-    to: self.accounts.vault,
-    lamports: self.data.amount,
-}.invoke()?;
-```
-
-### PDA-Signed CPI
-
-```rust
-use pinocchio::{seeds::Seed, signer::Signer};
-
-let seeds = [
-    Seed::from(b"vault"),
-    Seed::from(self.accounts.owner.address().as_ref()),
-    Seed::from(&[bump]),
-];
-let signers = [Signer::from(&seeds)];
-
-Transfer {
-    from: self.accounts.vault,
-    to: self.accounts.owner,
-    lamports: self.accounts.vault.lamports(),
-}.invoke_signed(&signers)?;
-```
-
-## Reading and Writing Data
-
-### Struct Field Ordering
-
-Order fields from largest to smallest alignment to minimize padding:
-
-```rust
-// Good: 16 bytes total
-#[repr(C)]
-struct GoodOrder {
-    big: u64,     // 8 bytes, 8-byte aligned
-    medium: u16,  // 2 bytes, 2-byte aligned
-    small: u8,    // 1 byte, 1-byte aligned
-    // 5 bytes padding
-}
-
-// Bad: 24 bytes due to padding
-#[repr(C)]
-struct BadOrder {
-    small: u8,    // 1 byte
-    // 7 bytes padding
-    big: u64,     // 8 bytes
-    medium: u16,  // 2 bytes
-    // 6 bytes padding
-}
-```
-
-### Zero-Copy Reading (Safe Pattern)
-
-Use byte arrays with accessor methods to avoid alignment issues:
-
-```rust
-#[repr(C)]
-pub struct Config {
-    pub authority: Pubkey,
-    pub mint: Pubkey,
-    seed: [u8; 8],   // Store as bytes
-    fee: [u8; 2],    // Store as bytes
-    pub state: u8,
-    pub bump: u8,
-}
-
-impl Config {
-    pub const LEN: usize = core::mem::size_of::<Self>();
-
-    pub fn from_bytes(data: &[u8]) -> Result<&Self, ProgramError> {
-        if data.len() != Self::LEN {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        // Safe: all fields are byte-aligned
-        Ok(unsafe { &*(data.as_ptr() as *const Self) })
-    }
-
-    pub fn seed(&self) -> u64 {
-        u64::from_le_bytes(self.seed)
-    }
-
-    pub fn fee(&self) -> u16 {
-        u16::from_le_bytes(self.fee)
-    }
-
-    pub fn set_seed(&mut self, seed: u64) {
-        self.seed = seed.to_le_bytes();
-    }
-
-    pub fn set_fee(&mut self, fee: u16) {
-        self.fee = fee.to_le_bytes();
-    }
-}
-```
-
-### Field-by-Field Serialization (Safest)
-
-```rust
-impl Config {
-    pub fn write_to_buffer(&self, data: &mut [u8]) -> Result<(), ProgramError> {
-        if data.len() != Self::LEN {
-            return Err(ProgramError::InvalidAccountData);
-        }
-
-        let mut offset = 0;
-
-        data[offset..offset + 32].copy_from_slice(self.authority.as_ref());
-        offset += 32;
-
-        data[offset..offset + 32].copy_from_slice(self.mint.as_ref());
-        offset += 32;
-
-        data[offset..offset + 8].copy_from_slice(&self.seed);
-        offset += 8;
-
-        data[offset..offset + 2].copy_from_slice(&self.fee);
-        offset += 2;
-
-        data[offset] = self.state;
-        data[offset + 1] = self.bump;
-
-        Ok(())
-    }
-}
-```
-
-### Dangerous Patterns to Avoid
-
-```rust
-// ❌ transmute with unaligned data
-let value: u64 = unsafe { core::mem::transmute(bytes_slice) };
-
-// ❌ Pointer casting to packed structs
-#[repr(C, packed)]
-pub struct Packed { pub a: u8, pub b: u64 }
-let config = unsafe { &*(data.as_ptr() as *const Packed) };
-
-// ❌ Direct field access on packed structs creates unaligned references
-let b_ref = &packed.b;
-
-// ❌ Assuming alignment without verification
-let config = unsafe { &*(data.as_ptr() as *const Config) };
-```
-
-## Error Handling
-
-Use `thiserror` for descriptive errors (supports `no_std`):
-
-```rust
-use thiserror::Error;
-use num_derive::FromPrimitive;
-use pinocchio::program_error::ProgramError;
-
-#[derive(Clone, Debug, Eq, Error, FromPrimitive, PartialEq)]
-pub enum VaultError {
-    #[error("Lamport balance below rent-exempt threshold")]
-    NotRentExempt,
-    #[error("Invalid account owner")]
-    InvalidOwner,
-    #[error("Account not initialized")]
-    NotInitialized,
-}
-
-impl From<VaultError> for ProgramError {
-    fn from(e: VaultError) -> Self {
-        ProgramError::Custom(e as u32)
-    }
-}
-```
-
-## Closing Accounts Securely
-
-Prevent revival attacks by marking closed accounts:
-
-```rust
-pub fn close(account: &AccountView, destination: &AccountView) -> ProgramResult {
-    // Mark as closed (prevents reinitialization)
-    {
-        let mut data = account.try_borrow_mut_data()?;
-        data[0] = 0xff;
-    }
-
-    // Transfer lamports
-    *destination.try_borrow_mut_lamports()? += *account.try_borrow_lamports()?;
-
-    // Shrink and close
-    account.realloc(1, true)?;
-    account.close()
-}
-```
-
-## Performance Optimization
-
-### Feature Flags
-
-```toml
-[features]
-default = ["perf"]
-perf = []
-```
-
-```rust
-#[cfg(not(feature = "perf"))]
-pinocchio::msg!("Instruction: Deposit");
-```
-
-### Bitwise Flags for Storage
-
-Pack up to 8 booleans in one byte:
-
-```rust
-const FLAG_ACTIVE: u8 = 1 << 0;
-const FLAG_FROZEN: u8 = 1 << 1;
-const FLAG_ADMIN: u8 = 1 << 2;
-
-// Set flag
-flags |= FLAG_ACTIVE;
-
-// Check flag
-if flags & FLAG_ACTIVE != 0 { /* active */ }
-
-// Clear flag
-flags &= !FLAG_ACTIVE;
-```
-
-### Zero-Allocation Architecture
-
-Use references instead of heap allocations:
-
-```rust
-// Good: references with borrowed lifetimes
-pub struct Instruction<'a> {
-    pub accounts: &'a [AccountView],
-    pub data: &'a [u8],
-}
-
-// Enforce no heap usage
-no_allocator!();
-```
-
-Respect Solana's memory limits: 4KB stack per function, 32KB total heap.
-
-### Skip Redundant Checks
-
-If a CPI will fail on incorrect accounts anyway, skip pre-validation:
-
-```rust
-// Instead of validating ATA derivation, compute expected address
-let expected_ata = find_program_address(
-    &[owner.address(), token_program.address(), mint.address()],
-    &pinocchio_associated_token_account::ID,
-).0;
-
-if account.address() != &expected_ata {
-    return Err(ProgramError::InvalidAccountData);
-}
-```
-
-## Batch Instructions
-
-Process multiple operations in a single CPI (saves ~1000 CU per batched operation):
-
-```rust
-const IX_HEADER_SIZE: usize = 2; // account_count + data_length
-
-pub fn process_batch(mut accounts: &[AccountView], mut data: &[u8]) -> ProgramResult {
-    loop {
-        if data.len() < IX_HEADER_SIZE {
-            return Err(ProgramError::InvalidInstructionData);
-        }
-
-        let account_count = data[0] as usize;
-        let data_len = data[1] as usize;
-        let data_offset = IX_HEADER_SIZE + data_len;
-
-        if accounts.len() < account_count || data.len() < data_offset {
-            return Err(ProgramError::InvalidInstructionData);
-        }
-
-        let (ix_accounts, ix_data) = (&accounts[..account_count], &data[IX_HEADER_SIZE..data_offset]);
-
-        process_inner_instruction(ix_accounts, ix_data)?;
-
-        if data_offset == data.len() {
-            break;
-        }
-
-        accounts = &accounts[account_count..];
-        data = &data[data_offset..];
-    }
+    .invoke_signed(&[&[b"vault", ctx.owner.key().as_ref(), &[bump]]])?;
+
+    // Initialize account data
+    let vault = Vault::from_account_mut(ctx.vault)?;
+    vault.discriminator = VAULT_DISCRIMINATOR;
+    vault.owner = ctx.owner.key().to_bytes();
+    vault.balance = 0;
+    vault.bump = bump;
 
     Ok(())
 }
 ```
 
-## Testing
+## Entrypoint Options
 
-Use Mollusk or LiteSVM for fast Rust-based testing:
+Pinocchio provides three entrypoint macros with different trade-offs:
+
+### 1. Standard Entrypoint (Recommended for most cases)
 
 ```rust
-#[cfg(test)]
-pub mod tests;
+use pinocchio::entrypoint;
 
-// Run with: cargo test-sbf
+entrypoint!(process_instruction);
 ```
 
-See [testing.md](testing.md) for detailed testing patterns with Mollusk and LiteSVM.
+- Sets up heap allocator
+- Configures panic handler
+- Deserializes accounts automatically
 
-## Build & Deployment
+### 2. Lazy Entrypoint (Best for single-instruction programs)
 
-### Build Validation
+```rust
+use pinocchio::lazy_entrypoint;
 
-After `cargo build-sbf`:
-- [ ] Check .so file size (>1KB, typically 5-15KB for Pinocchio programs)
-- [ ] Verify file type: `file target/deploy/program.so` should show "ELF 64-bit LSB shared object"
-- [ ] Test regular compilation: `cargo build` should succeed
-- [ ] Run tests: `cargo test` should pass
+lazy_entrypoint!(process_instruction);
 
-### Dependency Compatibility Issues
+pub fn process_instruction(mut context: InstructionContext) -> ProgramResult {
+    // Accounts parsed on-demand
+    let account = context.next_account()?;
+    let data = context.instruction_data();
+    Ok(())
+}
+```
 
-**If SBF build fails with "edition2024" errors:**
+- Defers parsing until needed
+- Best CU savings for simple programs
+- **80-87% CU reduction** in memo program benchmarks
+
+### 3. No Allocator (Maximum optimization)
+
+```rust
+use pinocchio::{entrypoint, no_allocator};
+
+no_allocator!();
+entrypoint!(process_instruction);
+```
+
+- Disables heap entirely
+- Cannot use `String`, `Vec`, `Box`
+- Best for statically-sized operations
+
+## CPI Patterns
+
+### System Program CPI
+
+```rust
+use pinocchio_system::instructions::{CreateAccount, Transfer};
+
+// Create account
+CreateAccount {
+    from: payer,
+    to: new_account,
+    lamports: rent_lamports,
+    space: account_size,
+    owner: &program_id,
+}.invoke()?;
+
+// Transfer SOL
+Transfer {
+    from: source,
+    to: destination,
+    lamports: amount,
+}.invoke()?;
+
+// Transfer with PDA signer
+Transfer {
+    from: pda_account,
+    to: destination,
+    lamports: amount,
+}.invoke_signed(&[&[b"vault", owner.as_ref(), &[bump]]])?;
+```
+
+### Token Program CPI
+
+```rust
+use pinocchio_token::instructions::{Transfer, MintTo, Burn};
+
+// Transfer tokens
+Transfer {
+    source: from_token_account,
+    destination: to_token_account,
+    authority: owner,
+    amount: token_amount,
+}.invoke()?;
+
+// Mint tokens (with PDA authority)
+MintTo {
+    mint: mint_account,
+    token_account: destination,
+    authority: mint_authority_pda,
+    amount: mint_amount,
+}.invoke_signed(&[&[b"mint_auth", &[bump]]])?;
+```
+
+### Custom CPI (Third-party programs)
+
+```rust
+use pinocchio::{
+    instruction::{AccountMeta, Instruction},
+    program::invoke,
+};
+
+// Build instruction manually
+let accounts = vec![
+    AccountMeta::new(*account1.key(), false),
+    AccountMeta::new_readonly(*account2.key(), true),
+];
+
+let ix = Instruction {
+    program_id: &external_program_id,
+    accounts: &accounts,
+    data: &instruction_data,
+};
+
+invoke(&ix, &[account1, account2])?;
+```
+
+## Account Validation Patterns
+
+### Pattern 1: TryFrom Trait
+
+```rust
+pub struct DepositAccounts<'a> {
+    pub vault: &'a AccountInfo,
+    pub owner: &'a AccountInfo,
+    pub system_program: &'a AccountInfo,
+}
+
+impl<'a> TryFrom<&'a [AccountInfo]> for DepositAccounts<'a> {
+    type Error = ProgramError;
+
+    fn try_from(accounts: &'a [AccountInfo]) -> Result<Self, Self::Error> {
+        let [vault, owner, system_program, ..] = accounts else {
+            return Err(ProgramError::NotEnoughAccountKeys);
+        };
+
+        // Validations
+        require!(owner.is_signer(), ProgramError::MissingRequiredSignature);
+        require!(vault.is_writable(), ProgramError::InvalidAccountData);
+
+        Ok(Self { vault, owner, system_program })
+    }
+}
+
+// Usage
+let ctx = DepositAccounts::try_from(accounts)?;
+```
+
+### Pattern 2: Builder Pattern
+
+```rust
+pub struct AccountValidator<'a> {
+    account: &'a AccountInfo,
+}
+
+impl<'a> AccountValidator<'a> {
+    pub fn new(account: &'a AccountInfo) -> Self {
+        Self { account }
+    }
+
+    pub fn is_signer(self) -> Result<Self, ProgramError> {
+        if !self.account.is_signer() {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+        Ok(self)
+    }
+
+    pub fn is_writable(self) -> Result<Self, ProgramError> {
+        if !self.account.is_writable() {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        Ok(self)
+    }
+
+    pub fn has_owner(self, owner: &Pubkey) -> Result<Self, ProgramError> {
+        if self.account.owner() != owner {
+            return Err(ProgramError::IllegalOwner);
+        }
+        Ok(self)
+    }
+
+    pub fn build(self) -> &'a AccountInfo {
+        self.account
+    }
+}
+
+// Usage
+let owner = AccountValidator::new(&accounts[0])
+    .is_signer()?
+    .is_writable()?
+    .build();
+```
+
+### Pattern 3: Macro-based Validation
+
+```rust
+macro_rules! require {
+    ($cond:expr, $err:expr) => {
+        if !$cond {
+            return Err($err);
+        }
+    };
+}
+
+macro_rules! require_signer {
+    ($account:expr) => {
+        require!($account.is_signer(), ProgramError::MissingRequiredSignature)
+    };
+}
+
+macro_rules! require_writable {
+    ($account:expr) => {
+        require!($account.is_writable(), ProgramError::InvalidAccountData)
+    };
+}
+```
+
+## PDA Operations
+
+### Deriving PDAs
+
+```rust
+use pinocchio::pubkey::Pubkey;
+
+// Find PDA with bump
+let (pda, bump) = Pubkey::find_program_address(
+    &[b"vault", user.key().as_ref()],
+    program_id,
+);
+
+// Create PDA with known bump (cheaper)
+let pda = Pubkey::create_program_address(
+    &[b"vault", user.key().as_ref(), &[bump]],
+    program_id,
+)?;
+```
+
+### PDA Signing for CPI
+
+```rust
+// Single seed set
+let signer_seeds = &[b"vault", owner.as_ref(), &[bump]];
+
+Transfer {
+    from: vault_pda,
+    to: destination,
+    lamports: amount,
+}.invoke_signed(&[signer_seeds])?;
+
+// Multiple PDA signers
+let signer1 = &[b"vault", owner.as_ref(), &[bump1]];
+let signer2 = &[b"authority", &[bump2]];
+
+invoke_signed(&ix, &accounts, &[signer1, signer2])?;
+```
+
+## Data Serialization
+
+### Fixed-Size with Bytemuck (Recommended)
+
+```rust
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct GameState {
+    pub discriminator: u8,
+    pub player: [u8; 32],
+    pub score: u64,
+    pub level: u8,
+    pub _padding: [u8; 6],
+}
+
+// Zero-copy read
+let state: &GameState = bytemuck::from_bytes(&data);
+
+// Zero-copy write
+let state: &mut GameState = bytemuck::from_bytes_mut(&mut data);
+```
+
+### Variable-Size with Borsh
+
+```rust
+use borsh::{BorshDeserialize, BorshSerialize};
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct Metadata {
+    pub name: String,
+    pub symbol: String,
+    pub uri: String,
+}
+
+// Deserialize (allocates)
+let metadata = Metadata::try_from_slice(data)?;
+
+// Serialize
+let mut buffer = Vec::new();
+metadata.serialize(&mut buffer)?;
+```
+
+### Manual Parsing (Maximum control)
+
+```rust
+pub fn parse_u64(data: &[u8]) -> Result<u64, ProgramError> {
+    if data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    Ok(u64::from_le_bytes(data[..8].try_into().unwrap()))
+}
+
+pub fn parse_pubkey(data: &[u8]) -> Result<Pubkey, ProgramError> {
+    if data.len() < 32 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    Ok(Pubkey::new_from_array(data[..32].try_into().unwrap()))
+}
+```
+
+## IDL Generation with Shank
+
+Since Pinocchio doesn't auto-generate IDLs, use Shank:
+
+```rust
+use shank::{ShankAccount, ShankInstruction};
+
+#[derive(ShankAccount)]
+pub struct Vault {
+    pub owner: Pubkey,
+    pub balance: u64,
+}
+
+#[derive(ShankInstruction)]
+pub enum ProgramInstruction {
+    #[account(0, writable, signer, name = "vault")]
+    #[account(1, signer, name = "owner")]
+    #[account(2, name = "system_program")]
+    Initialize,
+
+    #[account(0, writable, name = "vault")]
+    #[account(1, signer, name = "owner")]
+    Deposit { amount: u64 },
+}
+```
+
+Generate IDL:
 ```bash
-# Downgrade problematic dependencies to compatible versions
-cargo update base64ct --precise 1.6.0
-cargo update constant_time_eq --precise 0.4.1
-cargo update blake3 --precise 1.5.5
+shank idl -o idl.json -p src/lib.rs
 ```
 
-**When to apply**: Only when encountering Cargo "edition2024" errors during `cargo build-sbf`. These downgrades resolve toolchain compatibility issues while maintaining functionality.
+## Guidelines
 
-**Note**: These specific versions were tested and verified to work with current Solana toolchain. Regular `cargo update` may pull incompatible versions.
+1. **Always use single-byte discriminators** for instructions and accounts
+2. **Prefer bytemuck over Borsh** for fixed-size data
+3. **Use `lazy_entrypoint!`** for single-instruction programs
+4. **Validate all accounts** before processing
+5. **Use `invoke_signed`** for PDA-owned account operations
+6. **Add padding** to align structs to 8 bytes
+7. **Test with `solana-program-test`** or Bankrun
 
-## Security Checklist
+## Files in This Skill
 
-- [ ] Validate all account owners in `TryFrom` implementations
-- [ ] Check signer status for authority accounts
-- [ ] Verify PDA derivation matches expected seeds
-- [ ] Validate program IDs before CPIs (prevent arbitrary CPI)
-- [ ] Use checked math (`checked_add`, `checked_sub`, etc.)
-- [ ] Mark closed accounts to prevent revival attacks
-- [ ] Validate instruction data length before parsing
-- [ ] Check for duplicate mutable accounts when accepting multiple of same type
+```
+pinocchio-development/
+├── SKILL.md                           # This file
+├── scripts/
+│   ├── scaffold-program.sh            # Project generator
+│   └── benchmark-cu.sh                # CU benchmarking
+├── resources/
+│   ├── account-patterns.md            # Validation patterns
+│   ├── cpi-reference.md               # CPI quick reference
+│   ├── optimization-checklist.md      # Performance tips
+│   └── anchor-comparison.md           # Side-by-side comparison
+├── examples/
+│   ├── counter/                       # Basic counter program
+│   ├── vault/                         # PDA vault with deposits
+│   ├── token-operations/              # Token minting/transfers
+│   └── transfer-hook/                 # Token-2022 hook
+├── templates/
+│   └── program-template.rs            # Starter template
+└── docs/
+    ├── migration-from-anchor.md       # Anchor migration guide
+    └── edge-cases.md                  # Gotchas and solutions
+```
+
+## Performance Benchmarks (2025)
+
+Latest benchmarks demonstrate Pinocchio's efficiency:
+
+| Program | Anchor CU | Pinocchio CU | Reduction |
+|---------|-----------|--------------|-----------|
+| Token Transfer | ~6,000 | ~600-800 | **88-95%** |
+| Memo Program | ~650 | ~108 | **83%** |
+| Counter | ~800 | ~104 | **87%** |
+
+*Assembly implementation: 104 CU, Pinocchio: 108 CU, Basic Anchor: 649 CU*
+
+## SDK Roadmap (Anza Plans)
+
+The Anza team has announced plans for SDK v3:
+
+### Coming Improvements
+- **Unified Base Types**: Reusable types across Anchor and Pinocchio
+- **New Serialization Library**: Zero-copy, simpler enums, variable-length types
+- **ATA Program Optimization**: Pinocchio-optimized Associated Token Account
+- **Token22 Optimization**: Full Token Extensions support with minimal CU usage
+
+### Integration Progress
+- Pinocchio types are being integrated into the core Solana SDK
+- Improved interoperability between Anchor and Pinocchio programs
+
+## Notes
+
+- Pinocchio is **unaudited** - use with caution in production
+- Version 0.10.x is current (latest: `pinocchio = "0.10"`)
+- `pinocchio-system = "0.4"` and `pinocchio-token = "0.4"` for CPI helpers
+- Token-2022 support via `pinocchio-token` is under active development
+- For client generation, use **Codama** with your Shank-generated IDL
+- Maintained by Anza (Solana Agave client developers)
