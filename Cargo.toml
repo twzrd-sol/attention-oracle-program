@@ -1,12 +1,12 @@
 [workspace]
 members = [
-  "programs/attention-oracle",
+  "programs/ao-v2",
 ]
-# channel-vault is excluded — it's still Anchor and depends on the old
-# token_2022 CPI stubs. Its source is kept for reference (still deployed
-# at 5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ). A future Pinocchio
-# port would re-add it as a workspace member.
+# Legacy programs kept for reference (source only, not built).
+# attention-oracle: Anchor-based predecessor, replaced by ao-v2 (Pinocchio).
+# channel-vault: Still deployed at 5WH4..., awaiting Pinocchio port.
 exclude = [
+  "programs/attention-oracle",
   "programs/channel-vault",
 ]
 resolver = "2"
