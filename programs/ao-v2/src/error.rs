@@ -243,6 +243,8 @@ pub enum OracleError {
     NavAboveMaximum = 82,
     /// 6083 — Direct claim_yield is deprecated; use claim_global merkle claims
     ClaimYieldDeprecated = 83,
+    /// 6084 — Cannot re-stake while an active position exists. Unstake first.
+    AlreadyStaked = 84,
 }
 
 impl From<OracleError> for ProgramError {

@@ -17,6 +17,8 @@ use pinocchio::{
     ProgramResult,
 };
 
+use crate::error::OracleError;
+
 // =============================================================================
 // CONSTANTS (mirrors programs/attention-oracle/src/constants.rs)
 // =============================================================================
@@ -1042,6 +1044,20 @@ pub fn stake_channel(
         );
         acc
     };
+
+    // SECURITY: Reject re-stake when position already exists.
+    // Without this guard, re-staking overwrites pending_rewards (permanent loss)
+    // and double-adds to total_staked/total_weighted (pool accounting corruption).
+    // Users must unstake_channel first, then stake_channel again.
+    if user_stake.data_len() > 0 {
+        let existing = unsafe { user_stake.borrow_data_unchecked() };
+        if existing.len() >= US_AMOUNT + 8 {
+            let existing_amount = read_u64_le(&existing, US_AMOUNT);
+            if existing_amount > 0 {
+                return Err(OracleError::AlreadyStaked.into());
+            }
+        }
+    }
 
     // Create user_stake account (init_if_needed: skip if already allocated)
     let (_, us_bump) = pubkey::find_program_address(

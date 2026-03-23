@@ -1074,6 +1074,23 @@ fn claim_global_inner<'a>(
         // So we store delta/cumulative_total, drop, do CPI, re-borrow.
         drop(cs_data);
 
+        // -- Validate claimer_ata is owned by the claimer (wallet_key) --
+        // SECURITY: Without this check, an attacker can pass their own ATA as
+        // claimer_ata while using a victim's merkle proof. The proof verifies
+        // against wallet_key, the claim state marks wallet_key as claimed, but
+        // the CCM goes to the attacker's ATA.
+        {
+            let ata_data = unsafe { claimer_ata.borrow_data_unchecked() };
+            if ata_data.len() < 64 {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            // SPL Token account layout: [mint(32), owner(32), ...]
+            let ata_owner = &ata_data[32..64];
+            if ata_owner != wallet_key.as_ref() {
+                return Err(ProgramError::IllegalOwner);
+            }
+        }
+
         // -- CPI: transfer CCM from treasury to claimer --
         let bump_byte = [ps_bump];
         let seeds = [
