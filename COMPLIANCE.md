@@ -1,49 +1,38 @@
 # Compliance and Controls
 
-This document summarizes operational and security controls for the on-chain programs in this repository. It is provided for transparency and does not constitute legal or regulatory advice.
+Operational and security controls for the on-chain programs in this repository. Provided for transparency; does not constitute legal or regulatory advice.
 
 ## Scope
 
-- **In scope:** On-chain programs in `programs/`, build/verification process, and deployment metadata in this repo.
-- **Out of scope:** Off-chain services (indexers, APIs, wallets, frontends), third-party infrastructure, and partner integrations.
+- **In scope:** On-chain programs in `programs/`, build and verification process, deployment metadata.
+- **Out of scope:** Off-chain services, third-party infrastructure, partner integrations.
 
-## Security Program
+## Security
 
-- **Vulnerability reporting:** See `SECURITY.md`.
-- **Internal review:** See `docs/SECURITY_AUDIT.md`.
-- **CI testing:** Automated checks run on each change (see `.github/workflows`).
-
-## Build and Deployment Integrity
-
-- **Verifiable builds:** See `VERIFY.md` for reproducible build steps.
-- **On-chain verification:** See `DEPLOYMENTS.md` for program IDs, upgrade authority, and on-chain hashes.
-- **Release process:** Documented in `DEPLOYMENTS.md`.
+- **Vulnerability reporting:** [SECURITY.md](SECURITY.md)
+- **On-chain security.txt:** Embedded in program binary (Neodyme standard)
+- **Build verification:** [VERIFY.md](VERIFY.md) (deterministic Docker builds)
 
 ## Upgradeability and Governance
 
-- Programs are currently **upgradeable**.
-- Upgrade authority is documented in `DEPLOYMENTS.md`.
-- Roadmap includes transition to multisig and governance with timelock.
+- Programs are **upgradeable** via Squads V4 multisig (3-of-5 threshold).
+- Upgrade authority: `2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW` (Squads vault PDA)
+- No timelock. Upgrades take effect immediately.
+- Full proposal history in [UPGRADE_AUTHORITY.md](UPGRADE_AUTHORITY.md).
 
 ## Treasury Controls
 
-- Treasury outflows are via cumulative claims (`claim_cumulative`, `claim_cumulative_sponsored`).
-- Native Token-2022 transfer fees are harvested via `harvest_fees` (see `docs/specs/transfer-fee-capture.md`).
-- Treasury behavior is documented in `docs/TREASURY.md`.
+- Reward outflows via cumulative merkle claims (`claim_global_v2`, `claim_global_sponsored_v2`).
+- Token-2022 transfer fees harvested via `harvest_fees` (permissionless, batched).
+- Admin can pause claims when needed.
 
-## Incident Response
-
-- **Pause mechanism:** Admin can pause claims when needed.
-- **Publisher rotation:** Admin can rotate publisher keys.
-- **Emergency response:** Vulnerability response timelines in `SECURITY.md`.
-
-## Data Handling and Privacy
+## Data Handling
 
 - On-chain state is **public** by design.
-- Programs do **not** store personal identifiers; they store public keys and program state.
-- See `PRIVACY.md` for on-chain specifics.
+- Programs store only public keys and protocol state. No personal identifiers.
+- See [PRIVACY.md](PRIVACY.md).
 
-## Regulatory and Compliance Notes
+## Regulatory Notes
 
 - This repository provides open-source on-chain programs.
 - It does not perform KYC/AML, custody, or user identity verification.
@@ -51,4 +40,4 @@ This document summarizes operational and security controls for the on-chain prog
 
 ## Contact
 
-For security issues, see `SECURITY.md`.
+For security issues, see [SECURITY.md](SECURITY.md).
