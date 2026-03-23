@@ -1,48 +1,58 @@
-# Upgrade Authority Change (Feb 5, 2026)
+# Upgrade Authority
 
-## What Changed
-- **Before**: Both programs had upgrade authority set to Squads V4 vault PDA (`2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW`)
-- **After**: Upgrade authority transferred to operational keypair (`2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD`)
+## Current State
 
-## Why
+| Program | Program ID | Upgrade Authority |
+|---------|-----------|-------------------|
+| ao-v2 (Attention Oracle) | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | Squads V4 multisig |
+| channel_vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | Squads V4 multisig |
 
-Solana's BPF Upgradeable Loader **rejects CPI calls** for security-sensitive operations including:
-- `Upgrade` - Deploy new program code
-- `Close` - Close buffer accounts and recover SOL
-- `SetAuthority` - Only works because it's simpler than upgrade
+**Multisig**: `BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ` (3-of-5 threshold)
+**Vault PDA**: `2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW`
 
-This is a Solana security feature to prevent reentrancy attacks during upgrades.
+## Upgrade Process
 
-**Consequence**: When upgrade authority is a PDA (like Squads vault), programs become effectively **unupgradeable** because:
-1. PDAs can only sign via CPI
-2. BPF Loader rejects CPI for upgrades
-3. Result: No valid signature path exists
+1. Build deterministic binary via Docker (`solana-verify build`)
+2. Upload buffer (`solana program write-buffer`)
+3. Transfer buffer authority to Squads vault
+4. Create Squads vault transaction with BPF Loader `Upgrade` instruction
+5. Create proposal — 2 automated approvals + 1 manual approval (3-of-5)
+6. Execute upgrade
+7. Verify on-chain hash matches repo (`solana-verify verify-from-repo`)
 
-## Multisig Transactions
-- **#43**: Transfer AO (token_2022) authority - Executed Feb 5, 2026
-- **#44**: Transfer Channel Vault authority - Executed Feb 5, 2026
-- **#45**: Transfer Vault buffer authority - Executed Feb 5, 2026
-- **#46**: Transfer AO buffer authority - Executed Feb 5, 2026
+All upgrade transactions are public on-chain. See [VERIFY.md](VERIFY.md) for verification instructions.
 
-## Security Fixes Deployed (Feb 5, 2026)
+## Proposal History
 
-**AO Program (GnGzNds...)**
-- Tx: `2PrL581ZNUVcA2zqnT8twgq29ytmVDi6eLEMHhUsjGvNayodnxTy1Lufp2gjhcWGzxw8HwtDMhU2Wxd1WNzoR5C2`
-- Fix: Future-dated proof prevention (`snapshot_slot <= clock.slot`)
-- Fix: Mint validation in close_stake_pool
+### Phase 3: Security & Verification (Mar 2026)
+| # | Date | Description |
+|---|------|-------------|
+| 158 | Mar 23 | On-chain security.txt, NonTransferable mint opcode fix (37→32) |
 
-**Channel Vault (5WH4UiS...)**
-- Tx: `4i52Qbkm8HqiJeujjH2jbF7Tvyd7MUVzo54JREk7UnQwqt9Ypn6Su7MS9kSuhC3Xf12moAKKdm5uTaTkSLdWbfya`
-- Fix: excess_rewards guard in compound (prevents phantom inflation)
-- Fix: excess_rewards guard in emergency unstake
+### Phase 2: Pinocchio v2 + Yield Protocol (Mar 2026)
+| # | Date | Description |
+|---|------|-------------|
+| 135 | Mar 14 | **Pinocchio v2 rewrite** — Anchor to Pinocchio, 867KB to 153KB. Same program ID. |
+| 136 | Mar 14 | Hotfix: fee_harvest, scoring, compound fixes |
+| 117 | Mar 12 | NAV underflow fix, CCM mint_to removal, V2 claims, MIN_MULTIPLIER_BPS |
+| 116 | Mar 10 | Governance fixes: fee_harvest, route_treasury, LEGACY_BUMP_OFFSET |
+| 112 | Mar 10 | PDA realloc 141 to 173 bytes (yield routing) |
+| 110 | Mar 10 | Strategy vault, Kamino CPI, governance, staking, markets, price feed |
 
-## Going Forward
-- Program upgrades done via `solana program deploy` with operational keypair
-- Security-critical changes still require code review + staged deployment
-- Once protocol is stable, consider making programs immutable (`--final`)
+### Phase 1: Authority Migration (Feb 2026)
+| # | Date | Description |
+|---|------|-------------|
+| 43-46 | Feb 5 | Temporary authority transfer to operational keypair (BPF Loader CPI limitation) |
+| — | Feb 8 | Authority returned to Squads vault. Verified builds deployed. |
+
+### Historical Note
+
+On Feb 5, 2026, upgrade authority was temporarily transferred to an operational keypair (`2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD`) because the BPF Upgradeable Loader rejects CPI calls for `Upgrade` instructions — PDAs (like the Squads vault) can only sign via CPI. Authority was returned to Squads on Feb 8 after deploying verified builds with the correct upgrade flow (buffer upload + Squads proposal).
 
 ## Trust Model
-- Operational keypair is held by core team
-- All upgrade transactions are public on-chain
-- Code changes reviewed before deployment
-- Future: Timelock + governance for major upgrades
+
+- **3-of-5 multisig** — no single key can upgrade the program
+- **Deterministic builds** — Docker-based builds produce reproducible binaries
+- **Public verification** — anyone can verify on-chain binary matches source via `solana-verify`
+- **Public source** — program source at [github.com/twzrd-sol/attention-oracle-program](https://github.com/twzrd-sol/attention-oracle-program)
+- **On-chain security.txt** — embedded in binary (Neodyme standard), scanned by explorers
