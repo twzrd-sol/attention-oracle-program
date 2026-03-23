@@ -1,92 +1,56 @@
 # Deployments
 
-This document records public program IDs, upgrade authority, and release policy for the attention oracle programs.
+Program IDs, upgrade authority, and deployment history for the Attention Oracle programs.
 
 ## Program IDs
 
-| Cluster | Program | Program ID | Program Data Account | Status |
-|---------|---------|------------|---------------------|--------|
-| mainnet-beta | Attention Oracle (Token-2022) | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | `5GyaaVmzRr2r9KcUuzt9SxBVq9ubTT5m3pH9Lzy3Kh4L` | Active |
-| mainnet-beta | Channel Vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | `2ubXWFAJFCnBqJ1vYCsf4q8SYRcqf5DaTfkC6wASK5SQ` | Active |
-| devnet       | Attention Oracle (Token-2022) | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | — | Active |
-
-Program IDs are sourced from `Anchor.toml`. Update this table when IDs change.
-
-## Mainnet Status (On-Chain)
-
-The canonical source of truth for **ProgramData Address**, **Upgrade Authority**, and **Last Deployed Slot** is:
-
-```bash
-solana program show <PROGRAM_ID> --url mainnet-beta
-```
-
-To convert a slot to a timestamp:
-
-```bash
-solana block-time <SLOT> --url mainnet-beta
-```
-
-To fetch the current on-chain executable hash:
-
-```bash
-solana-verify get-program-hash -u https://api.mainnet-beta.solana.com <PROGRAM_ID>
-```
-
-For a continuously updated snapshot (last deployed slot, hash, and verification), see:
-
-- `docs/LIVE_STATUS.md`
+| Cluster | Program | Program ID | Status |
+|---------|---------|------------|--------|
+| mainnet-beta | ao-v2 (Attention Oracle) | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | Active |
+| mainnet-beta | Channel Vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | Active |
 
 ## Upgrade Authority
 
 | Program | Upgrade Authority | Type |
 |---------|-------------------|------|
-| Attention Oracle | `2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW` | Squads V4 vault PDA (3-of-5 multisig `BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ`) |
-| Channel Vault | `2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW` | Squads V4 vault PDA (3-of-5 multisig `BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ`) |
+| ao-v2 | `2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW` | Squads V4 vault PDA (3-of-5) |
+| Channel Vault | `2v9jrkuJM99uf4xDFwfyxuzoNmqfggqbuW34mad2n6kW` | Squads V4 vault PDA (3-of-5) |
 
-To verify on-chain:
+Multisig: `BX2fRy4Jfko3cMttDmn2n6CaHfa9iAqT69YgAKZis9EQ`
+
+Verify on-chain:
 ```bash
-solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-beta
+solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 ```
+
+See [UPGRADE_AUTHORITY.md](UPGRADE_AUTHORITY.md) for full proposal history and upgrade process.
 
 ## Upgrade Policy
 
-1. **Programs are upgradeable.** The upgrade authority can deploy new bytecode at any time.
+1. **Programs are upgradeable.** Upgrade authority can deploy new bytecode.
 2. **No timelock.** Upgrades take effect immediately upon transaction confirmation.
-3. **Squads V4 multisig (3-of-5).** Both programs require 3 member approvals to deploy.
-
-### Governance Progress
-
-- [x] Transfer AO upgrade authority to Squads V4 multisig
-- [x] Transfer Channel Vault upgrade authority to Squads V4 multisig (slot 398,873,040)
-- [ ] Implement governance timelock for upgrades
-- [x] Publish verified builds (see VERIFY.md)
+3. **Squads V4 multisig (3-of-5).** Both programs require 3 member approvals.
 
 ## Deployment History
 
-| Date | Program | Slot | Commit | Description |
-|------|---------|------|--------|-------------|
-| 2025-12-31 | token_2022 | 390,464,000 | — | Initial mainnet deployment |
-| 2026-01-25 | token_2022 | 395,779,276 | — | Verified deployment |
-| 2026-02-06 | token_2022 | 398,209,178 | — | Pre-verifiable AO deployment |
-| 2026-02-08 | token_2022 | 398,836,086 | `430ccc6` | Verified deployment (Squads proposal #48) |
-| 2026-02-08 | channel_vault | 398,811,120 | `b1a9fee` | ExchangeRateOracle PDA + auto-update on compound |
-| 2026-02-08 | channel_vault | 398,835,029 | `b1a9fee` | Redeploy verifiable build (verified on-chain) |
-| 2026-02-08 | channel_vault | 398,873,040 | — | Transfer upgrade authority to Squads V4 vault PDA |
-
-## Release Process
-
-1. Tag a release commit (e.g., `v1.0.0`).
-2. Build verifiable artifacts:
-   ```bash
-   anchor build --verifiable
-   ```
-3. Verify binaries match on-chain (`VERIFY.md`).
-4. Deploy via upgrade authority:
-   ```bash
-   anchor upgrade --program-id <PROGRAM_ID> target/deploy/<program>.so
-   ```
-5. Update this document with new slot and description.
+| Date | Program | Proposal | Description |
+|------|---------|----------|-------------|
+| 2026-03-23 | ao-v2 | #158 | On-chain security.txt, NonTransferable mint opcode fix |
+| 2026-03-14 | ao-v2 | #136 | Hotfix: fee_harvest, scoring, compound |
+| 2026-03-14 | ao-v2 | #135 | **Pinocchio v2 rewrite** (Anchor to raw BPF, 867KB to 153KB) |
+| 2026-03-12 | ao-v2 | #117 | NAV underflow fix, V2 claims, MIN_MULTIPLIER_BPS |
+| 2026-03-10 | ao-v2 | #116 | Governance fixes: fee_harvest, route_treasury |
+| 2026-03-10 | ao-v2 | #112 | PDA realloc 141 to 173 bytes |
+| 2026-03-10 | ao-v2 | #110 | Strategy vault, Kamino CPI, governance, staking, markets, price feed |
+| 2026-02-08 | token_2022 | #48 | Verified Anchor deployment |
+| 2026-02-08 | channel_vault | — | Verified Anchor deployment, authority to Squads |
+| 2025-12-31 | token_2022 | — | Initial mainnet deployment |
 
 ## Verification
 
-See `VERIFY.md` for instructions on verifying deployed bytecode matches source.
+See [VERIFY.md](VERIFY.md) for build and verification instructions.
+
+```bash
+# Quick hash check
+solana-verify get-program-hash GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
+```

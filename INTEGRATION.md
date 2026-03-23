@@ -1,57 +1,70 @@
-# Integration Guide (Token-2022 Mint + Claims)
+# Integration Guide
 
-This document provides high-level integration notes for parties that interact with a Token-2022 mint
-configured to use the `token_2022` program in this repository.
+Technical reference for integrating with the Attention Oracle program on Solana mainnet.
 
-## TL;DR
+## Program Overview
 
-- The token mint may use **Token-2022 Transfer Fee Extension** (native fees).
-- The on-chain `token_2022` program provides:
-  - cumulative Merkle claims (`claim_cumulative`, `claim_cumulative_sponsored`)
-  - fee harvesting of withheld transfer fees (`harvest_fees`)
-- A transfer-hook program is **optional** and only required if your mint is configured with the
-  Transfer Hook Extension.
+The Attention Oracle (`GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`) is a Pinocchio-based Solana program that manages:
 
-You can verify mint extensions on mainnet:
+- **Deposits and settlement** (USDC in, vLOFI minted)
+- **Merkle-based reward claims** (CCM distribution via cumulative proofs)
+- **Transfer fee harvesting** (Token-2022 withheld fees to treasury)
+- **Price feeds** (on-chain oracle updates)
 
-```bash
-spl-token display --program-2022 -u mainnet-beta -v <MINT_ADDRESS>
+## Key Instructions
+
+| Instruction | Discriminator | Description |
+|-------------|--------------|-------------|
+| `deposit_market` | `d435bac193358f7b` | Deposit USDC into a market vault, receive vLOFI |
+| `settle_market` | `c1995fd8a60690d9` | Settle a matured position, burn vLOFI, return USDC |
+| `claim_global_v2` | `f82caa6531aa8c7e` | Claim CCM rewards with merkle proof |
+| `claim_global_sponsored_v2` | `59548450 8b5c5e04` | Sponsored (gasless) claim via relay |
+| `update_attention` | `7bf77586d06b6c32` | Update attention scores (oracle authority only) |
+| `publish_global_root` | — | Publish new merkle root for claims |
+| `harvest_fees` | — | Sweep withheld Token-2022 transfer fees |
+
+Discriminators are `SHA-256("global:<instruction_name>")[..8]`.
+
+## Token Mints
+
+| Token | Mint | Standard | Transfer Fee |
+|-------|------|----------|-------------|
+| CCM | `Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM` | Token-2022 | 50 BPS |
+| vLOFI | `E9Kt33axpCy3ve2PCY9BSrbPhcR9wdDsWQECAahzw2dS` | SPL Token | None |
+
+## PDA Seeds
+
+```
+ProtocolState:     ["protocol_state"]
+MarketVault:       ["market_vault", protocol_state, market_id_le_u64]
+UserPosition:      ["market_position", market_vault, user_pubkey]
+GlobalRootConfig:  ["global_root", ccm_mint]
+ClaimState:        ["claim_global", ccm_mint, user_pubkey]
 ```
 
-## Token-2022 transfer fees (native)
+## Reward Claims (Cumulative Merkle)
 
-When the Transfer Fee Extension is enabled on a Token-2022 mint, the Token-2022 program:
+Claims use a cumulative delta model:
 
-1. Withholds transfer fees in recipient token accounts.
-2. Allows an authorized withdrawal authority to sweep (harvest) withheld fees later.
+1. Off-chain publisher computes per-user cumulative totals
+2. Publisher submits merkle root on-chain via `publish_global_root`
+3. User submits proof for `(wallet, cumulative_total)` via `claim_global_v2`
+4. Program pays out the delta (new total minus previously claimed)
 
-In this system, the `token_2022` program provides `harvest_fees` to sweep withheld fees into the
-protocol treasury.
+Gasless claims are supported via `claim_global_sponsored_v2` where a relay cosigns as fee payer.
 
-## Reward claims (cumulative Merkle)
+## Token-2022 Transfer Fees
 
-Claims are delta-based cumulative claims:
+CCM uses the Token-2022 Transfer Fee Extension (50 BPS). Fees are:
 
-- The publisher publishes a cumulative root for a channel + root sequence.
-- A user (or relayer) submits a Merkle proof for `(wallet, cumulative_total)`.
-- The program pays out the delta from the protocol treasury.
+1. Withheld in recipient token accounts on every transfer
+2. Swept to treasury via `harvest_fees` (permissionless, batched)
 
-If a channel config has a `creator_fee_bps`, the claim delta is split between:
-
-- user payout
-- creator payout (`creator_wallet`)
-
-## Transfer hook (optional)
-
-A transfer hook is **not required** unless your Token-2022 mint is explicitly configured with the
-Transfer Hook Extension. If you enable a transfer hook:
-
-- Your mint must reference the hook program.
-- Wallets/exchanges may need to append extra account metas to transfers.
+Wallets and exchanges should use `transfer_checked` to handle the fee correctly.
 
 ## References
 
-- `docs/specs/transfer-fee-capture.md` - fee model summary
-- `docs/TREASURY.md` - what can move funds
-- `VERIFY.md` - reproducible build + verification
-- `DEPLOYMENTS.md` / `docs/LIVE_STATUS.md` - program IDs + on-chain status
+- [VERIFY.md](VERIFY.md) — Build verification
+- [DEPLOYMENTS.md](DEPLOYMENTS.md) — Program IDs and deployment history
+- [UPGRADE_AUTHORITY.md](UPGRADE_AUTHORITY.md) — Governance and upgrade process
+- [SECURITY.md](SECURITY.md) — Vulnerability disclosure

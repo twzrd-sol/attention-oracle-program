@@ -1,66 +1,25 @@
 # Live Status
 
-This document tracks **on-chain deployment facts** and the current **verification status** for the programs in this repository.
+On-chain deployment status for the Attention Oracle programs.
 
-**Last updated:** 2026-02-08
+**Last updated:** 2026-03-23
 
----
+## Programs
 
-## Quick Status
+| Program | Program ID | Framework | Status |
+|---------|-----------|-----------|--------|
+| ao-v2 (Attention Oracle) | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | Pinocchio | Active |
+| channel_vault | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | Anchor 0.32.1 | Active |
 
-| Program | Status | Program ID |
-|---------|--------|------------|
-| token_2022 | 🟢 Active | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` |
-| channel_vault | 🟢 Active | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` |
-
----
-
-## Mint Extensions (Mainnet, if applicable)
-
-If your deployment uses a Token-2022 mint, verify its configured extensions:
+## Verification
 
 ```bash
-spl-token display --program-2022 -u mainnet-beta -v <MINT_ADDRESS>
+solana-verify get-program-hash GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
 ```
 
----
+See [VERIFY.md](/VERIFY.md) for full verification instructions.
 
-## token_2022 (Active)
+## Upgrade Authority
 
-**Program ID:** `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop`
-
-| Property | Value |
-|----------|-------|
-| Status | 🟢 Active on mainnet |
-| Upgrade Authority | See `DEPLOYMENTS.md` |
-
----
-
-## channel_vault (Active)
-
-**Program ID:** `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ`
-
-| Property | Value |
-|----------|-------|
-| Status | 🟢 Active on mainnet |
-| Upgrade Authority | See `DEPLOYMENTS.md` |
-
----
-
-## Verification Commands
-
-### Get on-chain executable hash
-```bash
-solana-verify get-program-hash -u https://api.mainnet-beta.solana.com GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
-```
-
-### Build and verify
-See `VERIFY.md` for the recommended verification workflows.
-
----
-
-## Legend
-
-| Status | Meaning |
-|--------|---------|
-| 🟢 Active | Program is live on mainnet |
+Both programs governed by Squads V4 multisig (3-of-5).
+See [UPGRADE_AUTHORITY.md](/UPGRADE_AUTHORITY.md) and [DEPLOYMENTS.md](/DEPLOYMENTS.md).

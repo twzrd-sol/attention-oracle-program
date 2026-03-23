@@ -1,24 +1,20 @@
 # Treasury Architecture
 
-This document explains how the protocol treasury is represented on-chain and what instructions can move funds.
-
----
+How the protocol treasury is represented on-chain and what instructions can move funds.
 
 ## Overview
 
-The protocol treasury holds token reserves used for cumulative rewards payouts.
+The protocol treasury holds token reserves used for reward payouts.
+The treasury token account is owned by a Program Derived Address (PDA), not by a hot wallet.
 
-Key property: the treasury token account is owned by a Program Derived Address (PDA), not by a hot wallet.
+## Treasury Accounts
 
-## Treasury accounts
-
-The treasury is **not** a standalone PDA with seeds `["treasury"]`. It is an Associated Token Account (ATA)
-owned by the Protocol State PDA.
+The treasury is an Associated Token Account (ATA) owned by the Protocol State PDA.
 
 ### Derivation
 
 ```
-Protocol State PDA = find_program_address(["protocol", mint], program_id)
+Protocol State PDA = find_program_address(["protocol_state"], program_id)
 
 Treasury ATA = get_associated_token_address(protocol_state_pda, mint)
 ```
@@ -28,7 +24,7 @@ Treasury ATA = get_associated_token_address(protocol_state_pda, mint)
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Protocol State PDA                                              │
-│  Seeds: [b"protocol", mint.key()]                               │
+│  Seeds: [b"protocol_state"]                                     │
 │  ├── admin: Pubkey (current authority)                          │
 │  ├── publisher: Pubkey (root publisher)                         │
 │  ├── paused: bool (emergency halt)                              │
@@ -47,51 +43,35 @@ Treasury ATA = get_associated_token_address(protocol_state_pda, mint)
 This design ensures:
 - No hot wallet holds the treasury private key
 - Only the program can sign for treasury outflows (via PDA seeds)
-- Standard ATA derivation makes treasury address deterministic and verifiable
+- Standard ATA derivation makes the treasury address deterministic and verifiable
 
-## What can move funds?
+## What Can Move Funds?
 
-### Outflows (treasury -> user/creator)
+### Outflows (treasury to user)
 
-Treasury funds can move out only through cumulative claim instructions:
+Treasury funds move out only through merkle claim instructions:
 
-- `claim_cumulative` (user-submitted claim)
-- `claim_cumulative_sponsored` (relayer-submitted claim on behalf of user)
+- `claim_global_v2` (user-submitted claim with merkle proof)
+- `claim_global_sponsored_v2` (relay-submitted claim on behalf of user)
 
-If a channel config has a `creator_fee_bps` set, the claim instruction splits the delta:
+### Inflows (user accounts to treasury)
 
-- User receives `delta - creator_cut`
-- Creator receives `creator_cut` to `creator_wallet`
+Token-2022 transfer fees withheld in user accounts are harvested via:
 
-### Inflows (user accounts -> treasury)
+- `harvest_fees` (sweeps withheld fees from a bounded list of token accounts into treasury)
 
-The protocol can capture **native Token-2022 transfer fees** that were withheld in user token accounts by calling:
+### No Admin Withdrawal
 
-- `harvest_fees`
+There is **no `admin_withdraw` instruction**. Treasury outflows occur via claims only.
+The program is upgradeable (see [UPGRADE_AUTHORITY.md](/UPGRADE_AUTHORITY.md)); the upgrade authority is the primary governance surface.
 
-This instruction performs a Token-2022 CPI to withdraw withheld fees from a bounded list of source token accounts
-(`remaining_accounts`) into the treasury token account.
+## Incident Response
 
-### No admin withdrawal
-
-There is **no `admin_withdraw` instruction** in the current public program interface.
-Operationally, this means there is no dedicated on-chain "treasury drain" path besides claims.
-
-Important: the program itself is upgradeable (see `DEPLOYMENTS.md`), and an upgrade could introduce new behavior.
-
-## Incident response
-
-- `set_paused` can halt claims during incident response.
-- `update_publisher` can rotate the publisher key that is allowed to publish cumulative roots.
-
-## Legacy notes
-
-Some legacy state/event definitions may still exist in source for historical decoding, but they are not part of the
-current operational treasury flow (e.g., `WithdrawTracker`, `TreasuryWithdrawn`).
+- `set_paused` halts claims during incident response
+- Publisher key rotatable by admin (`update_protocol_state`)
 
 ## References
 
-- `SECURITY.md` - security policy and reporting
-- `docs/specs/transfer-fee-capture.md` - Token-2022 fee model summary
-- `programs/token_2022/src/instructions/cumulative.rs` - claim logic
-- `programs/token_2022/src/instructions/governance.rs` - fee harvesting CPI
+- [SECURITY.md](/SECURITY.md) — Security policy and reporting
+- [INTEGRATION.md](/INTEGRATION.md) — Integration guide
+- [VERIFY.md](/VERIFY.md) — Build verification

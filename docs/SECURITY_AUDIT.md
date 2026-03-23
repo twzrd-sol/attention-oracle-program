@@ -1,5 +1,7 @@
 # Security Audit Report: Attention Oracle Protocol
 
+> **Note (Mar 2026):** This audit covers the Anchor-based v1 programs (`token_2022` and `channel_vault`). The AO program was rewritten to Pinocchio (ao-v2) in March 2026 with the same account layouts, instruction discriminators, and security architecture. The findings, controls, and vulnerability analysis below remain applicable to ao-v2. See `programs/ao-v2/` for current source.
+
 **Date:** January 2026 (updated February 2026)
 **Scope:** `token_2022` (Oracle) + `channel_vault` (Vault) programs
 **Commit:** `cff6981` (initial) / `482828b` (post-launch improvements)
