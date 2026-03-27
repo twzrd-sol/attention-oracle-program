@@ -40,13 +40,15 @@ pub const FEE_CONFIG_SUFFIX: &[u8] = b"fee_config";
 #[cfg(feature = "strategy")]
 pub const STRATEGY_VAULT_SEED: &[u8] = b"strategy_vault";
 
+pub const VELOCITY_FEED_SEED: &[u8] = b"velocity_feed";
+
 #[cfg(feature = "price_feed")]
 pub const PRICE_FEED_SEED: &[u8] = b"price_feed";
 
 #[cfg(feature = "prediction_markets")]
 pub const MARKET_STATE_SEED: &[u8] = b"market";
 #[cfg(feature = "prediction_markets")]
-pub const PM_VAULT_SEED: &[u8] = b"market_vault";
+pub const PM_VAULT_SEED: &[u8] = b"pm_vault";
 #[cfg(feature = "prediction_markets")]
 pub const MARKET_YES_MINT_SEED: &[u8] = b"market_yes";
 #[cfg(feature = "prediction_markets")]
@@ -80,6 +82,8 @@ pub const DISC_MARKET_STATE: [u8; 8] = compute_anchor_disc(b"MarketState");
 
 #[cfg(feature = "strategy")]
 pub const DISC_STRATEGY_VAULT: [u8; 8] = compute_anchor_disc(b"StrategyVault");
+
+pub const DISC_VELOCITY_FEED_STATE: [u8; 8] = compute_anchor_disc(b"VelocityFeedState");
 
 #[cfg(feature = "price_feed")]
 pub const DISC_PRICE_FEED_STATE: [u8; 8] = compute_anchor_disc(b"PriceFeedState");
@@ -449,11 +453,7 @@ impl MarketVault {
         cast_account_mut(account)
     }
 
-    pub fn find_pda(
-        protocol_state: &Pubkey,
-        market_id: u64,
-        program_id: &Pubkey,
-    ) -> (Pubkey, u8) {
+    pub fn find_pda(protocol_state: &Pubkey, market_id: u64, program_id: &Pubkey) -> (Pubkey, u8) {
         pubkey::find_program_address(
             &[
                 MARKET_VAULT_SEED,
@@ -524,7 +524,11 @@ impl MarketVault {
     #[inline]
     pub fn effective_nav_bps(&self) -> u64 {
         let v = self.get_nav_per_share_bps();
-        if v == 0 { 10_000 } else { v }
+        if v == 0 {
+            10_000
+        } else {
+            v
+        }
     }
 }
 
@@ -574,11 +578,7 @@ impl UserMarketPosition {
         cast_account_mut(account)
     }
 
-    pub fn find_pda(
-        market_vault: &Pubkey,
-        user: &Pubkey,
-        program_id: &Pubkey,
-    ) -> (Pubkey, u8) {
+    pub fn find_pda(market_vault: &Pubkey, user: &Pubkey, program_id: &Pubkey) -> (Pubkey, u8) {
         pubkey::find_program_address(
             &[MARKET_POSITION_SEED, market_vault.as_ref(), user.as_ref()],
             program_id,
@@ -904,11 +904,7 @@ impl ChannelConfigV2 {
         cast_account_mut(account)
     }
 
-    pub fn find_pda(
-        mint: &Pubkey,
-        subject: &Pubkey,
-        program_id: &Pubkey,
-    ) -> (Pubkey, u8) {
+    pub fn find_pda(mint: &Pubkey, subject: &Pubkey, program_id: &Pubkey) -> (Pubkey, u8) {
         pubkey::find_program_address(
             &[CHANNEL_CONFIG_V2_SEED, mint.as_ref(), subject.as_ref()],
             program_id,
@@ -1111,13 +1107,13 @@ impl UserChannelStake {
         cast_account_mut(account)
     }
 
-    pub fn find_pda(
-        channel_config: &Pubkey,
-        user: &Pubkey,
-        program_id: &Pubkey,
-    ) -> (Pubkey, u8) {
+    pub fn find_pda(channel_config: &Pubkey, user: &Pubkey, program_id: &Pubkey) -> (Pubkey, u8) {
         pubkey::find_program_address(
-            &[CHANNEL_USER_STAKE_SEED, channel_config.as_ref(), user.as_ref()],
+            &[
+                CHANNEL_USER_STAKE_SEED,
+                channel_config.as_ref(),
+                user.as_ref(),
+            ],
             program_id,
         )
     }
@@ -1248,11 +1244,7 @@ impl MarketState {
         cast_account_mut(account)
     }
 
-    pub fn find_pda(
-        mint: &Pubkey,
-        market_id: u64,
-        program_id: &Pubkey,
-    ) -> (Pubkey, u8) {
+    pub fn find_pda(mint: &Pubkey, market_id: u64, program_id: &Pubkey) -> (Pubkey, u8) {
         pubkey::find_program_address(
             &[MARKET_STATE_SEED, mint.as_ref(), &market_id.to_le_bytes()],
             program_id,
@@ -1367,14 +1359,8 @@ impl StrategyVault {
         cast_account_mut(account)
     }
 
-    pub fn find_pda(
-        market_vault: &Pubkey,
-        program_id: &Pubkey,
-    ) -> (Pubkey, u8) {
-        pubkey::find_program_address(
-            &[STRATEGY_VAULT_SEED, market_vault.as_ref()],
-            program_id,
-        )
+    pub fn find_pda(market_vault: &Pubkey, program_id: &Pubkey) -> (Pubkey, u8) {
+        pubkey::find_program_address(&[STRATEGY_VAULT_SEED, market_vault.as_ref()], program_id)
     }
 
     #[inline]
@@ -1510,14 +1496,8 @@ impl PriceFeedState {
         cast_account_mut(account)
     }
 
-    pub fn find_pda(
-        label: &[u8; 32],
-        program_id: &Pubkey,
-    ) -> (Pubkey, u8) {
-        pubkey::find_program_address(
-            &[b"price_feed", label.as_ref()],
-            program_id,
-        )
+    pub fn find_pda(label: &[u8; 32], program_id: &Pubkey) -> (Pubkey, u8) {
+        pubkey::find_program_address(&[b"price_feed", label.as_ref()], program_id)
     }
 
     #[inline]
@@ -1558,6 +1538,128 @@ impl PriceFeedState {
     #[inline]
     pub fn set_max_staleness_slots(&mut self, val: u64) {
         self.max_staleness_slots = val.to_le_bytes();
+    }
+
+    #[inline]
+    pub fn get_num_updates(&self) -> u64 {
+        u64_from_le(self.num_updates)
+    }
+
+    #[inline]
+    pub fn set_num_updates(&mut self, val: u64) {
+        self.num_updates = val.to_le_bytes();
+    }
+}
+
+// ============================================================================
+// VELOCITY FEED STATE (native on-chain oracle)
+// ============================================================================
+//
+// Layout (174 bytes):
+//   disc(8) + bump(1) + version(1) + label(32) + authority(32) + updater(32)
+//   + velocity_ema(8) + trend(1) + confidence(1) + score(8) + last_update_slot(8)
+//   + last_update_ts(8) + max_staleness_slots(8) + market_id(2) + num_updates(8)
+//   + platform(1) + _reserved(15)
+//
+// Any Solana program can read this by passing the PDA as a remaining account:
+//   let data = velocity_feed_account.data.borrow();
+//   let velocity_ema = i64::from_le_bytes(data[106..114]);
+//   let trend = data[114]; // 0=cooling, 1=stable, 2=accelerating, 3=surging
+//   let stale = clock.slot - u64::from_le_bytes(data[124..132]) > max_age;
+#[repr(C, packed)]
+pub struct VelocityFeedState {
+    pub discriminator: [u8; 8],
+    pub bump: u8,
+    pub version: u8,
+    pub label: [u8; 32],
+    pub authority: [u8; 32],
+    pub updater: [u8; 32],
+    pub velocity_ema: [u8; 8], // i64 LE, scaled 1e6
+    pub trend: u8,             // 0=cooling, 1=stable, 2=accelerating, 3=surging
+    pub confidence: u8,        // 0=insufficient, 1=low, 2=normal, 3=high
+    pub score: [u8; 8],        // i64 LE, scaled 1e6
+    pub last_update_slot: [u8; 8],
+    pub last_update_ts: [u8; 8],
+    pub max_staleness_slots: [u8; 8],
+    pub market_id: [u8; 2], // u16 LE, link to MarketVault (0 = standalone)
+    pub num_updates: [u8; 8],
+    pub platform: u8,        // 0=unknown, 1=hf, 2=gh, 3=or, 4=aa
+    pub _reserved: [u8; 15], // future use
+}
+
+impl VelocityFeedState {
+    pub const LEN: usize = 174;
+
+    pub fn from_account(account: &AccountInfo) -> Result<&Self, ProgramError> {
+        cast_account(account, &DISC_VELOCITY_FEED_STATE)
+    }
+
+    pub fn from_account_mut(account: &AccountInfo) -> Result<&mut Self, ProgramError> {
+        cast_account_mut(account)
+    }
+
+    pub fn find_pda(label: &[u8; 32], program_id: &Pubkey) -> (Pubkey, u8) {
+        pubkey::find_program_address(&[b"velocity_feed", label.as_ref()], program_id)
+    }
+
+    #[inline]
+    pub fn get_velocity_ema(&self) -> i64 {
+        i64::from_le_bytes(self.velocity_ema)
+    }
+
+    #[inline]
+    pub fn set_velocity_ema(&mut self, val: i64) {
+        self.velocity_ema = val.to_le_bytes();
+    }
+
+    #[inline]
+    pub fn get_trend(&self) -> u8 {
+        self.trend
+    }
+
+    #[inline]
+    pub fn get_score(&self) -> i64 {
+        i64::from_le_bytes(self.score)
+    }
+
+    #[inline]
+    pub fn set_score(&mut self, val: i64) {
+        self.score = val.to_le_bytes();
+    }
+
+    #[inline]
+    pub fn get_last_update_slot(&self) -> u64 {
+        u64_from_le(self.last_update_slot)
+    }
+
+    #[inline]
+    pub fn set_last_update_slot(&mut self, val: u64) {
+        self.last_update_slot = val.to_le_bytes();
+    }
+
+    #[inline]
+    pub fn get_last_update_ts(&self) -> i64 {
+        i64::from_le_bytes(self.last_update_ts)
+    }
+
+    #[inline]
+    pub fn set_last_update_ts(&mut self, val: i64) {
+        self.last_update_ts = val.to_le_bytes();
+    }
+
+    #[inline]
+    pub fn get_max_staleness_slots(&self) -> u64 {
+        u64_from_le(self.max_staleness_slots)
+    }
+
+    #[inline]
+    pub fn set_max_staleness_slots(&mut self, val: u64) {
+        self.max_staleness_slots = val.to_le_bytes();
+    }
+
+    #[inline]
+    pub fn get_market_id(&self) -> u16 {
+        u16::from_le_bytes(self.market_id)
     }
 
     #[inline]
@@ -1633,6 +1735,12 @@ mod tests {
     fn fee_config_size() {
         assert_eq!(core::mem::size_of::<FeeConfig>(), 55);
         assert_eq!(FeeConfig::LEN, 55);
+    }
+
+    #[test]
+    fn velocity_feed_state_size() {
+        assert_eq!(core::mem::size_of::<VelocityFeedState>(), 174);
+        assert_eq!(VelocityFeedState::LEN, 174);
     }
 
     // ---- Offset assertions (byte-compatibility proof) ----
@@ -1725,6 +1833,7 @@ mod tests {
             DISC_GLOBAL_ROOT_CONFIG,
             DISC_CLAIM_STATE_GLOBAL,
             DISC_FEE_CONFIG,
+            DISC_VELOCITY_FEED_STATE,
         ];
         for i in 0..all.len() {
             assert_ne!(all[i], [0u8; 8], "discriminator {} is all zeros", i);
@@ -1835,7 +1944,10 @@ mod tests {
     #[cfg(feature = "channel_staking")]
     #[test]
     fn channel_config_v2_anchor_formula() {
-        assert_eq!(8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (80 * 4), 482);
+        assert_eq!(
+            8 + 1 + 1 + 32 + 32 + 32 + 8 + 8 + 32 + 2 + 6 + (80 * 4),
+            482
+        );
     }
 
     #[cfg(feature = "channel_staking")]
@@ -1933,6 +2045,28 @@ mod tests {
     #[test]
     fn market_state_anchor_formula() {
         // 8 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 32 + 32 + 32 + 32
-        assert_eq!(8 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 32 + 32 + 32 + 32, 288);
+        assert_eq!(
+            8 + 1
+                + 1
+                + 1
+                + 1
+                + 1
+                + 1
+                + 2
+                + 8
+                + 32
+                + 32
+                + 32
+                + 8
+                + 8
+                + 8
+                + 8
+                + 8
+                + 32
+                + 32
+                + 32
+                + 32,
+            288
+        );
     }
 }

@@ -3,10 +3,12 @@
 //! Each sub-module corresponds to a protocol domain implemented in the
 //! Pinocchio rewrite.
 
-pub mod vault;
+pub mod admin;
 pub mod global;
 pub mod governance;
-pub mod admin;
+pub mod signal;
+pub mod vault;
+pub mod velocity_feed;
 
 #[cfg(feature = "strategy")]
 pub mod strategy;

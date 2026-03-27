@@ -6,10 +6,7 @@
 #![cfg_attr(not(test), no_std)]
 
 use pinocchio::{
-    account_info::AccountInfo,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    ProgramResult,
+    account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, ProgramResult,
 };
 
 // ============================================================================
@@ -26,10 +23,10 @@ pub const ID: Pubkey = [
 // MODULES
 // ============================================================================
 
-pub mod state;
 pub mod error;
-pub mod keccak;
 pub mod instructions;
+pub mod keccak;
+pub mod state;
 
 #[cfg(feature = "strategy")]
 pub mod klend;
@@ -82,7 +79,7 @@ pub fn cpi_create_account(
 }
 
 // Re-export instruction sub-modules for ergonomic access.
-pub use instructions::{vault, global, governance, admin};
+pub use instructions::{admin, global, governance, signal, vault, velocity_feed};
 
 #[cfg(feature = "strategy")]
 pub use instructions::strategy;
@@ -254,7 +251,6 @@ pub fn process_instruction(
         // ==================================================================
         // STRATEGY (feature-gated)
         // ==================================================================
-
         #[cfg(feature = "strategy")]
         // initialize_strategy_vault
         [0xd2, 0xf3, 0x8d, 0x00, 0xcb, 0xf6, 0x04, 0xe1] => {
@@ -288,7 +284,6 @@ pub fn process_instruction(
         // ==================================================================
         // CHANNEL STAKING (feature-gated)
         // ==================================================================
-
         #[cfg(feature = "channel_staking")]
         // initialize_fee_config
         [0x3e, 0xa2, 0x14, 0x85, 0x79, 0x41, 0x91, 0x1b] => {
@@ -328,7 +323,6 @@ pub fn process_instruction(
         // ==================================================================
         // PREDICTION MARKETS (feature-gated)
         // ==================================================================
-
         #[cfg(feature = "prediction_markets")]
         // create_market
         [0x67, 0xe2, 0x61, 0xeb, 0xc8, 0xbc, 0xfb, 0xfe] => {
@@ -392,7 +386,6 @@ pub fn process_instruction(
         // ==================================================================
         // PRICE FEED (feature-gated)
         // ==================================================================
-
         #[cfg(feature = "price_feed")]
         // initialize_price_feed
         [0x44, 0xb4, 0x51, 0x14, 0x66, 0xd5, 0x91, 0xe9] => {
@@ -412,9 +405,41 @@ pub fn process_instruction(
         }
 
         // ==================================================================
-        // UNKNOWN
+        // SIGNAL CONSUMER (on-chain velocity reads for CPI callers)
         // ==================================================================
 
+        // read_velocity — read per-position attention multiplier
+        [0x83, 0xd9, 0x4b, 0x3e, 0x2f, 0x51, 0x15, 0x31] => {
+            signal::read_velocity(program_id, accounts, ix_data)
+        }
+
+        // read_market_velocity — read aggregate market velocity
+        [0x3b, 0xd6, 0x86, 0xf3, 0x6a, 0x96, 0x05, 0xcc] => {
+            signal::read_market_velocity(program_id, accounts, ix_data)
+        }
+
+        // ==================================================================
+        // VELOCITY FEED (native on-chain oracle)
+        // ==================================================================
+
+        // initialize_velocity_feed
+        [0xf4, 0xa2, 0x54, 0x05, 0xed, 0x5e, 0xc1, 0x61] => {
+            velocity_feed::initialize_velocity_feed(program_id, accounts, ix_data)
+        }
+
+        // update_velocity
+        [0x8e, 0xd5, 0xd9, 0xac, 0xb4, 0x8b, 0x6d, 0xa4] => {
+            velocity_feed::update_velocity(program_id, accounts, ix_data)
+        }
+
+        // set_velocity_updater
+        [0x75, 0xd7, 0xff, 0x3f, 0x81, 0xe3, 0xd3, 0x71] => {
+            velocity_feed::set_velocity_updater(program_id, accounts, ix_data)
+        }
+
+        // ==================================================================
+        // UNKNOWN
+        // ==================================================================
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

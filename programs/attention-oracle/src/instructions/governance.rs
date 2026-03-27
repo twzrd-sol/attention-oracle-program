@@ -154,6 +154,11 @@ pub fn harvest_fees(
         return Err(ProgramError::Custom(ERR_INVALID_TOKEN_PROGRAM));
     }
 
+    // Verify protocol_state is owned by this program (H-01 fix)
+    if !protocol_state.is_owned_by(program_id) {
+        return Err(ProgramError::IllegalOwner);
+    }
+
     // Parse legacy PDA data
     let protocol_data = unsafe { protocol_state.borrow_data_unchecked() };
     if protocol_data.len() < LEGACY_MIN_LEN {
@@ -166,10 +171,7 @@ pub fn harvest_fees(
 
     // Verify PDA address
     let mint_key = mint.key();
-    let (expected_pda, _) = find_program_address(
-        &[PROTOCOL_SEED, mint_key],
-        program_id,
-    );
+    let (expected_pda, _) = find_program_address(&[PROTOCOL_SEED, mint_key], program_id);
     if !pubkey_eq(protocol_state.key(), &expected_pda) {
         return Err(ProgramError::Custom(ERR_UNAUTHORIZED));
     }
@@ -222,9 +224,8 @@ pub fn harvest_fees(
     // Use MaybeUninit properly -- only read initialized slots.
     let n_accounts = 3 + remaining.len();
 
-    let mut account_metas_buf: [core::mem::MaybeUninit<AccountMeta>; 33] = unsafe {
-        core::mem::MaybeUninit::uninit().assume_init()
-    };
+    let mut account_metas_buf: [core::mem::MaybeUninit<AccountMeta>; 33] =
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
     account_metas_buf[0].write(AccountMeta::writable(mint.key()));
     account_metas_buf[1].write(AccountMeta::writable(treasury.key()));
     account_metas_buf[2].write(AccountMeta::readonly_signer(protocol_state.key()));
@@ -234,10 +235,7 @@ pub fn harvest_fees(
 
     // SAFETY: We initialized exactly n_accounts elements above.
     let account_metas = unsafe {
-        core::slice::from_raw_parts(
-            account_metas_buf.as_ptr() as *const AccountMeta,
-            n_accounts,
-        )
+        core::slice::from_raw_parts(account_metas_buf.as_ptr() as *const AccountMeta, n_accounts)
     };
 
     let instruction = Instruction {
@@ -249,9 +247,8 @@ pub fn harvest_fees(
     // Build account infos slice for CPI.
     // Use MaybeUninit for the reference array since we cannot have a const
     // for &AccountInfo (requires lifetime).
-    let mut account_refs_buf: [core::mem::MaybeUninit<&AccountInfo>; 33] = unsafe {
-        core::mem::MaybeUninit::uninit().assume_init()
-    };
+    let mut account_refs_buf: [core::mem::MaybeUninit<&AccountInfo>; 33] =
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
     account_refs_buf[0].write(mint);
     account_refs_buf[1].write(treasury);
     account_refs_buf[2].write(protocol_state);
@@ -261,10 +258,7 @@ pub fn harvest_fees(
 
     // SAFETY: We initialized exactly n_accounts elements above.
     let account_refs = unsafe {
-        core::slice::from_raw_parts(
-            account_refs_buf.as_ptr() as *const &AccountInfo,
-            n_accounts,
-        )
+        core::slice::from_raw_parts(account_refs_buf.as_ptr() as *const &AccountInfo, n_accounts)
     };
 
     // PDA signer seeds
@@ -272,12 +266,7 @@ pub fn harvest_fees(
     let seeds = pinocchio::seeds!(PROTOCOL_SEED, mint_key, &bump_ref);
     let signer = Signer::from(&seeds);
 
-    pinocchio::cpi::slice_invoke_signed(
-        &instruction,
-        account_refs,
-        &[signer],
-    )?;
-
+    pinocchio::cpi::slice_invoke_signed(&instruction, account_refs, &[signer])?;
 
     Ok(())
 }
@@ -321,6 +310,11 @@ pub fn withdraw_fees_from_mint(
         return Err(ProgramError::Custom(ERR_INVALID_TOKEN_PROGRAM));
     }
 
+    // Verify protocol_state is owned by this program (H-01 fix)
+    if !protocol_state.is_owned_by(program_id) {
+        return Err(ProgramError::IllegalOwner);
+    }
+
     // Parse legacy PDA data
     let protocol_data = unsafe { protocol_state.borrow_data_unchecked() };
     if protocol_data.len() < LEGACY_MIN_LEN {
@@ -333,10 +327,7 @@ pub fn withdraw_fees_from_mint(
 
     // Verify PDA address
     let mint_key = mint.key();
-    let (expected_pda, _) = find_program_address(
-        &[PROTOCOL_SEED, mint_key],
-        program_id,
-    );
+    let (expected_pda, _) = find_program_address(&[PROTOCOL_SEED, mint_key], program_id);
     if !pubkey_eq(protocol_state.key(), &expected_pda) {
         return Err(ProgramError::Custom(ERR_UNAUTHORIZED));
     }
@@ -383,7 +374,6 @@ pub fn withdraw_fees_from_mint(
         &[mint, treasury_ata, protocol_state],
         &[signer],
     )?;
-
 
     Ok(())
 }
@@ -441,6 +431,11 @@ pub fn route_treasury(
         return Err(ProgramError::Custom(ERR_INVALID_TOKEN_PROGRAM));
     }
 
+    // Verify protocol_state is owned by this program (H-01 fix)
+    if !protocol_state.is_owned_by(program_id) {
+        return Err(ProgramError::IllegalOwner);
+    }
+
     // Verify live ProtocolState PDA
     let ps_data = unsafe { protocol_state.borrow_data_unchecked() };
     if ps_data.len() < LEGACY_MIN_LEN {
@@ -457,10 +452,8 @@ pub fn route_treasury(
     // Verify PDA: legacy seeds = ["protocol", mint, bump]
     let bump_ref = &[ps_bump];
     let mint_key_ref = mint.key();
-    let expected_pda = create_program_address(
-        &[PROTOCOL_SEED, mint_key_ref, bump_ref],
-        program_id,
-    )?;
+    let expected_pda =
+        create_program_address(&[PROTOCOL_SEED, mint_key_ref, bump_ref], program_id)?;
     if !pubkey_eq(protocol_state.key(), &expected_pda) {
         return Err(ProgramError::Custom(ERR_UNAUTHORIZED));
     }
@@ -562,7 +555,6 @@ pub fn route_treasury(
         &[treasury_ata, mint, destination_ata, protocol_state],
         &[signer],
     )?;
-
 
     Ok(())
 }

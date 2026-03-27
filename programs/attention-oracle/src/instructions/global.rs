@@ -11,6 +11,8 @@
 //!   - claim_global (V1 compat)  (disc 36b4975b48f36ef7)
 //!   - claim_global_sponsored    (disc 1573d04978f0f494)
 
+use crate::error::OracleError;
+use crate::keccak::keccak256;
 use pinocchio::{
     account_info::AccountInfo,
     instruction::{AccountMeta, Instruction, Signer},
@@ -19,8 +21,6 @@ use pinocchio::{
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
-use crate::error::OracleError;
-use crate::keccak::keccak256;
 
 // ---------------------------------------------------------------------------
 // Constants (must match Anchor crate values exactly)
@@ -64,7 +64,7 @@ const CLAIM_STATE_GLOBAL_SEED: &[u8] = b"claim_global";
 // ---------------------------------------------------------------------------
 
 // Import from state.rs — single source of truth for account discriminators
-use crate::state::{DISC_PROTOCOL_STATE, DISC_GLOBAL_ROOT_CONFIG, DISC_CLAIM_STATE_GLOBAL};
+use crate::state::{DISC_CLAIM_STATE_GLOBAL, DISC_GLOBAL_ROOT_CONFIG, DISC_PROTOCOL_STATE};
 
 // ---------------------------------------------------------------------------
 // Account byte-offset constants
@@ -271,8 +271,15 @@ fn transfer_checked_cpi<'a>(
 
     let total_infos = total_metas + 1;
     let mut infos: [&AccountInfo; BASE_ACCOUNTS + MAX_REMAINING + 1] = [
-        from_ata, mint, to_ata, authority,
-        token_program, token_program, token_program, token_program, token_program,
+        from_ata,
+        mint,
+        to_ata,
+        authority,
+        token_program,
+        token_program,
+        token_program,
+        token_program,
+        token_program,
     ];
     for (i, acct) in remaining_accounts.iter().enumerate() {
         infos[BASE_ACCOUNTS + i] = acct;
@@ -417,7 +424,14 @@ pub fn initialize_global_root(
             pinocchio::instruction::Seed::from(bump_byte.as_ref()),
         ];
         let signer = Signer::from(&seeds);
-        crate::cpi_create_account(payer, global_root_ai, lamports, GRC_LEN as u64, &crate::ID, &[signer])?;
+        crate::cpi_create_account(
+            payer,
+            global_root_ai,
+            lamports,
+            GRC_LEN as u64,
+            &crate::ID,
+            &[signer],
+        )?;
     }
 
     // -- initialize data --
@@ -508,8 +522,7 @@ pub fn publish_global_root(
     }
 
     // Verify PDA
-    let (expected_grc, _) =
-        pubkey::find_program_address(&[GLOBAL_ROOT_SEED, &ps_mint], &crate::ID);
+    let (expected_grc, _) = pubkey::find_program_address(&[GLOBAL_ROOT_SEED, &ps_mint], &crate::ID);
     if !pubkey::pubkey_eq(global_root_ai.key(), &expected_grc) {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -612,15 +625,15 @@ pub fn claim_global_v2(
 
     claim_global_inner(
         claimer.key(),
-        claimer,            // payer = claimer
-        &accounts[1],       // protocol_state
-        &accounts[2],       // global_root_config
-        &accounts[3],       // claim_state
-        &accounts[4],       // mint
-        &accounts[5],       // treasury_ata
-        &accounts[6],       // claimer_ata
-        &accounts[7],       // token_program
-        &accounts[9],       // system_program
+        claimer,      // payer = claimer
+        &accounts[1], // protocol_state
+        &accounts[2], // global_root_config
+        &accounts[3], // claim_state
+        &accounts[4], // mint
+        &accounts[5], // treasury_ata
+        &accounts[6], // claimer_ata
+        &accounts[7], // token_program
+        &accounts[9], // system_program
         remaining,
         root_seq,
         LEAF_VERSION_V5,
@@ -688,15 +701,15 @@ pub fn claim_global_sponsored_v2(
 
     claim_global_inner(
         claimer.key(),
-        payer,              // payer = relayer
-        &accounts[2],       // protocol_state
-        &accounts[3],       // global_root_config
-        &accounts[4],       // claim_state
-        &accounts[5],       // mint
-        &accounts[6],       // treasury_ata
-        &accounts[7],       // claimer_ata
-        &accounts[8],       // token_program
-        &accounts[10],      // system_program
+        payer,         // payer = relayer
+        &accounts[2],  // protocol_state
+        &accounts[3],  // global_root_config
+        &accounts[4],  // claim_state
+        &accounts[5],  // mint
+        &accounts[6],  // treasury_ata
+        &accounts[7],  // claimer_ata
+        &accounts[8],  // token_program
+        &accounts[10], // system_program
         remaining,
         root_seq,
         LEAF_VERSION_V5,
@@ -851,7 +864,11 @@ const MAX_PROOF_NODES: usize = 32;
 /// Returns (nodes, count). Callers should use `&nodes[..count]`.
 #[inline(never)]
 fn parse_proof(data: &[u8], count: usize) -> ([[u8; 32]; MAX_PROOF_NODES], usize) {
-    let clamped = if count > MAX_PROOF_NODES { MAX_PROOF_NODES } else { count };
+    let clamped = if count > MAX_PROOF_NODES {
+        MAX_PROOF_NODES
+    } else {
+        count
+    };
     let mut nodes = [[0u8; 32]; MAX_PROOF_NODES];
     for i in 0..clamped {
         let off = i * 32;
@@ -995,7 +1012,14 @@ fn claim_global_inner<'a>(
                 pinocchio::instruction::Seed::from(bump_byte.as_ref()),
             ];
             let signer = Signer::from(&seeds);
-            crate::cpi_create_account(payer, claim_state_ai, lamports, CSG_LEN as u64, &crate::ID, &[signer])?;
+            crate::cpi_create_account(
+                payer,
+                claim_state_ai,
+                lamports,
+                CSG_LEN as u64,
+                &crate::ID,
+                &[signer],
+            )?;
         }
     }
 
@@ -1049,6 +1073,21 @@ fn claim_global_inner<'a>(
         // (pinocchio CPI checks borrow state).
         // So we store delta/cumulative_total, drop, do CPI, re-borrow.
         drop(cs_data);
+
+        // -- Validate claimer_ata ownership (H-02/M-01 fix) --
+        // Ensures the token account receiving CCM is actually owned by
+        // the wallet_key in the merkle leaf, preventing fund diversion
+        // in sponsored (gasless relay) claims.
+        {
+            let ata_data = unsafe { claimer_ata.borrow_data_unchecked() };
+            if ata_data.len() < 64 {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            let ata_owner = read_pubkey(&ata_data, 32);
+            if !pubkey::pubkey_eq(&ata_owner, wallet_key) {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
 
         // -- CPI: transfer CCM from treasury to claimer --
         let bump_byte = [ps_bump];

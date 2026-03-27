@@ -14,6 +14,7 @@
 //!   claim_yield              — deprecated, returns error
 //!   settle_market            — burn vLOFI, return USDC, close position
 
+use pinocchio::instruction::{AccountMeta, Instruction};
 use pinocchio::{
     account_info::AccountInfo,
     instruction::Signer,
@@ -23,13 +24,11 @@ use pinocchio::{
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
-use pinocchio::instruction::{AccountMeta, Instruction};
 
 use crate::error::OracleError;
 use crate::state::{
-    MarketVault, ProtocolState, UserMarketPosition,
-    DISC_MARKET_VAULT, DISC_PROTOCOL_STATE, DISC_USER_MARKET_POSITION,
-    MARKET_VAULT_SEED, MARKET_POSITION_SEED, PROTOCOL_STATE_SEED,
+    MarketVault, ProtocolState, UserMarketPosition, DISC_MARKET_VAULT, DISC_PROTOCOL_STATE,
+    DISC_USER_MARKET_POSITION, MARKET_POSITION_SEED, MARKET_VAULT_SEED, PROTOCOL_STATE_SEED,
 };
 
 // ---------------------------------------------------------------------------
@@ -42,7 +41,9 @@ use crate::state::{
 
 #[inline(never)]
 fn cpi_spl_transfer(
-    from: &AccountInfo, to: &AccountInfo, authority: &AccountInfo,
+    from: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
     let mut data = [0u8; 9];
@@ -53,14 +54,21 @@ fn cpi_spl_transfer(
         AccountMeta::writable(to.key()),
         AccountMeta::readonly_signer(authority.key()),
     ];
-    let ix = Instruction { program_id: &crate::SPL_TOKEN_ID, accounts: &metas, data: &data };
+    let ix = Instruction {
+        program_id: &crate::SPL_TOKEN_ID,
+        accounts: &metas,
+        data: &data,
+    };
     pinocchio::cpi::slice_invoke_signed(&ix, &[from, to, authority], &[])
 }
 
 #[inline(never)]
 fn cpi_spl_mint_to(
-    mint: &AccountInfo, account: &AccountInfo, authority: &AccountInfo,
-    amount: u64, signers: &[Signer],
+    mint: &AccountInfo,
+    account: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signers: &[Signer],
 ) -> ProgramResult {
     let mut data = [0u8; 9];
     data[0] = 7; // MintTo
@@ -70,13 +78,19 @@ fn cpi_spl_mint_to(
         AccountMeta::writable(account.key()),
         AccountMeta::readonly_signer(authority.key()),
     ];
-    let ix = Instruction { program_id: &crate::SPL_TOKEN_ID, accounts: &metas, data: &data };
+    let ix = Instruction {
+        program_id: &crate::SPL_TOKEN_ID,
+        accounts: &metas,
+        data: &data,
+    };
     pinocchio::cpi::slice_invoke_signed(&ix, &[mint, account, authority], signers)
 }
 
 #[inline(never)]
 fn cpi_spl_burn(
-    account: &AccountInfo, mint: &AccountInfo, authority: &AccountInfo,
+    account: &AccountInfo,
+    mint: &AccountInfo,
+    authority: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
     let mut data = [0u8; 9];
@@ -87,14 +101,16 @@ fn cpi_spl_burn(
         AccountMeta::writable(mint.key()),
         AccountMeta::readonly_signer(authority.key()),
     ];
-    let ix = Instruction { program_id: &crate::SPL_TOKEN_ID, accounts: &metas, data: &data };
+    let ix = Instruction {
+        program_id: &crate::SPL_TOKEN_ID,
+        accounts: &metas,
+        data: &data,
+    };
     pinocchio::cpi::slice_invoke_signed(&ix, &[account, mint, authority], &[])
 }
 
 #[inline(never)]
-fn cpi_sys_transfer(
-    from: &AccountInfo, to: &AccountInfo, lamports: u64,
-) -> ProgramResult {
+fn cpi_sys_transfer(from: &AccountInfo, to: &AccountInfo, lamports: u64) -> ProgramResult {
     let data = lamports.to_le_bytes();
     // System program transfer instruction = index 2, followed by u64 amount
     let mut ix_data = [0u8; 12];
@@ -104,14 +120,21 @@ fn cpi_sys_transfer(
         AccountMeta::writable_signer(from.key()),
         AccountMeta::writable(to.key()),
     ];
-    let ix = Instruction { program_id: &crate::SYSTEM_ID, accounts: &metas, data: &ix_data };
+    let ix = Instruction {
+        program_id: &crate::SYSTEM_ID,
+        accounts: &metas,
+        data: &ix_data,
+    };
     pinocchio::cpi::slice_invoke_signed(&ix, &[from, to], &[])
 }
 
 #[inline(never)]
 fn cpi_spl_transfer_signed(
-    from: &AccountInfo, to: &AccountInfo, authority: &AccountInfo,
-    amount: u64, signers: &[Signer],
+    from: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signers: &[Signer],
 ) -> ProgramResult {
     let mut data = [0u8; 9];
     data[0] = 3; // SPL Transfer
@@ -121,7 +144,11 @@ fn cpi_spl_transfer_signed(
         AccountMeta::writable(to.key()),
         AccountMeta::readonly_signer(authority.key()),
     ];
-    let ix = Instruction { program_id: &crate::SPL_TOKEN_ID, accounts: &metas, data: &data };
+    let ix = Instruction {
+        program_id: &crate::SPL_TOKEN_ID,
+        accounts: &metas,
+        data: &data,
+    };
     pinocchio::cpi::slice_invoke_signed(&ix, &[from, to, authority], signers)
 }
 
@@ -140,8 +167,7 @@ use crate::TOKEN_2022_ID;
 #[inline(always)]
 fn verify_token_account(account: &AccountInfo) -> Result<(), ProgramError> {
     let owner = account.owner();
-    if !pubkey::pubkey_eq(owner, &crate::SPL_TOKEN_ID)
-        && !pubkey::pubkey_eq(owner, &TOKEN_2022_ID)
+    if !pubkey::pubkey_eq(owner, &crate::SPL_TOKEN_ID) && !pubkey::pubkey_eq(owner, &TOKEN_2022_ID)
     {
         return Err(ProgramError::IllegalOwner);
     }
@@ -251,7 +277,14 @@ pub fn initialize_protocol_state(
     let bump_ref = [bump];
     let pda_seeds = seeds!(PROTOCOL_STATE_SEED, &bump_ref);
     let pda_signer = Signer::from(&pda_seeds);
-    crate::cpi_create_account(admin, protocol_state_acc, lamports, ProtocolState::LEN as u64, program_id, &[pda_signer])?;
+    crate::cpi_create_account(
+        admin,
+        protocol_state_acc,
+        lamports,
+        ProtocolState::LEN as u64,
+        program_id,
+        &[pda_signer],
+    )?;
 
     // Initialize data via typed struct
     let state = ProtocolState::from_account_mut(protocol_state_acc)?;
@@ -287,8 +320,9 @@ pub fn initialize_market_vault(
     }
     let market_id = u64::from_le_bytes(ix_data[0..8].try_into().unwrap());
 
-    let [admin, protocol_state_acc, market_vault_acc, deposit_mint,
-         vlofi_mint, vault_ata, system_program, ..] = accounts else {
+    let [admin, protocol_state_acc, market_vault_acc, deposit_mint, vlofi_mint, vault_ata, system_program, ..] =
+        accounts
+    else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
@@ -318,9 +352,8 @@ pub fn initialize_market_vault(
 
     // Derive market_vault PDA
     let market_id_bytes = market_id.to_le_bytes();
-    let (expected_mv, mv_bump) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
-    );
+    let (expected_mv, mv_bump) =
+        MarketVault::find_pda(protocol_state_acc.key(), market_id, program_id);
     if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -346,7 +379,14 @@ pub fn initialize_market_vault(
         &mv_bump_ref
     );
     let mv_signer = Signer::from(&mv_seeds);
-    crate::cpi_create_account(admin, market_vault_acc, lamports, MarketVault::LEN as u64, program_id, &[mv_signer])?;
+    crate::cpi_create_account(
+        admin,
+        market_vault_acc,
+        lamports,
+        MarketVault::LEN as u64,
+        program_id,
+        &[mv_signer],
+    )?;
 
     // Initialize market_vault data
     let vault = MarketVault::from_account_mut(market_vault_acc)?;
@@ -406,9 +446,7 @@ pub fn realloc_market_vault(
     }
 
     // Validate market_vault PDA
-    let (expected_mv, _) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
-    );
+    let (expected_mv, _) = MarketVault::find_pda(protocol_state_acc.key(), market_id, program_id);
     if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -461,9 +499,9 @@ pub fn deposit_market(
         return Err(OracleError::InvalidInputLength.into());
     }
 
-    let [user, protocol_state_acc, market_vault_acc, user_position_acc,
-         user_usdc_ata, vault_usdc_ata, vlofi_mint, user_vlofi_ata,
-         token_program, _token_2022_program, _system_program, ..] = accounts else {
+    let [user, protocol_state_acc, market_vault_acc, user_position_acc, user_usdc_ata, vault_usdc_ata, vlofi_mint, user_vlofi_ata, token_program, _token_2022_program, _system_program, ..] =
+        accounts
+    else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
@@ -501,16 +539,18 @@ pub fn deposit_market(
     let mv_vlofi_mint: Pubkey = mv_data[49..81].try_into().unwrap();
     let effective_nav = if mv_data.len() >= 145 {
         let nav = u64::from_le_bytes(mv_data[137..145].try_into().unwrap());
-        if nav == 0 { 10_000u64 } else { nav }
+        if nav == 0 {
+            10_000u64
+        } else {
+            nav
+        }
     } else {
         10_000u64
     };
     let _ = mv_data;
 
     // Verify market_vault PDA
-    let (expected_mv, _) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
-    );
+    let (expected_mv, _) = MarketVault::find_pda(protocol_state_acc.key(), market_id, program_id);
     if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -564,27 +604,36 @@ pub fn deposit_market(
     let ps_bump_ref = [ps_bump];
     let mint_seeds = seeds!(PROTOCOL_STATE_SEED, &ps_bump_ref);
     let mint_signer = Signer::from(&mint_seeds);
-    cpi_spl_mint_to(vlofi_mint, user_vlofi_ata, protocol_state_acc, shares_to_mint, &[mint_signer])?;
+    cpi_spl_mint_to(
+        vlofi_mint,
+        user_vlofi_ata,
+        protocol_state_acc,
+        shares_to_mint,
+        &[mint_signer],
+    )?;
 
     // 4. Update market_vault accounting
     {
         let mv_data = unsafe { market_vault_acc.borrow_mut_data_unchecked() };
         let total_deposited = u64::from_le_bytes(mv_data[113..121].try_into().unwrap());
         let total_shares = u64::from_le_bytes(mv_data[121..129].try_into().unwrap());
-        mv_data[113..121].copy_from_slice(&total_deposited
-            .checked_add(amount)
-            .ok_or(ProgramError::ArithmeticOverflow)?
-            .to_le_bytes());
-        mv_data[121..129].copy_from_slice(&total_shares
-            .checked_add(shares_to_mint)
-            .ok_or(ProgramError::ArithmeticOverflow)?
-            .to_le_bytes());
+        mv_data[113..121].copy_from_slice(
+            &total_deposited
+                .checked_add(amount)
+                .ok_or(ProgramError::ArithmeticOverflow)?
+                .to_le_bytes(),
+        );
+        mv_data[121..129].copy_from_slice(
+            &total_shares
+                .checked_add(shares_to_mint)
+                .ok_or(ProgramError::ArithmeticOverflow)?
+                .to_le_bytes(),
+        );
     }
 
     // 5. Create or update user position (init_if_needed pattern)
-    let (expected_pos, pos_bump) = UserMarketPosition::find_pda(
-        market_vault_acc.key(), user.key(), program_id,
-    );
+    let (expected_pos, pos_bump) =
+        UserMarketPosition::find_pda(market_vault_acc.key(), user.key(), program_id);
     if !pubkey::pubkey_eq(user_position_acc.key(), &expected_pos) {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -602,7 +651,14 @@ pub fn deposit_market(
             &pos_bump_ref
         );
         let pos_signer = Signer::from(&pos_seeds);
-        crate::cpi_create_account(user, user_position_acc, pos_lamports, UserMarketPosition::LEN as u64, program_id, &[pos_signer])?;
+        crate::cpi_create_account(
+            user,
+            user_position_acc,
+            pos_lamports,
+            UserMarketPosition::LEN as u64,
+            program_id,
+            &[pos_signer],
+        )?;
 
         // Initialize position data
         let pos = UserMarketPosition::from_account_mut(user_position_acc)?;
@@ -673,8 +729,8 @@ pub fn update_attention(
     let user_pubkey: &Pubkey = unsafe { &*(ix_data[8..40].as_ptr() as *const Pubkey) };
     let multiplier_bps = u64::from_le_bytes(ix_data[40..48].try_into().unwrap());
 
-    let [oracle_authority, protocol_state_acc, market_vault_acc,
-         user_position_acc, ..] = accounts else {
+    let [oracle_authority, protocol_state_acc, market_vault_acc, user_position_acc, ..] = accounts
+    else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
@@ -709,9 +765,7 @@ pub fn update_attention(
         }
     }
 
-    let (expected_mv, _) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
-    );
+    let (expected_mv, _) = MarketVault::find_pda(protocol_state_acc.key(), market_id, program_id);
     if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -732,9 +786,8 @@ pub fn update_attention(
     let _ = pos_data;
 
     // Verify PDA seeds
-    let (expected_pos, _) = UserMarketPosition::find_pda(
-        market_vault_acc.key(), user_pubkey, program_id,
-    );
+    let (expected_pos, _) =
+        UserMarketPosition::find_pda(market_vault_acc.key(), user_pubkey, program_id);
     if !pubkey::pubkey_eq(user_position_acc.key(), &expected_pos) {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -779,11 +832,7 @@ pub fn update_attention(
 // Accounts: [oracle_authority (signer, mut), protocol_state, market_vault (mut)]
 // Instruction data (after discriminator): market_id: u64, nav_per_share_bps: u64
 
-pub fn update_nav(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
+pub fn update_nav(program_id: &Pubkey, accounts: &[AccountInfo], ix_data: &[u8]) -> ProgramResult {
     if ix_data.len() < 16 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -824,9 +873,7 @@ pub fn update_nav(
     let _ = mv_data;
 
     // Verify PDA
-    let (expected_mv, _) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
-    );
+    let (expected_mv, _) = MarketVault::find_pda(protocol_state_acc.key(), market_id, program_id);
     if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -836,12 +883,25 @@ pub fn update_nav(
         return Err(OracleError::NavBelowMinimum.into());
     }
     // Monotonic non-decreasing
-    let floor = if current_nav > 10_000 { current_nav } else { 10_000 };
+    let floor = if current_nav > 10_000 {
+        current_nav
+    } else {
+        10_000
+    };
     if nav_per_share_bps < floor {
         return Err(OracleError::NavDecreaseNotAllowed.into());
     }
     if nav_per_share_bps > 50_000 {
         return Err(OracleError::NavAboveMaximum.into());
+    }
+
+    // Max 20% NAV change per update — deviation guard (M-02 fix)
+    if current_nav > 0 {
+        let max_delta = current_nav / 5; // 20%
+        let delta = nav_per_share_bps.abs_diff(current_nav);
+        if delta > max_delta {
+            return Err(ProgramError::InvalidArgument);
+        }
     }
 
     // Write NAV + slot
@@ -895,9 +955,9 @@ pub fn settle_market(
     }
     let market_id = u64::from_le_bytes(ix_data[0..8].try_into().unwrap());
 
-    let [user, protocol_state_acc, market_vault_acc, user_position_acc,
-         vlofi_mint, user_vlofi_ata, vault_usdc_ata, user_usdc_ata,
-         token_program, _token_2022_program, ..] = accounts else {
+    let [user, protocol_state_acc, market_vault_acc, user_position_acc, vlofi_mint, user_vlofi_ata, vault_usdc_ata, user_usdc_ata, token_program, _token_2022_program, ..] =
+        accounts
+    else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
@@ -938,9 +998,7 @@ pub fn settle_market(
     };
     let _ = mv_data;
 
-    let (expected_mv, _) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
-    );
+    let (expected_mv, _) = MarketVault::find_pda(protocol_state_acc.key(), market_id, program_id);
     if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -955,9 +1013,8 @@ pub fn settle_market(
     }
 
     // Verify PDA
-    let (expected_pos, _) = UserMarketPosition::find_pda(
-        market_vault_acc.key(), user.key(), program_id,
-    );
+    let (expected_pos, _) =
+        UserMarketPosition::find_pda(market_vault_acc.key(), user.key(), program_id);
     if !pubkey::pubkey_eq(user_position_acc.key(), &expected_pos) {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -988,7 +1045,11 @@ pub fn settle_market(
     }
 
     // NAV-adjusted principal return
-    let effective_nav = if nav_per_share_bps == 0 { 10_000u64 } else { nav_per_share_bps };
+    let effective_nav = if nav_per_share_bps == 0 {
+        10_000u64
+    } else {
+        nav_per_share_bps
+    };
     let principal_to_return = if effective_nav == 10_000 {
         deposited_amount
     } else {
@@ -1054,11 +1115,16 @@ pub fn settle_market(
     );
     let vault_signer = Signer::from(&vault_sign_seeds);
 
-    cpi_spl_transfer_signed(vault_usdc_ata, user_usdc_ata, market_vault_acc, principal_to_return, &[vault_signer])?;
+    cpi_spl_transfer_signed(
+        vault_usdc_ata,
+        user_usdc_ata,
+        market_vault_acc,
+        principal_to_return,
+        &[vault_signer],
+    )?;
 
     // 3. CCM yield distributed via merkle claims only — log for auditability
-    if ccm_yield > 0 {
-    }
+    if ccm_yield > 0 {}
 
     // 4. Update vault accounting
     {
@@ -1066,14 +1132,18 @@ pub fn settle_market(
         let total_deposited = u64::from_le_bytes(mv_data[113..121].try_into().unwrap());
         let total_shares = u64::from_le_bytes(mv_data[121..129].try_into().unwrap());
         // Subtract original deposited_amount (not NAV-adjusted) to avoid underflow
-        mv_data[113..121].copy_from_slice(&total_deposited
-            .checked_sub(deposited_amount)
-            .ok_or(ProgramError::ArithmeticOverflow)?
-            .to_le_bytes());
-        mv_data[121..129].copy_from_slice(&total_shares
-            .checked_sub(shares_to_burn)
-            .ok_or(ProgramError::ArithmeticOverflow)?
-            .to_le_bytes());
+        mv_data[113..121].copy_from_slice(
+            &total_deposited
+                .checked_sub(deposited_amount)
+                .ok_or(ProgramError::ArithmeticOverflow)?
+                .to_le_bytes(),
+        );
+        mv_data[121..129].copy_from_slice(
+            &total_shares
+                .checked_sub(shares_to_burn)
+                .ok_or(ProgramError::ArithmeticOverflow)?
+                .to_le_bytes(),
+        );
     }
 
     // 5. Mark position as settled
@@ -1153,7 +1223,9 @@ mod tests {
     fn nav_adjusted_principal_with_yield() {
         let shares: u64 = 1_000_000;
         let nav_bps: u64 = 10_100;
-        let principal = shares.checked_mul(nav_bps).and_then(|v| v.checked_div(10_000));
+        let principal = shares
+            .checked_mul(nav_bps)
+            .and_then(|v| v.checked_div(10_000));
         assert_eq!(principal, Some(1_010_000));
     }
 
@@ -1161,7 +1233,9 @@ mod tests {
     fn nav_adjusted_principal_at_max() {
         let shares: u64 = 1_000_000;
         let nav_bps: u64 = 50_000;
-        let principal = shares.checked_mul(nav_bps).and_then(|v| v.checked_div(10_000));
+        let principal = shares
+            .checked_mul(nav_bps)
+            .and_then(|v| v.checked_div(10_000));
         assert_eq!(principal, Some(5_000_000));
     }
 }
