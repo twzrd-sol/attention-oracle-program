@@ -3,6 +3,9 @@
 pub mod admin;
 pub mod global;
 pub mod governance;
+pub mod signal;
+pub mod velocity_feed;
+
 #[cfg(feature = "prediction_markets")]
 pub mod markets;
 #[cfg(feature = "price_feed")]
