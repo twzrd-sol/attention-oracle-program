@@ -1,5 +1,0 @@
-Contact: mailto:security@twzrd.xyz
-Expires: 2027-01-01T00:00:00.000Z
-Preferred-Languages: en
-Canonical: https://github.com/twzrd-sol/attention-oracle-program/.well-known/security.txt
-Policy: https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md
