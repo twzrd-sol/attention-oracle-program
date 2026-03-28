@@ -1,420 +1,510 @@
-//! AO v2 — Attention Oracle (Pinocchio)
+#![allow(ambiguous_glob_reexports)]
+#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+#![allow(clippy::too_many_arguments, clippy::missing_errors_doc)]
+#![allow(
+    clippy::doc_markdown,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value
+)]
+#![allow(clippy::manual_div_ceil)]
+#![allow(
+    clippy::items_after_statements,
+    clippy::needless_for_each,
+    clippy::needless_borrow
+)]
+#![allow(
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args
+)]
+#![allow(
+    clippy::or_fun_call,
+    clippy::explicit_iter_loop,
+    clippy::used_underscore_binding
+)]
+#![allow(
+    clippy::needless_borrows_for_generic_args,
+    clippy::cast_possible_truncation,
+    clippy::cast_lossless
+)]
+#![allow(clippy::no_effect_underscore_binding, clippy::pub_underscore_fields)]
+#![allow(
+    clippy::too_long_first_doc_paragraph,
+    clippy::unnecessary_cast,
+    clippy::len_zero
+)]
+#![allow(
+    clippy::wildcard_imports,
+    clippy::missing_const_for_fn,
+    clippy::use_self
+)]
+
+//! # Liquid Attention Protocol
 //!
-//! Drop-in replacement for the Anchor-based AO program.
-//! Same program ID, same account layouts, same discriminators.
+//! Permissionless attention markets on Solana.
+//! DEPOSIT (USDC) → MINT (vLOFI) → MATURE (attention accrual) → RESOLVE → SETTLE (CCM)
 
-#![cfg_attr(not(test), no_std)]
+use anchor_lang::prelude::*;
 
-use pinocchio::{
-    account_info::AccountInfo,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    ProgramResult,
-};
+#[cfg(not(feature = "no-entrypoint"))]
+use solana_security_txt::security_txt;
 
-// ============================================================================
-// PROGRAM ID
-// ============================================================================
-
-/// Program ID: GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop
-pub const ID: Pubkey = [
-    0xea, 0x78, 0x84, 0xf3, 0x5f, 0xf2, 0xba, 0xec, 0xf9, 0x23, 0x05, 0xc3, 0x2e, 0x3e, 0xa1, 0x36,
-    0xce, 0x84, 0xfb, 0xdf, 0x19, 0x4c, 0xf1, 0x8b, 0x9a, 0xfd, 0xa3, 0x82, 0x1d, 0xa4, 0xb0, 0x6b,
-];
-
-// ============================================================================
-// MODULES
-// ============================================================================
-
-pub mod state;
-pub mod error;
-pub mod keccak;
+pub mod constants;
+pub mod errors;
+pub mod events;
 pub mod instructions;
-
 #[cfg(feature = "strategy")]
 pub mod klend;
+pub mod merkle_proof;
+pub mod state;
+pub mod token_transfer;
 
-/// Token-2022 program ID.
-pub const TOKEN_2022_ID: Pubkey = [
-    0x06, 0xdd, 0xf6, 0xe1, 0xee, 0x75, 0x8f, 0xde, 0x18, 0x42, 0x5d, 0xbc, 0xe4, 0x6c, 0xcd, 0xda,
-    0xb6, 0x1a, 0xfc, 0x4d, 0x83, 0xb9, 0x0d, 0x27, 0xfe, 0xbd, 0xf9, 0x28, 0xd8, 0xa1, 0x8b, 0xfc,
-];
+pub use constants::*;
+pub use errors::*;
+pub use events::*;
+pub use instructions::*;
+pub use merkle_proof::*;
+pub use state::*;
+pub use token_transfer::*;
 
-/// System program ID (all zeros).
-pub const SYSTEM_ID: Pubkey = [0u8; 32];
+declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 
-/// SPL Token program ID.
-pub const SPL_TOKEN_ID: Pubkey = [
-    0x06, 0xdd, 0xf6, 0xe1, 0xd7, 0x65, 0xa1, 0x93, 0xd9, 0xcb, 0xe1, 0x46, 0xce, 0xeb, 0x79, 0xac,
-    0x1c, 0xb4, 0x85, 0xed, 0x5f, 0x5b, 0x37, 0x91, 0x3a, 0x8c, 0xf5, 0x85, 0x7e, 0xff, 0x00, 0xa9,
-];
-
-/// Shared CreateAccount CPI helper — avoids const-generic monomorphization.
-#[inline(never)]
-pub fn cpi_create_account(
-    from: &pinocchio::account_info::AccountInfo,
-    to: &pinocchio::account_info::AccountInfo,
-    lamports: u64,
-    space: u64,
-    owner: &pinocchio::pubkey::Pubkey,
-    signers: &[pinocchio::instruction::Signer],
-) -> ProgramResult {
-    // System program CreateAccount instruction layout:
-    // [0..4]  = 0u32 (instruction index)
-    // [4..12] = lamports (u64)
-    // [12..20] = space (u64)
-    // [20..52] = owner (Pubkey)
-    let mut data = [0u8; 52];
-    // instruction index 0 is already zero
-    data[4..12].copy_from_slice(&lamports.to_le_bytes());
-    data[12..20].copy_from_slice(&space.to_le_bytes());
-    data[20..52].copy_from_slice(owner);
-    let metas = [
-        pinocchio::instruction::AccountMeta::writable_signer(from.key()),
-        pinocchio::instruction::AccountMeta::writable_signer(to.key()),
-    ];
-    let ix = pinocchio::instruction::Instruction {
-        program_id: &crate::SYSTEM_ID,
-        accounts: &metas,
-        data: &data,
-    };
-    pinocchio::cpi::slice_invoke_signed(&ix, &[from, to], signers)
+#[cfg(not(feature = "no-entrypoint"))]
+security_txt! {
+    name: "Liquid Attention Protocol",
+    project_url: "https://github.com/twzrd-sol/wzrd-final",
+    contacts: "email:security@twzrd.xyz",
+    policy: "https://github.com/twzrd-sol/wzrd-final/blob/main/SECURITY.md",
+    preferred_languages: "en",
+    source_code: "https://github.com/twzrd-sol/wzrd-final"
 }
 
-// Re-export instruction sub-modules for ergonomic access.
-pub use instructions::{vault, global, governance, admin};
+#[program]
+pub mod token_2022 {
+    use super::*;
 
-#[cfg(feature = "strategy")]
-pub use instructions::strategy;
+    // =========================================================================
+    // Global Root (V4) — Oracle Heartbeat
+    // Single root shared across all markets. Resolves attention data.
+    // =========================================================================
 
-#[cfg(feature = "channel_staking")]
-pub use instructions::channel_staking;
-
-#[cfg(feature = "prediction_markets")]
-pub use instructions::markets;
-
-#[cfg(feature = "price_feed")]
-pub use instructions::price_feed;
-
-// ============================================================================
-// ENTRYPOINT
-// ============================================================================
-
-pinocchio::program_entrypoint!(process_instruction);
-pinocchio::default_allocator!();
-pinocchio::nostd_panic_handler!();
-
-/// Top-level instruction router.
-///
-/// Matches on 8-byte Anchor discriminators (`SHA-256("global:<ix_name>")[..8]`).
-/// The remaining bytes after the discriminator are forwarded to the handler as
-/// `ix_data`.
-pub fn process_instruction(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    instruction_data: &[u8],
-) -> ProgramResult {
-    // Verify program ID.
-    if program_id != &crate::ID {
-        return Err(ProgramError::IncorrectProgramId);
+    pub fn initialize_global_root(ctx: Context<InitializeGlobalRoot>) -> Result<()> {
+        instructions::global::initialize_global_root(ctx)
     }
 
-    // Split discriminator from payload.
-    let disc: &[u8] = instruction_data
-        .get(..8)
-        .ok_or(ProgramError::InvalidInstructionData)?;
-    let ix_data: &[u8] = &instruction_data[8..];
+    pub fn publish_global_root(
+        ctx: Context<PublishGlobalRoot>,
+        root_seq: u64,
+        root: [u8; 32],
+        dataset_hash: [u8; 32],
+    ) -> Result<()> {
+        instructions::global::publish_global_root(ctx, root_seq, root, dataset_hash)
+    }
 
-    match disc {
-        // ==================================================================
-        // VAULT
-        // ==================================================================
+    pub fn claim_global<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimGlobal<'info>>,
+        root_seq: u64,
+        cumulative_total: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::global::claim_global(ctx, root_seq, cumulative_total, proof)
+    }
 
-        // initialize_protocol_state
-        [0xe5, 0xa8, 0x78, 0xa6, 0x07, 0x1f, 0x3b, 0xed] => {
-            vault::initialize_protocol_state(program_id, accounts, ix_data)
-        }
+    pub fn claim_global_sponsored<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimGlobalSponsored<'info>>,
+        root_seq: u64,
+        cumulative_total: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::global::claim_global_sponsored(ctx, root_seq, cumulative_total, proof)
+    }
 
-        // initialize_market_vault
-        [0x19, 0x66, 0xcb, 0x77, 0x97, 0x14, 0x8f, 0xde] => {
-            vault::initialize_market_vault(program_id, accounts, ix_data)
-        }
+    pub fn claim_global_v2<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimGlobal<'info>>,
+        root_seq: u64,
+        base_yield: u64,
+        attention_bonus: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::global::claim_global_v2(ctx, root_seq, base_yield, attention_bonus, proof)
+    }
 
-        // realloc_market_vault
-        [0x89, 0x52, 0x34, 0x4f, 0xde, 0x32, 0x52, 0x97] => {
-            vault::realloc_market_vault(program_id, accounts, ix_data)
-        }
+    pub fn claim_global_sponsored_v2<'info>(
+        ctx: Context<'_, '_, '_, 'info, ClaimGlobalSponsored<'info>>,
+        root_seq: u64,
+        base_yield: u64,
+        attention_bonus: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::global::claim_global_sponsored_v2(
+            ctx,
+            root_seq,
+            base_yield,
+            attention_bonus,
+            proof,
+        )
+    }
 
-        // deposit_market
-        [0xd4, 0x35, 0xba, 0xc1, 0x93, 0x35, 0x8f, 0x7b] => {
-            vault::deposit_market(program_id, accounts, ix_data)
-        }
+    // =========================================================================
+    // Attention Markets — Oracle-Resolved Binary Markets (Phase 2)
+    // =========================================================================
 
-        // update_attention
-        [0x7b, 0xf7, 0x75, 0x86, 0xd0, 0x6b, 0x6c, 0x32] => {
-            vault::update_attention(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "prediction_markets")]
+    pub fn create_market(
+        ctx: Context<CreateMarket>,
+        market_id: u64,
+        creator_wallet: Pubkey,
+        metric: u8,
+        target: u64,
+        resolution_root_seq: u64,
+    ) -> Result<()> {
+        instructions::markets::create_market(
+            ctx,
+            market_id,
+            creator_wallet,
+            metric,
+            target,
+            resolution_root_seq,
+        )
+    }
 
-        // update_nav
-        [0x38, 0x10, 0xea, 0x6d, 0x9b, 0xa5, 0x05, 0x00] => {
-            vault::update_nav(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "prediction_markets")]
+    pub fn initialize_market_tokens_v2(ctx: Context<InitializeMarketTokensV2>) -> Result<()> {
+        instructions::markets::initialize_market_tokens_v2(ctx)
+    }
 
-        // claim_yield
-        [0x31, 0x4a, 0x6f, 0x07, 0xba, 0x16, 0x3d, 0xa5] => {
-            vault::claim_yield(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "prediction_markets")]
+    pub fn mint_shares<'info>(
+        ctx: Context<'_, '_, '_, 'info, MintShares<'info>>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::markets::mint_shares(ctx, amount)
+    }
 
-        // settle_market
-        [0xc1, 0x99, 0x5f, 0xd8, 0xa6, 0x06, 0x90, 0xd9] => {
-            vault::settle_market(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "prediction_markets")]
+    pub fn redeem_shares<'info>(
+        ctx: Context<'_, '_, '_, 'info, RedeemShares<'info>>,
+        shares: u64,
+    ) -> Result<()> {
+        instructions::markets::redeem_shares(ctx, shares)
+    }
 
-        // ==================================================================
-        // GLOBAL (merkle claims)
-        // ==================================================================
+    #[cfg(feature = "prediction_markets")]
+    pub fn resolve_market(
+        ctx: Context<ResolveMarket>,
+        cumulative_total: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::markets::resolve_market(ctx, cumulative_total, proof)
+    }
 
-        // initialize_global_root
-        [0xca, 0x36, 0x6b, 0xf6, 0x18, 0xf7, 0x4b, 0xfd] => {
-            global::initialize_global_root(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "prediction_markets")]
+    pub fn settle<'info>(
+        ctx: Context<'_, '_, '_, 'info, Settle<'info>>,
+        shares: u64,
+    ) -> Result<()> {
+        instructions::markets::settle(ctx, shares)
+    }
 
-        // publish_global_root
-        [0x51, 0x8d, 0xe2, 0x16, 0xfe, 0xa7, 0x62, 0xff] => {
-            global::publish_global_root(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "prediction_markets")]
+    pub fn sweep_residual<'info>(
+        ctx: Context<'_, '_, '_, 'info, SweepResidual<'info>>,
+    ) -> Result<()> {
+        instructions::markets::sweep_residual(ctx)
+    }
 
-        // claim_global_v2
-        [0xf8, 0x2c, 0xaa, 0x65, 0x31, 0xaa, 0x8c, 0x7e] => {
-            global::claim_global_v2(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "prediction_markets")]
+    pub fn close_market(ctx: Context<CloseMarket>) -> Result<()> {
+        instructions::markets::close_market(ctx)
+    }
 
-        // claim_global_sponsored_v2
-        [0x59, 0x54, 0x84, 0x50, 0x8b, 0x5c, 0x5e, 0x04] => {
-            global::claim_global_sponsored_v2(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "prediction_markets")]
+    pub fn close_market_mints(ctx: Context<CloseMarketMints>, market_id: u64) -> Result<()> {
+        instructions::markets::close_market_mints(ctx, market_id)
+    }
 
-        // ------------------------------------------------------------------
-        // BACKWARD COMPAT: V1 claims (existing claim receipts)
-        // ------------------------------------------------------------------
+    // =========================================================================
+    // Market Vault — USDC Deposit, Attention Oracle, Settlement
+    // The core product loop: DEPOSIT -> MATURE -> RESOLVE -> SETTLE
+    // =========================================================================
 
-        // claim_global (V1)
-        [0x36, 0xb4, 0x97, 0x5b, 0x48, 0xf3, 0x6e, 0xf7] => {
-            global::claim_global_v1(program_id, accounts, ix_data)
-        }
+    /// One-time protocol initialization. Sets admin, publisher, treasury, oracle, CCM mint.
+    pub fn initialize_protocol_state(
+        ctx: Context<InitializeProtocolState>,
+        publisher: Pubkey,
+        treasury: Pubkey,
+        oracle_authority: Pubkey,
+        ccm_mint: Pubkey,
+    ) -> Result<()> {
+        instructions::vault::initialize_protocol_state(
+            ctx,
+            publisher,
+            treasury,
+            oracle_authority,
+            ccm_mint,
+        )
+    }
 
-        // claim_global_sponsored (V1)
-        [0x15, 0x73, 0xd0, 0x49, 0x78, 0xf0, 0xf4, 0x94] => {
-            global::claim_global_sponsored_v1(program_id, accounts, ix_data)
-        }
+    /// Create a market vault with USDC deposit token and vLOFI receipt token.
+    pub fn initialize_market_vault(
+        ctx: Context<InitializeMarketVault>,
+        market_id: u64,
+    ) -> Result<()> {
+        instructions::vault::initialize_market_vault(ctx, market_id)
+    }
 
-        // ==================================================================
-        // GOVERNANCE
-        // ==================================================================
+    /// Grow existing MarketVault PDA from 137 to 153 bytes (Phase 2 NAV fields).
+    /// Admin-only. No-op if already at target size.
+    pub fn realloc_market_vault(ctx: Context<ReallocMarketVault>, market_id: u64) -> Result<()> {
+        instructions::vault::realloc_market_vault(ctx, market_id)
+    }
 
-        // harvest_fees
-        [0x5a, 0x95, 0x9e, 0xf1, 0xa3, 0xba, 0x9b, 0xca] => {
-            governance::harvest_fees(program_id, accounts, ix_data)
-        }
+    /// Deposit USDC into a market vault, receive vLOFI 1:1.
+    pub fn deposit_market(ctx: Context<DepositMarket>, market_id: u64, amount: u64) -> Result<()> {
+        instructions::vault::deposit_market(ctx, market_id, amount)
+    }
 
-        // withdraw_fees_from_mint
-        [0x2a, 0xc3, 0x96, 0x0a, 0xb5, 0xb1, 0x5e, 0x83] => {
-            governance::withdraw_fees_from_mint(program_id, accounts, ix_data)
-        }
+    /// Oracle pushes attention multiplier to a user's market position.
+    pub fn update_attention(
+        ctx: Context<UpdateAttention>,
+        market_id: u64,
+        user_pubkey: Pubkey,
+        multiplier_bps: u64,
+    ) -> Result<()> {
+        instructions::vault::update_attention(ctx, market_id, user_pubkey, multiplier_bps)
+    }
 
-        // route_treasury
-        [0x58, 0x65, 0x6a, 0x36, 0x5a, 0x28, 0x43, 0x39] => {
-            governance::route_treasury(program_id, accounts, ix_data)
-        }
+    /// Update NAV (Net Asset Value) per vLOFI share on MarketVault.
+    /// Called by oracle authority each rebalance cycle.
+    /// nav_per_share_bps must remain within [10_000, 50_000] and be non-decreasing.
+    pub fn update_nav(
+        ctx: Context<UpdateNav>,
+        market_id: u64,
+        nav_per_share_bps: u64,
+    ) -> Result<()> {
+        instructions::vault::update_nav(ctx, market_id, nav_per_share_bps)
+    }
 
-        // ==================================================================
-        // ADMIN
-        // ==================================================================
+    /// Deprecated direct-claim path. Returns `ClaimYieldDeprecated`.
+    /// CCM distribution is merkle-claim only via claim_global / claim_global_v2.
+    pub fn claim_yield(ctx: Context<ClaimYield>, market_id: u64) -> Result<()> {
+        instructions::vault::claim_yield(ctx, market_id)
+    }
 
-        // realloc_legacy_protocol
-        [0xa4, 0xe6, 0xc5, 0xe0, 0xfe, 0xd9, 0x6b, 0xaa] => {
-            admin::realloc_legacy_protocol(program_id, accounts, ix_data)
-        }
+    /// Burn vLOFI, reclaim USDC principal from reserve, and close the position.
+    /// CCM is not minted here; users claim CCM through merkle proofs.
+    pub fn settle_market(ctx: Context<SettleMarket>, market_id: u64) -> Result<()> {
+        instructions::vault::settle_market(ctx, market_id)
+    }
 
-        // admin_fix_ccm_authority
-        [0x90, 0x67, 0xae, 0xdb, 0x12, 0x27, 0x9d, 0x35] => {
-            admin::admin_fix_ccm_authority(program_id, accounts, ix_data)
-        }
+    // =========================================================================
+    // Token-2022 Transfer Fee Harvesting — Revenue Infrastructure
+    // =========================================================================
 
-        // set_treasury
-        [0x39, 0x61, 0xc4, 0x5f, 0xc3, 0xce, 0x6a, 0x88] => {
-            admin::set_treasury(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "channel_staking")]
+    pub fn initialize_fee_config(
+        ctx: Context<InitializeFeeConfig>,
+        basis_points: u16,
+        treasury_fee_bps: u16,
+        creator_fee_bps: u16,
+        tier_multipliers: [u32; 6],
+    ) -> Result<()> {
+        instructions::governance::initialize_fee_config(
+            ctx,
+            basis_points,
+            treasury_fee_bps,
+            creator_fee_bps,
+            tier_multipliers,
+        )
+    }
 
-        // update_protocol_state
-        [0x57, 0x15, 0x8e, 0xb0, 0xba, 0xcd, 0x59, 0x16] => {
-            admin::update_protocol_state(program_id, accounts, ix_data)
-        }
+    /// Harvest withheld fees from user/LP token accounts and move to treasury ATA.
+    /// Permissionless — anyone can trigger. Source accounts passed via remaining_accounts.
+    pub fn harvest_fees<'info>(
+        ctx: Context<'_, '_, 'info, 'info, HarvestFees<'info>>,
+    ) -> Result<()> {
+        instructions::governance::harvest_and_distribute_fees(ctx)
+    }
 
-        // ==================================================================
-        // STRATEGY (feature-gated)
-        // ==================================================================
+    /// Withdraw accumulated withheld fees from the mint account to treasury ATA.
+    /// Permissionless — anyone can trigger.
+    pub fn withdraw_fees_from_mint(ctx: Context<WithdrawFeesFromMint>) -> Result<()> {
+        instructions::governance::withdraw_fees_from_mint(ctx)
+    }
 
-        #[cfg(feature = "strategy")]
-        // initialize_strategy_vault
-        [0xd2, 0xf3, 0x8d, 0x00, 0xcb, 0xf6, 0x04, 0xe1] => {
-            strategy::initialize_strategy_vault(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "strategy")]
+    pub fn initialize_strategy_vault(
+        ctx: Context<InitializeStrategyVault>,
+        reserve_ratio_bps: u16,
+        utilization_cap_bps: u16,
+        operator_authority: Pubkey,
+        klend_program: Pubkey,
+        klend_reserve: Pubkey,
+        klend_lending_market: Pubkey,
+        ctoken_ata: Pubkey,
+    ) -> Result<()> {
+        instructions::strategy::initialize_strategy_vault(
+            ctx,
+            reserve_ratio_bps,
+            utilization_cap_bps,
+            operator_authority,
+            klend_program,
+            klend_reserve,
+            klend_lending_market,
+            ctoken_ata,
+        )
+    }
 
-        #[cfg(feature = "strategy")]
-        // deploy_to_strategy
-        [0xd7, 0x31, 0x3d, 0xde, 0xb4, 0x3c, 0x09, 0x76] => {
-            strategy::deploy_to_strategy(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "strategy")]
+    pub fn deploy_to_strategy(ctx: Context<DeployToStrategy>, amount: u64) -> Result<()> {
+        instructions::strategy::deploy_to_strategy(ctx, amount)
+    }
 
-        #[cfg(feature = "strategy")]
-        // withdraw_from_strategy
-        [0x8c, 0xef, 0x41, 0x36, 0x7d, 0x80, 0xdf, 0x7d] => {
-            strategy::withdraw_from_strategy(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "strategy")]
+    pub fn withdraw_from_strategy(ctx: Context<WithdrawFromStrategy>, amount: u64) -> Result<()> {
+        instructions::strategy::withdraw_from_strategy(ctx, amount)
+    }
 
-        #[cfg(feature = "strategy")]
-        // harvest_strategy_yield
-        [0x43, 0xd3, 0xf9, 0x57, 0x20, 0xb1, 0xe3, 0xd5] => {
-            strategy::harvest_strategy_yield(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "strategy")]
+    pub fn harvest_strategy_yield(ctx: Context<HarvestStrategyYield>) -> Result<()> {
+        instructions::strategy::harvest_strategy_yield(ctx)
+    }
 
-        #[cfg(feature = "strategy")]
-        // emergency_unwind
-        [0x89, 0xab, 0x54, 0x7d, 0x98, 0x6b, 0x31, 0xf8] => {
-            strategy::emergency_unwind(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "strategy")]
+    pub fn emergency_unwind(ctx: Context<EmergencyUnwind>) -> Result<()> {
+        instructions::strategy::emergency_unwind(ctx)
+    }
 
-        // ==================================================================
-        // CHANNEL STAKING (feature-gated)
-        // ==================================================================
+    pub fn route_treasury(
+        ctx: Context<RouteTreasury>,
+        amount: u64,
+        min_reserve: u64,
+    ) -> Result<()> {
+        instructions::governance::route_treasury(ctx, amount, min_reserve)
+    }
+    // =========================================================================
+    // Switchboard Price Feed Bridge — Permissionless cranker pattern
+    // =========================================================================
 
-        #[cfg(feature = "channel_staking")]
-        // initialize_fee_config
-        [0x3e, 0xa2, 0x14, 0x85, 0x79, 0x41, 0x91, 0x1b] => {
-            channel_staking::initialize_fee_config(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "price_feed")]
+    /// Admin creates a new price feed PDA (e.g. "SOL/USD").
+    pub fn initialize_price_feed(
+        ctx: Context<InitializePriceFeed>,
+        label: [u8; 32],
+        updater: Pubkey,
+        max_staleness_slots: u64,
+    ) -> Result<()> {
+        instructions::price_feed::initialize_price_feed(ctx, label, updater, max_staleness_slots)
+    }
 
-        #[cfg(feature = "channel_staking")]
-        // create_channel_config_v2
-        [0x79, 0x4d, 0xda, 0x3e, 0xab, 0x2f, 0xcc, 0xb6] => {
-            admin::create_channel_config_v2(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "price_feed")]
+    /// Registered cranker pushes a Switchboard-sourced price on-chain.
+    /// Enforces 20% max deviation guard.
+    pub fn update_price(ctx: Context<UpdatePrice>, label: [u8; 32], price: i64) -> Result<()> {
+        instructions::price_feed::update_price(ctx, label, price)
+    }
 
-        #[cfg(feature = "channel_staking")]
-        // initialize_stake_pool
-        [0x30, 0xbd, 0xf3, 0x49, 0x13, 0x43, 0x24, 0x53] => {
-            channel_staking::initialize_stake_pool(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "price_feed")]
+    /// Authority rotates the cranker key for a price feed.
+    pub fn set_price_updater(
+        ctx: Context<SetPriceUpdater>,
+        label: [u8; 32],
+        new_updater: Pubkey,
+    ) -> Result<()> {
+        instructions::price_feed::set_price_updater(ctx, label, new_updater)
+    }
 
-        #[cfg(feature = "channel_staking")]
-        // stake_channel
-        [0x2b, 0xdb, 0xa0, 0x73, 0x0d, 0xc8, 0x49, 0xde] => {
-            channel_staking::stake_channel(program_id, accounts, ix_data)
-        }
+    // =========================================================================
+    // Access Control
+    // =========================================================================
 
-        #[cfg(feature = "channel_staking")]
-        // unstake_channel
-        [0xe9, 0x36, 0x5a, 0x1d, 0x81, 0x8a, 0x17, 0x64] => {
-            channel_staking::unstake_channel(program_id, accounts, ix_data)
-        }
+    /// Set the treasury wallet (fee destination owner).
+    pub fn set_treasury(ctx: Context<SetTreasury>, new_treasury: Pubkey) -> Result<()> {
+        instructions::admin::set_treasury(ctx, new_treasury)
+    }
 
-        #[cfg(feature = "channel_staking")]
-        // claim_channel_rewards
-        [0x6a, 0xc5, 0x9e, 0x9c, 0x16, 0xd1, 0x5c, 0x51] => {
-            channel_staking::claim_channel_rewards(program_id, accounts, ix_data)
-        }
+    // =========================================================================
+    // Channel Staking — Core operations (Phase 2)
+    // =========================================================================
 
-        // ==================================================================
-        // PREDICTION MARKETS (feature-gated)
-        // ==================================================================
+    #[cfg(feature = "channel_staking")]
+    pub fn create_channel_config_v2(
+        ctx: Context<CreateChannelConfigV2>,
+        subject: Pubkey,
+        authority: Pubkey,
+        creator_wallet: Pubkey,
+        creator_fee_bps: u16,
+    ) -> Result<()> {
+        instructions::admin::create_channel_config_v2(
+            ctx,
+            subject,
+            authority,
+            creator_wallet,
+            creator_fee_bps,
+        )
+    }
 
-        #[cfg(feature = "prediction_markets")]
-        // create_market
-        [0x67, 0xe2, 0x61, 0xeb, 0xc8, 0xbc, 0xfb, 0xfe] => {
-            markets::create_market(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "channel_staking")]
+    pub fn initialize_stake_pool(ctx: Context<InitializeStakePool>) -> Result<()> {
+        instructions::staking::initialize_stake_pool(ctx)
+    }
 
-        #[cfg(feature = "prediction_markets")]
-        // initialize_market_tokens
-        [0x6e, 0x86, 0xb4, 0x05, 0x13, 0x97, 0x50, 0x49] => {
-            markets::initialize_market_tokens(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "channel_staking")]
+    pub fn stake_channel(
+        ctx: Context<StakeChannel>,
+        amount: u64,
+        lock_duration: u64,
+    ) -> Result<()> {
+        instructions::staking::stake_channel(ctx, amount, lock_duration)
+    }
 
-        #[cfg(feature = "prediction_markets")]
-        // initialize_market_tokens_v2
-        [0xb4, 0xa8, 0x58, 0xf2, 0x74, 0xf7, 0xe5, 0x69] => {
-            markets::initialize_market_tokens_v2(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "channel_staking")]
+    pub fn unstake_channel(ctx: Context<UnstakeChannel>) -> Result<()> {
+        instructions::staking::unstake_channel(ctx)
+    }
 
-        #[cfg(feature = "prediction_markets")]
-        // mint_shares
-        [0x18, 0xc4, 0x84, 0x00, 0xb7, 0x9e, 0xd8, 0x8e] => {
-            markets::mint_shares(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "channel_staking")]
+    pub fn claim_channel_rewards(ctx: Context<ClaimChannelRewards>) -> Result<()> {
+        instructions::staking::claim_channel_rewards(ctx)
+    }
 
-        #[cfg(feature = "prediction_markets")]
-        // redeem_shares
-        [0xef, 0x9a, 0xe0, 0x59, 0xf0, 0xc4, 0x2a, 0xbb] => {
-            markets::redeem_shares(program_id, accounts, ix_data)
-        }
+    // =========================================================================
+    // Channel Staking — Admin & Lifecycle (Phase 2)
+    // =========================================================================
 
-        #[cfg(feature = "prediction_markets")]
-        // resolve_market
-        [0x9b, 0x17, 0x50, 0xad, 0x2e, 0x4a, 0x17, 0xef] => {
-            markets::resolve_market(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "channel_staking")]
+    pub fn set_reward_rate(ctx: Context<SetRewardRate>, new_rate: u64) -> Result<()> {
+        instructions::staking::set_reward_rate(ctx, new_rate)
+    }
 
-        #[cfg(feature = "prediction_markets")]
-        // settle
-        [0xaf, 0x2a, 0xb9, 0x57, 0x90, 0x83, 0x66, 0xd4] => {
-            markets::settle(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "channel_staking")]
+    pub fn emergency_unstake_channel(ctx: Context<EmergencyUnstakeChannel>) -> Result<()> {
+        instructions::staking::emergency_unstake_channel(ctx)
+    }
 
-        #[cfg(feature = "prediction_markets")]
-        // sweep_residual
-        [0xe6, 0x76, 0x23, 0x9b, 0xa5, 0x6e, 0x8d, 0x13] => {
-            markets::sweep_residual(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "channel_staking")]
+    pub fn admin_shutdown_pool(ctx: Context<AdminShutdownPool>, reason: String) -> Result<()> {
+        instructions::staking::admin_shutdown_pool(ctx, reason)
+    }
 
-        #[cfg(feature = "prediction_markets")]
-        // close_market
-        [0x58, 0x9a, 0xf8, 0xba, 0x30, 0x0e, 0x7b, 0xf4] => {
-            markets::close_market(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "channel_staking")]
+    pub fn admin_recover_pool(ctx: Context<AdminRecoverPool>) -> Result<()> {
+        instructions::staking::admin_recover_pool(ctx)
+    }
 
-        #[cfg(feature = "prediction_markets")]
-        // close_market_mints
-        [0xde, 0xe7, 0x4c, 0x62, 0x77, 0x06, 0x74, 0xb6] => {
-            markets::close_market_mints(program_id, accounts, ix_data)
-        }
+    #[cfg(feature = "channel_staking")]
+    pub fn close_stake_pool(ctx: Context<CloseStakePool>) -> Result<()> {
+        instructions::staking::close_stake_pool(ctx)
+    }
 
-        // ==================================================================
-        // PRICE FEED (feature-gated)
-        // ==================================================================
+    /// Realloc the legacy 141-byte ProtocolState PDA (["protocol", mint]) to 173 bytes.
+    /// Inserts the oracle_authority field so RouteTreasury can deserialize it.
+    /// Admin-only, one-shot migration.
+    pub fn realloc_legacy_protocol(ctx: Context<ReallocLegacyProtocol>) -> Result<()> {
+        instructions::governance::realloc_legacy_protocol(ctx)
+    }
 
-        #[cfg(feature = "price_feed")]
-        // initialize_price_feed
-        [0x44, 0xb4, 0x51, 0x14, 0x66, 0xd5, 0x91, 0xe9] => {
-            price_feed::initialize_price_feed(program_id, accounts, ix_data)
-        }
-
-        #[cfg(feature = "price_feed")]
-        // update_price
-        [0x3d, 0x22, 0x75, 0x9b, 0x4b, 0x22, 0x7b, 0xd0] => {
-            price_feed::update_price(program_id, accounts, ix_data)
-        }
-
-        #[cfg(feature = "price_feed")]
-        // set_price_updater
-        [0xfc, 0xfc, 0x0b, 0x9d, 0x92, 0xfd, 0x7c, 0x31] => {
-            price_feed::set_price_updater(program_id, accounts, ix_data)
-        }
-
-        // ==================================================================
-        // UNKNOWN
-        // ==================================================================
-
-        _ => Err(ProgramError::InvalidInstructionData),
+    pub fn admin_fix_ccm_authority(ctx: Context<AdminFixCcmAuthority>) -> Result<()> {
+        instructions::governance::admin_fix_ccm_authority(ctx)
     }
 }

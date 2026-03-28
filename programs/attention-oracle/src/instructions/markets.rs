@@ -1,2026 +1,1373 @@
-//! Prediction markets instructions (feature-gated behind `prediction_markets`).
-//!
-//! Ported from the Anchor `attention-oracle` program's `markets.rs`.
-//! Wire-compatible: same discriminators, same PDA seeds, same account layouts.
-//!
-//! Instruction set (9 total):
-//!   - create_market               (disc 67e261ebc8bcfbfe)
-//!   - initialize_market_tokens    (disc 6e86b40513975049)
-//!   - initialize_market_tokens_v2 (disc b4a858f274f7e569)
-//!   - mint_shares                 (disc 18c48400b79ed88e)
-//!   - redeem_shares               (disc ef9ae059f0c42abb)
-//!   - resolve_market              (disc 9b1750ad2e4a17ef)
-//!   - settle                      (disc af2ab957908366d4)
-//!   - sweep_residual              (disc e6762399ba56e8d13) -- note: first 8 bytes
-//!   - close_market                (disc 589af8ba300e7bf4)
-//!   - close_market_mints          (disc dee74c62770674b6)
-
-use pinocchio::{
-    account_info::AccountInfo,
-    instruction::{AccountMeta, Instruction, Seed, Signer},
-    program_error::ProgramError,
-    pubkey::{self, Pubkey},
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
-    ProgramResult,
+use anchor_lang::prelude::*;
+use anchor_spl::token_2022::spl_token_2022;
+use anchor_spl::token_interface::{
+    Mint as MintInterface, TokenAccount as TokenAccountInterface, TokenInterface,
 };
 
-use crate::error::OracleError;
-use crate::keccak::keccak256;
-use crate::state::{
-    DISC_GLOBAL_ROOT_CONFIG, DISC_MARKET_STATE, DISC_PROTOCOL_STATE,
-    MARKET_STATE_SEED, PM_VAULT_SEED, MARKET_YES_MINT_SEED,
-    MARKET_NO_MINT_SEED, MARKET_MINT_AUTHORITY_SEED,
-    GLOBAL_ROOT_SEED, PROTOCOL_STATE_SEED,
+use crate::constants::{
+    CUMULATIVE_ROOT_HISTORY, GLOBAL_ROOT_SEED, MARKET_METRIC_ATTENTION_SCORE,
+    MARKET_MINT_AUTHORITY_SEED, MARKET_NO_MINT_SEED, MARKET_STATE_SEED, MARKET_VAULT_SEED,
+    MARKET_YES_MINT_SEED,
 };
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+use crate::errors::OracleError;
+use crate::events::{
+    MarketClosed, MarketCreated, MarketMintsClosed, MarketResolved, MarketSettled, MarketSwept,
+    MarketTokensInitialized, SharesMinted, SharesRedeemed,
+};
+use crate::merkle_proof::{compute_global_leaf, verify_proof};
+use crate::state::{GlobalRootConfig, MarketState, ProtocolState};
+use crate::token_transfer::transfer_checked_with_remaining;
 
 const MARKET_STATE_VERSION: u8 = 1;
 const MAX_PROOF_LEN: usize = 32;
 const CCM_DECIMALS: u8 = 9;
-const CUMULATIVE_ROOT_HISTORY: usize = 4;
-const MARKET_METRIC_ATTENTION_SCORE: u8 = 0;
-const GLOBAL_V4_DOMAIN: &[u8] = b"TWZRD:GLOBAL_V4";
-const ZERO_PUBKEY: Pubkey = [0u8; 32];
 
-// ProtocolState byte offsets
-const PS_LEN: usize = 173;
-const PS_ADMIN: usize = 10;
-const PS_PUBLISHER: usize = 42;
-const PS_MINT: usize = 138;
-const PS_PAUSED: usize = 170;
-const PS_BUMP: usize = 172;
+// =============================================================================
+// CREATE MARKET
+// =============================================================================
 
-// GlobalRootConfig byte offsets
-const GRC_LEN: usize = 370;
-const GRC_VERSION: usize = 8;
-const GRC_BUMP: usize = 9;
-const GRC_MINT: usize = 10;
-const GRC_LATEST_ROOT_SEQ: usize = 42;
-const GRC_ROOTS_START: usize = 50;
-const ROOT_ENTRY_SIZE: usize = 80;
+#[derive(Accounts)]
+#[instruction(market_id: u64)]
+pub struct CreateMarket<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
 
-// MarketState byte offsets (within the 288-byte account)
-const MS_LEN: usize = 288;
-const MS_VERSION: usize = 8;
-const MS_BUMP: usize = 9;
-const MS_METRIC: usize = 10;
-const MS_RESOLVED: usize = 11;
-const MS_OUTCOME: usize = 12;
-const MS_TOKENS_INIT: usize = 13;
-const MS_MARKET_ID: usize = 16;
-const MS_MINT: usize = 24;
-const MS_AUTHORITY: usize = 56;
-const MS_CREATOR_WALLET: usize = 88;
-const MS_TARGET: usize = 120;
-const MS_RES_ROOT_SEQ: usize = 128;
-const MS_RES_CUM_TOTAL: usize = 136;
-const MS_CREATED_SLOT: usize = 144;
-const MS_RESOLVED_SLOT: usize = 152;
-const MS_VAULT: usize = 160;
-const MS_YES_MINT: usize = 192;
-const MS_NO_MINT: usize = 224;
-const MS_MINT_AUTHORITY: usize = 256;
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        constraint = (authority.key() == protocol_state.admin
+                  || authority.key() == protocol_state.publisher) @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
 
-// Token-2022 program ID
-use crate::TOKEN_2022_ID;
-use crate::SPL_TOKEN_ID;
+    #[account(
+        seeds = [GLOBAL_ROOT_SEED, protocol_state.mint.as_ref()],
+        bump = global_root_config.bump,
+    )]
+    pub global_root_config: Account<'info, GlobalRootConfig>,
 
-// ---------------------------------------------------------------------------
-// Inline helpers
-// ---------------------------------------------------------------------------
+    #[account(
+        init,
+        payer = authority,
+        space = MarketState::LEN,
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_id.to_le_bytes()],
+        bump,
+    )]
+    pub market_state: Account<'info, MarketState>,
 
-#[inline(always)]
-fn read_u64(data: &[u8], offset: usize) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&data[offset..offset + 8]);
-    u64::from_le_bytes(b)
+    pub system_program: Program<'info, System>,
 }
 
-#[inline(always)]
-fn read_pubkey(data: &[u8], offset: usize) -> Pubkey {
-    let mut pk = [0u8; 32];
-    pk.copy_from_slice(&data[offset..offset + 32]);
-    pk
-}
-
-/// SPL Mint layout: supply at offset 36 (u64 LE).
-#[inline(always)]
-fn read_mint_supply(data: &[u8]) -> u64 {
-    read_u64(data, 36)
-}
-
-/// Token account amount at offset 64 (u64 LE).
-#[inline(always)]
-fn read_token_amount(data: &[u8]) -> u64 {
-    read_u64(data, 64)
-}
-
-
-// ---------------------------------------------------------------------------
-// Merkle helpers (copied from global.rs to keep markets self-contained)
-// ---------------------------------------------------------------------------
-
-/// Verify a merkle proof against a known root.
-#[inline(never)]
-fn verify_proof(proof: &[[u8; 32]], mut hash: [u8; 32], root: [u8; 32]) -> bool {
-    if proof.len() > 32 {
-        return false;
-    }
-    for sibling in proof.iter() {
-        let (a, b) = if hash <= *sibling {
-            (hash, *sibling)
-        } else {
-            (*sibling, hash)
-        };
-        hash = keccak256(&[&a, &b]);
-    }
-    hash == root
-}
-
-/// V4 global leaf: `keccak(domain || mint || root_seq || wallet || cumulative_total)`
-#[inline(never)]
-fn compute_global_leaf_v4(
-    mint: &Pubkey,
-    root_seq: u64,
-    wallet: &Pubkey,
-    cumulative_total: u64,
-) -> [u8; 32] {
-    keccak256(&[
-        GLOBAL_V4_DOMAIN,
-        mint,
-        &root_seq.to_le_bytes(),
-        wallet,
-        &cumulative_total.to_le_bytes(),
-    ])
-}
-
-// ---------------------------------------------------------------------------
-// Token CPI helpers
-// ---------------------------------------------------------------------------
-
-/// Build and invoke a Token-2022 `transfer_checked` CPI with PDA signer
-/// and remaining accounts (for transfer-fee hooks).
-#[inline(never)]
-fn transfer_checked_signed<'a>(
-    token_program: &'a AccountInfo,
-    from: &'a AccountInfo,
-    mint: &'a AccountInfo,
-    to: &'a AccountInfo,
-    authority: &'a AccountInfo,
-    amount: u64,
-    decimals: u8,
-    signer_seeds: &[Seed],
-    remaining: &'a [AccountInfo],
-) -> ProgramResult {
-    // TransferChecked instruction data: [12, amount(8), decimals(1)]
-    let mut data = [0u8; 10];
-    data[0] = 12; // TransferChecked discriminator
-    data[1..9].copy_from_slice(&amount.to_le_bytes());
-    data[9] = decimals;
-
-    // 4 fixed accounts + remaining
-    let n_fixed = 4;
-    let n_total = n_fixed + remaining.len();
-    if n_total > 36 {
-        return Err(ProgramError::InvalidArgument);
-    }
-
-    let mut metas_buf: [core::mem::MaybeUninit<AccountMeta>; 36] = unsafe {
-        core::mem::MaybeUninit::uninit().assume_init()
-    };
-    metas_buf[0].write(AccountMeta::writable(from.key()));
-    metas_buf[1].write(AccountMeta::readonly(mint.key()));
-    metas_buf[2].write(AccountMeta::writable(to.key()));
-    metas_buf[3].write(AccountMeta::readonly_signer(authority.key()));
-    for (i, acc) in remaining.iter().enumerate() {
-        metas_buf[n_fixed + i].write(AccountMeta::readonly(acc.key()));
-    }
-    let metas = unsafe {
-        core::slice::from_raw_parts(metas_buf.as_ptr() as *const AccountMeta, n_total)
-    };
-
-    let mut refs_buf: [core::mem::MaybeUninit<&AccountInfo>; 36] = unsafe {
-        core::mem::MaybeUninit::uninit().assume_init()
-    };
-    refs_buf[0].write(from);
-    refs_buf[1].write(mint);
-    refs_buf[2].write(to);
-    refs_buf[3].write(authority);
-    for (i, acc) in remaining.iter().enumerate() {
-        refs_buf[n_fixed + i].write(acc);
-    }
-    let refs = unsafe {
-        core::slice::from_raw_parts(refs_buf.as_ptr() as *const &AccountInfo, n_total)
-    };
-
-    let ix = Instruction {
-        program_id: token_program.key(),
-        accounts: metas,
-        data: &data,
-    };
-
-    let signer = Signer::from(signer_seeds);
-    pinocchio::cpi::slice_invoke_signed(&ix, refs, &[signer])
-}
-
-/// MintTo CPI (for SPL or Token-2022 outcome mints).
-#[inline(never)]
-fn mint_to_cpi<'a>(
-    token_program: &'a AccountInfo,
-    mint_account: &'a AccountInfo,
-    to: &'a AccountInfo,
-    authority: &'a AccountInfo,
-    amount: u64,
-    signer_seeds: &[Seed],
-) -> ProgramResult {
-    // MintTo: discriminator = 7
-    let mut data = [0u8; 9];
-    data[0] = 7;
-    data[1..9].copy_from_slice(&amount.to_le_bytes());
-
-    let metas = [
-        AccountMeta::writable(mint_account.key()),
-        AccountMeta::writable(to.key()),
-        AccountMeta::readonly_signer(authority.key()),
-    ];
-
-    let ix = Instruction {
-        program_id: token_program.key(),
-        accounts: &metas,
-        data: &data,
-    };
-
-    let signer = Signer::from(signer_seeds);
-    pinocchio::cpi::slice_invoke_signed(&ix, &[mint_account, to, authority], &[signer])
-}
-
-/// Burn CPI (user signs directly, no PDA signer needed).
-#[inline(never)]
-fn burn_cpi<'a>(
-    token_program: &'a AccountInfo,
-    mint_account: &'a AccountInfo,
-    from: &'a AccountInfo,
-    authority: &'a AccountInfo,
-    amount: u64,
-) -> ProgramResult {
-    // Burn: discriminator = 8
-    let mut data = [0u8; 9];
-    data[0] = 8;
-    data[1..9].copy_from_slice(&amount.to_le_bytes());
-
-    let metas = [
-        AccountMeta::writable(from.key()),
-        AccountMeta::writable(mint_account.key()),
-        AccountMeta::readonly_signer(authority.key()),
-    ];
-
-    let ix = Instruction {
-        program_id: token_program.key(),
-        accounts: &metas,
-        data: &data,
-    };
-
-    // No PDA signer -- user is signer
-    pinocchio::cpi::slice_invoke_signed(&ix, &[from, mint_account, authority], &[])
-}
-
-/// CloseAccount CPI (PDA-signed).
-#[inline(never)]
-fn close_account_cpi<'a>(
-    token_program: &'a AccountInfo,
-    account: &'a AccountInfo,
-    destination: &'a AccountInfo,
-    authority: &'a AccountInfo,
-    signer_seeds: &[Seed],
-) -> ProgramResult {
-    // CloseAccount: discriminator = 9
-    let data = [9u8];
-
-    let metas = [
-        AccountMeta::writable(account.key()),
-        AccountMeta::writable(destination.key()),
-        AccountMeta::readonly_signer(authority.key()),
-    ];
-
-    let ix = Instruction {
-        program_id: token_program.key(),
-        accounts: &metas,
-        data: &data,
-    };
-
-    let signer = Signer::from(signer_seeds);
-    pinocchio::cpi::slice_invoke_signed(&ix, &[account, destination, authority], &[signer])
-}
-
-// ---------------------------------------------------------------------------
-// Validation helpers
-// ---------------------------------------------------------------------------
-
-/// Validate the ProtocolState PDA and return its data.
-/// Returns (ps_mint, ps_bump, is_paused).
-#[inline(never)]
-fn validate_protocol_state(
-    protocol_state: &AccountInfo,
-    program_id: &Pubkey,
-) -> Result<(Pubkey, u8), ProgramError> {
-    if !protocol_state.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let data = unsafe { protocol_state.borrow_data_unchecked() };
-    if data.len() < PS_LEN {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if data[..8] != DISC_PROTOCOL_STATE {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let bump = data[PS_BUMP];
-    let ps_mint = read_pubkey(&data, PS_MINT);
-    // Verify PDA
-    let pda = pubkey::create_program_address(&[PROTOCOL_STATE_SEED, &[bump]], program_id)?;
-    if !pubkey::pubkey_eq(&pda, protocol_state.key()) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    Ok((ps_mint, bump))
-}
-
-/// Check protocol is not paused.
-#[inline(always)]
-fn check_not_paused(protocol_state: &AccountInfo) -> Result<(), ProgramError> {
-    let data = unsafe { protocol_state.borrow_data_unchecked() };
-    if data[PS_PAUSED] != 0 {
-        return Err(OracleError::ProtocolPaused.into());
-    }
-    Ok(())
-}
-
-/// Check authority is admin or publisher of protocol_state.
-#[inline(always)]
-fn check_admin_or_publisher(
-    authority: &AccountInfo,
-    protocol_state: &AccountInfo,
-) -> Result<(), ProgramError> {
-    let data = unsafe { protocol_state.borrow_data_unchecked() };
-    let admin = read_pubkey(&data, PS_ADMIN);
-    let publisher = read_pubkey(&data, PS_PUBLISHER);
-    if !pubkey::pubkey_eq(authority.key(), &admin)
-        && !pubkey::pubkey_eq(authority.key(), &publisher)
-    {
-        return Err(OracleError::Unauthorized.into());
-    }
-    Ok(())
-}
-
-/// Check authority is admin of protocol_state.
-#[inline(always)]
-fn check_admin(
-    authority: &AccountInfo,
-    protocol_state: &AccountInfo,
-) -> Result<(), ProgramError> {
-    let data = unsafe { protocol_state.borrow_data_unchecked() };
-    let admin = read_pubkey(&data, PS_ADMIN);
-    if !pubkey::pubkey_eq(authority.key(), &admin) {
-        return Err(OracleError::Unauthorized.into());
-    }
-    Ok(())
-}
-
-/// Derive and verify the MarketState PDA. Returns bump.
-#[inline(never)]
-fn verify_market_state_pda(
-    market_state: &AccountInfo,
-    mint: &Pubkey,
-    market_id: u64,
-    program_id: &Pubkey,
-) -> Result<u8, ProgramError> {
-    let market_id_bytes = market_id.to_le_bytes();
-    let (expected, bump) = pubkey::find_program_address(
-        &[MARKET_STATE_SEED, mint, &market_id_bytes],
-        program_id,
-    );
-    if !pubkey::pubkey_eq(market_state.key(), &expected) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    Ok(bump)
-}
-
-/// Derive the mint_authority PDA and return (pda, bump).
-#[inline(never)]
-fn derive_mint_authority(
-    mint: &Pubkey,
-    market_id: u64,
-    program_id: &Pubkey,
-) -> (Pubkey, u8) {
-    let market_id_bytes = market_id.to_le_bytes();
-    pubkey::find_program_address(
-        &[MARKET_MINT_AUTHORITY_SEED, mint, &market_id_bytes],
-        program_id,
-    )
-}
-
-/// Build mint_authority PDA signer seeds (stack-friendly).
-#[inline(always)]
-fn mint_auth_seeds<'a>(
-    seed: &'a [u8],
-    mint: &'a [u8],
-    market_id_bytes: &'a [u8],
-    bump: &'a [u8],
-) -> [Seed<'a>; 4] {
-    [
-        Seed::from(seed),
-        Seed::from(mint),
-        Seed::from(market_id_bytes),
-        Seed::from(bump),
-    ]
-}
-
-// ============================================================================
-// 1. CREATE MARKET
-// ============================================================================
-//
-// Accounts:
-//   0. [SIGNER, WRITE] authority
-//   1. []               protocol_state PDA (seeds=["protocol_state"])
-//   2. []               global_root_config PDA (seeds=["global_root", mint])
-//   3. [WRITE]          market_state PDA (will be created)
-//   4. []               system_program
-//
-// Instruction data:
-//   [0..8]    market_id (u64 LE)
-//   [8..40]   creator_wallet (Pubkey)
-//   [40]      metric (u8)
-//   [41..49]  target (u64 LE)
-//   [49..57]  resolution_root_seq (u64 LE)
-
-#[inline(never)]
 pub fn create_market(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 5 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-    if ix_data.len() < 57 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-
-    let authority = &accounts[0];
-    let protocol_state = &accounts[1];
-    let global_root_config = &accounts[2];
-    let market_state = &accounts[3];
-    let _system_program = &accounts[4];
-
-    if !authority.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    // Validate protocol state
-    let (ps_mint, _ps_bump) = validate_protocol_state(protocol_state, program_id)?;
-    check_not_paused(protocol_state)?;
-    check_admin_or_publisher(authority, protocol_state)?;
-
-    // Parse instruction data
-    let market_id = read_u64(ix_data, 0);
-    let creator_wallet = read_pubkey(ix_data, 8);
-    let metric = ix_data[40];
-    let target = read_u64(ix_data, 41);
-    let resolution_root_seq = read_u64(ix_data, 49);
-
-    // Validate inputs
-    if pubkey::pubkey_eq(&creator_wallet, &ZERO_PUBKEY) {
-        return Err(OracleError::InvalidPubkey.into());
-    }
-    if metric != MARKET_METRIC_ATTENTION_SCORE {
-        return Err(OracleError::UnsupportedMarketMetric.into());
-    }
-    if resolution_root_seq == 0 {
-        return Err(OracleError::InvalidRootSeq.into());
-    }
-
-    // Validate global root config
-    validate_global_root_config(global_root_config, &ps_mint, program_id)?;
-
-    // Derive MarketState PDA
-    let market_id_bytes = market_id.to_le_bytes();
-    let (expected_market, ms_bump) = pubkey::find_program_address(
-        &[MARKET_STATE_SEED, &ps_mint, &market_id_bytes],
-        program_id,
+    ctx: Context<CreateMarket>,
+    market_id: u64,
+    creator_wallet: Pubkey,
+    metric: u8,
+    target: u64,
+    resolution_root_seq: u64,
+) -> Result<()> {
+    let protocol_state = &ctx.accounts.protocol_state;
+    let global_root_config = &ctx.accounts.global_root_config;
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
+    require!(
+        creator_wallet != Pubkey::default(),
+        OracleError::InvalidPubkey
     );
-    if !pubkey::pubkey_eq(market_state.key(), &expected_market) {
-        return Err(ProgramError::InvalidSeeds);
-    }
+    require!(
+        metric == MARKET_METRIC_ATTENTION_SCORE,
+        OracleError::UnsupportedMarketMetric
+    );
+    require!(resolution_root_seq > 0, OracleError::InvalidRootSeq);
+    require!(
+        global_root_config.version > 0,
+        OracleError::GlobalRootNotInitialized
+    );
+    require_keys_eq!(
+        global_root_config.mint,
+        protocol_state.mint,
+        OracleError::InvalidMint
+    );
 
-    // Create MarketState account
-    let rent = Rent::get()?;
-    let lamports = rent.minimum_balance(MS_LEN);
-    let bump_ref = [ms_bump];
-    let seeds = [
-        Seed::from(MARKET_STATE_SEED),
-        Seed::from(ps_mint.as_ref()),
-        Seed::from(market_id_bytes.as_ref()),
-        Seed::from(bump_ref.as_ref()),
-    ];
-    let pda_signer = Signer::from(&seeds);
-
-    crate::cpi_create_account(
-        authority,
-        market_state,
-        lamports,
-        MS_LEN as u64,
-        program_id,
-        &[pda_signer],
-    )?;
-
-    // Write MarketState data
     let slot = Clock::get()?.slot;
-    {
-        let data = unsafe { market_state.borrow_mut_data_unchecked() };
-        data[..8].copy_from_slice(&DISC_MARKET_STATE);
-        data[MS_VERSION] = MARKET_STATE_VERSION;
-        data[MS_BUMP] = ms_bump;
-        data[MS_METRIC] = metric;
-        data[MS_RESOLVED] = 0;
-        data[MS_OUTCOME] = 0;
-        data[MS_TOKENS_INIT] = 0;
-        data[14..16].copy_from_slice(&[0u8; 2]); // _padding
-        data[MS_MARKET_ID..MS_MARKET_ID + 8].copy_from_slice(&market_id.to_le_bytes());
-        data[MS_MINT..MS_MINT + 32].copy_from_slice(&ps_mint);
-        data[MS_AUTHORITY..MS_AUTHORITY + 32].copy_from_slice(authority.key());
-        data[MS_CREATOR_WALLET..MS_CREATOR_WALLET + 32].copy_from_slice(&creator_wallet);
-        data[MS_TARGET..MS_TARGET + 8].copy_from_slice(&target.to_le_bytes());
-        data[MS_RES_ROOT_SEQ..MS_RES_ROOT_SEQ + 8].copy_from_slice(&resolution_root_seq.to_le_bytes());
-        data[MS_RES_CUM_TOTAL..MS_RES_CUM_TOTAL + 8].copy_from_slice(&0u64.to_le_bytes());
-        data[MS_CREATED_SLOT..MS_CREATED_SLOT + 8].copy_from_slice(&slot.to_le_bytes());
-        data[MS_RESOLVED_SLOT..MS_RESOLVED_SLOT + 8].copy_from_slice(&0u64.to_le_bytes());
-        // Token fields zeroed (already zeroed by CreateAccount)
-    }
+    let market_state = &mut ctx.accounts.market_state;
+    market_state.version = MARKET_STATE_VERSION;
+    market_state.bump = ctx.bumps.market_state;
+    market_state.metric = metric;
+    market_state.resolved = false;
+    market_state.outcome = false;
+    market_state.tokens_initialized = false;
+    market_state._padding = [0u8; 2];
+    market_state.market_id = market_id;
+    market_state.mint = protocol_state.mint;
+    market_state.authority = ctx.accounts.authority.key();
+    market_state.creator_wallet = creator_wallet;
+    market_state.target = target;
+    market_state.resolution_root_seq = resolution_root_seq;
+    market_state.resolution_cumulative_total = 0;
+    market_state.created_slot = slot;
+    market_state.resolved_slot = 0;
+    // Token fields are zeroed until initialize_market_tokens is called
+    market_state.vault = Pubkey::default();
+    market_state.yes_mint = Pubkey::default();
+    market_state.no_mint = Pubkey::default();
+    market_state.mint_authority = Pubkey::default();
+
+    emit!(MarketCreated {
+        market: market_state.key(),
+        market_id,
+        authority: market_state.authority,
+        creator_wallet,
+        mint: protocol_state.mint,
+        metric,
+        target,
+        resolution_root_seq,
+        created_slot: slot,
+    });
 
     Ok(())
 }
 
-/// Validate global root config PDA.
-#[inline(never)]
-fn validate_global_root_config(
-    grc: &AccountInfo,
-    mint: &Pubkey,
-    program_id: &Pubkey,
-) -> Result<(), ProgramError> {
-    if !grc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let data = unsafe { grc.borrow_data_unchecked() };
-    if data.len() < GRC_LEN {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if data[..8] != DISC_GLOBAL_ROOT_CONFIG {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let version = data[GRC_VERSION];
-    if version == 0 {
-        return Err(OracleError::GlobalRootNotInitialized.into());
-    }
-    let grc_bump = data[GRC_BUMP];
-    let grc_mint = read_pubkey(&data, GRC_MINT);
-    if !pubkey::pubkey_eq(&grc_mint, mint) {
-        return Err(OracleError::InvalidMint.into());
-    }
-    // Verify PDA
-    let pda = pubkey::create_program_address(
-        &[GLOBAL_ROOT_SEED, mint, &[grc_bump]],
-        program_id,
-    )?;
-    if !pubkey::pubkey_eq(grc.key(), &pda) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    Ok(())
+// =============================================================================
+// INITIALIZE MARKET TOKENS (vault + YES/NO mints)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct InitializeMarketTokens<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        mut,
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+        constraint = market_state.authority == payer.key() @ OracleError::Unauthorized,
+    )]
+    pub market_state: Account<'info, MarketState>,
+
+    /// CCM mint (Token-2022)
+    /// CHECK: validated by constraint against protocol_state.mint
+    #[account(
+        constraint = ccm_mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub ccm_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// Market vault — holds CCM collateral backing all shares
+    /// CHECK: initialized via CPI below
+    #[account(
+        init,
+        payer = payer,
+        token::mint = ccm_mint,
+        token::authority = mint_authority,
+        token::token_program = token_program,
+        seeds = [MARKET_VAULT_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub vault: InterfaceAccount<'info, TokenAccountInterface>,
+
+    /// YES outcome mint (standard SPL — no transfer fees on outcome tokens)
+    /// CHECK: initialized via CPI below
+    #[account(
+        init,
+        payer = payer,
+        mint::decimals = CCM_DECIMALS,
+        mint::authority = mint_authority,
+        mint::token_program = standard_token_program,
+        seeds = [MARKET_YES_MINT_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub yes_mint: Account<'info, anchor_spl::token::Mint>,
+
+    /// NO outcome mint (standard SPL — no transfer fees on outcome tokens)
+    /// CHECK: initialized via CPI below
+    #[account(
+        init,
+        payer = payer,
+        mint::decimals = CCM_DECIMALS,
+        mint::authority = mint_authority,
+        mint::token_program = standard_token_program,
+        seeds = [MARKET_NO_MINT_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub no_mint: Account<'info, anchor_spl::token::Mint>,
+
+    /// Mint authority PDA (signs mint/burn of YES/NO tokens)
+    /// CHECK: PDA derived from seeds, no data stored
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    /// Token-2022 program (for CCM vault)
+    pub token_program: Interface<'info, TokenInterface>,
+    /// Standard SPL token program (for YES/NO mints)
+    pub standard_token_program: Program<'info, anchor_spl::token::Token>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
 }
 
-// ============================================================================
-// 2. INITIALIZE MARKET TOKENS (legacy SPL mints)
-// ============================================================================
-//
-// Creates vault (Token-2022 ATA for CCM) + YES/NO mints (standard SPL).
-// This is the legacy V1 path. New markets should use V2.
-//
-// Accounts:
-//   0. [SIGNER, WRITE] payer
-//   1. []               protocol_state PDA
-//   2. [WRITE]          market_state PDA
-//   3. []               ccm_mint (Token-2022)
-//   4. [WRITE]          vault (PDA token account, will be init)
-//   5. [WRITE]          yes_mint (PDA, will be init)
-//   6. [WRITE]          no_mint (PDA, will be init)
-//   7. []               mint_authority (PDA, no data)
-//   8. []               token_program (Token-2022, for vault)
-//   9. []               standard_token_program (SPL Token, for YES/NO)
-//  10. []               system_program
-//  11. []               rent sysvar
-
-#[inline(never)]
-pub fn initialize_market_tokens(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    _ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 12 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-
-    let payer = &accounts[0];
-    let protocol_state = &accounts[1];
-    let market_state = &accounts[2];
-    let ccm_mint = &accounts[3];
-    let vault = &accounts[4];
-    let yes_mint = &accounts[5];
-    let no_mint = &accounts[6];
-    let mint_authority = &accounts[7];
-    let token_program = &accounts[8];
-    let standard_token_program = &accounts[9];
-    let _system_program = &accounts[10];
-    let _rent = &accounts[11];
-
-    if !payer.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    let (ps_mint, _) = validate_protocol_state(protocol_state, program_id)?;
-    check_not_paused(protocol_state)?;
-
-    // Read market_state to get market_id and authority
-    if !market_state.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let market_id = {
-        let data = unsafe { market_state.borrow_data_unchecked() };
-        if data.len() < MS_LEN {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        if data[..8] != DISC_MARKET_STATE {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        let auth = read_pubkey(&data, MS_AUTHORITY);
-        if !pubkey::pubkey_eq(payer.key(), &auth) {
-            return Err(OracleError::Unauthorized.into());
-        }
-        if data[MS_TOKENS_INIT] != 0 {
-            return Err(OracleError::MarketTokensAlreadyInitialized.into());
-        }
-        read_u64(&data, MS_MARKET_ID)
-    };
-
-    // Verify market_state PDA
-    let _ = verify_market_state_pda(market_state, &ps_mint, market_id, program_id)?;
-
-    // Verify ccm_mint matches protocol_state.mint
-    if !pubkey::pubkey_eq(ccm_mint.key(), &ps_mint) {
-        return Err(OracleError::InvalidMint.into());
-    }
-
-    // token_program must be Token-2022
-    if !pubkey::pubkey_eq(token_program.key(), &TOKEN_2022_ID) {
-        return Err(OracleError::InvalidTokenProgram.into());
-    }
-    // standard_token_program must be SPL Token
-    if !pubkey::pubkey_eq(standard_token_program.key(), &SPL_TOKEN_ID) {
-        return Err(OracleError::InvalidTokenProgram.into());
-    }
-
-    let market_id_bytes = market_id.to_le_bytes();
-    let (expected_mint_auth, _mint_auth_bump) = derive_mint_authority(&ps_mint, market_id, program_id);
-    if !pubkey::pubkey_eq(mint_authority.key(), &expected_mint_auth) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Init vault (Token-2022 token account for CCM, owned by mint_authority PDA)
-    init_vault_ata(
-        payer, vault, ccm_mint, mint_authority, token_program,
-        &ps_mint, &market_id_bytes, program_id,
-    )?;
-
-    // Init YES mint (standard SPL)
-    init_spl_mint(
-        payer, yes_mint, mint_authority, standard_token_program,
-        MARKET_YES_MINT_SEED, &ps_mint, &market_id_bytes, program_id,
-    )?;
-
-    // Init NO mint (standard SPL)
-    init_spl_mint(
-        payer, no_mint, mint_authority, standard_token_program,
-        MARKET_NO_MINT_SEED, &ps_mint, &market_id_bytes, program_id,
-    )?;
-
-    // Update MarketState
-    {
-        let data = unsafe { market_state.borrow_mut_data_unchecked() };
-        data[MS_VAULT..MS_VAULT + 32].copy_from_slice(vault.key());
-        data[MS_YES_MINT..MS_YES_MINT + 32].copy_from_slice(yes_mint.key());
-        data[MS_NO_MINT..MS_NO_MINT + 32].copy_from_slice(no_mint.key());
-        data[MS_MINT_AUTHORITY..MS_MINT_AUTHORITY + 32].copy_from_slice(mint_authority.key());
-        data[MS_TOKENS_INIT] = 1;
-    }
-
-    Ok(())
-}
-
-/// Initialize a Token-2022 token account (vault ATA) as PDA.
-#[inline(never)]
-fn init_vault_ata<'a>(
-    payer: &'a AccountInfo,
-    vault: &'a AccountInfo,
-    mint: &'a AccountInfo,
-    owner: &'a AccountInfo,
-    token_program: &'a AccountInfo,
-    ps_mint: &[u8],
-    market_id_bytes: &[u8],
-    program_id: &Pubkey,
-) -> ProgramResult {
-    // Derive vault PDA
-    let (expected, vault_bump) = pubkey::find_program_address(
-        &[PM_VAULT_SEED, ps_mint, market_id_bytes],
-        program_id,
+pub fn initialize_market_tokens(ctx: Context<InitializeMarketTokens>) -> Result<()> {
+    require!(
+        !ctx.accounts.protocol_state.paused,
+        OracleError::ProtocolPaused
     );
-    if !pubkey::pubkey_eq(vault.key(), &expected) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    let rent = Rent::get()?;
-    // Token-2022 account size = 165 (standard token account)
-    let space: usize = 165;
-    let lamports = rent.minimum_balance(space);
-
-    let bump_ref = [vault_bump];
-    let seeds = [
-        Seed::from(PM_VAULT_SEED),
-        Seed::from(ps_mint),
-        Seed::from(market_id_bytes),
-        Seed::from(bump_ref.as_ref()),
-    ];
-    let pda_signer = Signer::from(&seeds);
-
-    // Create account owned by Token-2022
-    {
-        let mut create_data = [0u8; 52];
-        create_data[4..12].copy_from_slice(&lamports.to_le_bytes());
-        create_data[12..20].copy_from_slice(&(space as u64).to_le_bytes());
-        create_data[20..52].copy_from_slice(token_program.key());
-        let metas = [
-            AccountMeta::writable_signer(payer.key()),
-            AccountMeta::writable_signer(vault.key()),
-        ];
-        let ix = Instruction {
-            program_id: &crate::SYSTEM_ID,
-            accounts: &metas,
-            data: &create_data,
-        };
-        pinocchio::cpi::slice_invoke_signed(&ix, &[payer, vault], &[pda_signer])?;
-    }
-
-    // InitializeAccount3 (discriminator = 18, no rent sysvar needed)
-    // Data: [18, owner(32)]
-    let mut init_data = [0u8; 33];
-    init_data[0] = 18; // InitializeAccount3
-    init_data[1..33].copy_from_slice(owner.key());
-
-    let init_metas = [
-        AccountMeta::writable(vault.key()),
-        AccountMeta::readonly(mint.key()),
-    ];
-    let init_ix = Instruction {
-        program_id: token_program.key(),
-        accounts: &init_metas,
-        data: &init_data,
-    };
-    pinocchio::cpi::slice_invoke_signed(&init_ix, &[vault, mint], &[])
-}
-
-/// Initialize a standard SPL mint (for YES/NO outcome tokens).
-#[inline(never)]
-fn init_spl_mint<'a>(
-    payer: &'a AccountInfo,
-    mint_account: &'a AccountInfo,
-    mint_authority: &'a AccountInfo,
-    token_program: &'a AccountInfo,
-    seed_prefix: &[u8],
-    ps_mint: &[u8],
-    market_id_bytes: &[u8],
-    program_id: &Pubkey,
-) -> ProgramResult {
-    let (expected, mint_bump) = pubkey::find_program_address(
-        &[seed_prefix, ps_mint, market_id_bytes],
-        program_id,
+    let market_state = &mut ctx.accounts.market_state;
+    require!(
+        !market_state.tokens_initialized,
+        OracleError::MarketTokensAlreadyInitialized
     );
-    if !pubkey::pubkey_eq(mint_account.key(), &expected) {
-        return Err(ProgramError::InvalidSeeds);
-    }
 
-    let rent = Rent::get()?;
-    let space: usize = 82; // SPL Mint size
-    let lamports = rent.minimum_balance(space);
+    market_state.vault = ctx.accounts.vault.key();
+    market_state.yes_mint = ctx.accounts.yes_mint.key();
+    market_state.no_mint = ctx.accounts.no_mint.key();
+    market_state.mint_authority = ctx.accounts.mint_authority.key();
+    market_state.tokens_initialized = true;
 
-    let bump_ref = [mint_bump];
-    let seeds = [
-        Seed::from(seed_prefix),
-        Seed::from(ps_mint),
-        Seed::from(market_id_bytes),
-        Seed::from(bump_ref.as_ref()),
-    ];
-    let pda_signer = Signer::from(&seeds);
-
-    // Create account owned by SPL Token
-    {
-        let mut create_data = [0u8; 52];
-        create_data[4..12].copy_from_slice(&lamports.to_le_bytes());
-        create_data[12..20].copy_from_slice(&(space as u64).to_le_bytes());
-        create_data[20..52].copy_from_slice(token_program.key());
-        let metas = [
-            AccountMeta::writable_signer(payer.key()),
-            AccountMeta::writable_signer(mint_account.key()),
-        ];
-        let ix = Instruction {
-            program_id: &crate::SYSTEM_ID,
-            accounts: &metas,
-            data: &create_data,
-        };
-        pinocchio::cpi::slice_invoke_signed(&ix, &[payer, mint_account], &[pda_signer])?;
-    }
-
-    // InitializeMint2 (discriminator = 20): [20, decimals, authority(32), freeze_option(1), freeze_auth(32)]
-    let mut init_data = [0u8; 67];
-    init_data[0] = 20; // InitializeMint2
-    init_data[1] = CCM_DECIMALS;
-    init_data[2..34].copy_from_slice(mint_authority.key());
-    init_data[34] = 0; // No freeze authority
-
-    let init_metas = [
-        AccountMeta::writable(mint_account.key()),
-    ];
-    let init_ix = Instruction {
-        program_id: token_program.key(),
-        accounts: &init_metas,
-        data: &init_data,
-    };
-    pinocchio::cpi::slice_invoke_signed(&init_ix, &[mint_account], &[])
-}
-
-// ============================================================================
-// 3. INITIALIZE MARKET TOKENS V2 (Token-2022 with MintCloseAuthority)
-// ============================================================================
-//
-// Accounts:
-//   0. [SIGNER, WRITE] payer
-//   1. []               protocol_state PDA
-//   2. [WRITE]          market_state PDA
-//   3. []               ccm_mint (Token-2022)
-//   4. [WRITE]          vault (PDA token account, will be init)
-//   5. [WRITE]          yes_mint (PDA, Token-2022 with MintCloseAuthority)
-//   6. [WRITE]          no_mint (PDA, Token-2022 with MintCloseAuthority)
-//   7. []               mint_authority (PDA, no data)
-//   8. []               token_program (Token-2022, for ALL accounts)
-//   9. []               system_program
-//  10. []               rent sysvar
-
-#[inline(never)]
-pub fn initialize_market_tokens_v2(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    _ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 11 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-
-    let payer = &accounts[0];
-    let protocol_state = &accounts[1];
-    let market_state = &accounts[2];
-    let ccm_mint = &accounts[3];
-    let vault = &accounts[4];
-    let yes_mint = &accounts[5];
-    let no_mint = &accounts[6];
-    let mint_authority = &accounts[7];
-    let token_program = &accounts[8];
-    let _system_program = &accounts[9];
-    let _rent = &accounts[10];
-
-    if !payer.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    let (ps_mint, _) = validate_protocol_state(protocol_state, program_id)?;
-    check_not_paused(protocol_state)?;
-
-    // token_program MUST be Token-2022
-    if !pubkey::pubkey_eq(token_program.key(), &TOKEN_2022_ID) {
-        return Err(OracleError::InvalidTokenProgram.into());
-    }
-
-    // Verify ccm_mint
-    if !pubkey::pubkey_eq(ccm_mint.key(), &ps_mint) {
-        return Err(OracleError::InvalidMint.into());
-    }
-
-    // Read market_state
-    if !market_state.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let market_id = {
-        let data = unsafe { market_state.borrow_data_unchecked() };
-        if data.len() < MS_LEN {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        if data[..8] != DISC_MARKET_STATE {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        let auth = read_pubkey(&data, MS_AUTHORITY);
-        if !pubkey::pubkey_eq(payer.key(), &auth) {
-            return Err(OracleError::Unauthorized.into());
-        }
-        if data[MS_TOKENS_INIT] != 0 {
-            return Err(OracleError::MarketTokensAlreadyInitialized.into());
-        }
-        read_u64(&data, MS_MARKET_ID)
-    };
-
-    let _ = verify_market_state_pda(market_state, &ps_mint, market_id, program_id)?;
-
-    let market_id_bytes = market_id.to_le_bytes();
-    let (expected_mint_auth, _) = derive_mint_authority(&ps_mint, market_id, program_id);
-    if !pubkey::pubkey_eq(mint_authority.key(), &expected_mint_auth) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Init vault (Token-2022 token account)
-    init_vault_ata(
-        payer, vault, ccm_mint, mint_authority, token_program,
-        &ps_mint, &market_id_bytes, program_id,
-    )?;
-
-    // Init YES mint (Token-2022 + MintCloseAuthority)
-    init_t22_mint_with_close_auth(
-        payer, yes_mint, mint_authority, token_program,
-        MARKET_YES_MINT_SEED, &ps_mint, &market_id_bytes, program_id,
-    )?;
-
-    // Init NO mint (Token-2022 + MintCloseAuthority)
-    init_t22_mint_with_close_auth(
-        payer, no_mint, mint_authority, token_program,
-        MARKET_NO_MINT_SEED, &ps_mint, &market_id_bytes, program_id,
-    )?;
-
-    // Update MarketState
-    {
-        let data = unsafe { market_state.borrow_mut_data_unchecked() };
-        data[MS_VAULT..MS_VAULT + 32].copy_from_slice(vault.key());
-        data[MS_YES_MINT..MS_YES_MINT + 32].copy_from_slice(yes_mint.key());
-        data[MS_NO_MINT..MS_NO_MINT + 32].copy_from_slice(no_mint.key());
-        data[MS_MINT_AUTHORITY..MS_MINT_AUTHORITY + 32].copy_from_slice(mint_authority.key());
-        data[MS_TOKENS_INIT] = 1;
-    }
+    emit!(MarketTokensInitialized {
+        market: market_state.key(),
+        market_id: market_state.market_id,
+        vault: market_state.vault,
+        yes_mint: market_state.yes_mint,
+        no_mint: market_state.no_mint,
+        mint_authority: market_state.mint_authority,
+    });
 
     Ok(())
 }
 
-/// Initialize a Token-2022 mint with MintCloseAuthority extension.
-#[inline(never)]
-fn init_t22_mint_with_close_auth<'a>(
-    payer: &'a AccountInfo,
-    mint_account: &'a AccountInfo,
-    mint_authority: &'a AccountInfo,
-    _token_program: &'a AccountInfo,
-    seed_prefix: &[u8],
-    ps_mint: &[u8],
-    market_id_bytes: &[u8],
-    program_id: &Pubkey,
-) -> ProgramResult {
-    let (expected, mint_bump) = pubkey::find_program_address(
-        &[seed_prefix, ps_mint, market_id_bytes],
-        program_id,
-    );
-    if !pubkey::pubkey_eq(mint_account.key(), &expected) {
-        return Err(ProgramError::InvalidSeeds);
-    }
+// =============================================================================
+// MINT SHARES (deposit CCM → get YES + NO)
+// =============================================================================
 
-    let rent = Rent::get()?;
-    // Token-2022 Mint (82 base) + MintCloseAuthority extension:
-    //   account_type(1) + padding(3) + ext_type(2) + ext_len(2) + close_auth(32) = 40
-    // Total: 82 + 83 padding/multisig area + extension = ~166.
-    // Actual: ExtensionType::try_calculate_account_len for MintCloseAuthority = 234
-    // Use the known size for Token-2022 Mint + MintCloseAuthority extension.
-    // Base mint = 82 bytes. Account type byte = 1. MintCloseAuthority = 4 (header) + 32 (pubkey) = 36.
-    // Padded to multisig size: 82 pad to 165, then +1 account_type +36 = 202.
-    // Exact: 165 (padded to multisig) + 1 (account_type) + 2 (ext_type) + 2 (ext_len) + 32 (close_auth) + 32 (optional padding) = varies.
-    // We use the same size as the Anchor program which uses try_calculate_account_len.
-    // For Token-2022: Mint(82) padded to MultisigLen(355? No...) Actually:
-    // SPL Token-2022 base Mint = 82 bytes, padded to 165 (BASE_ACCOUNT_LENGTH), +1 (AccountType)
-    // + MintCloseAuthority: type_u16(2) + length_u16(2) + pubkey(32) = 36
-    // Total: 165 + 1 + 36 = 202
-    let space: usize = 202;
-    let lamports = rent.minimum_balance(space);
+#[derive(Accounts)]
+pub struct MintShares<'info> {
+    #[account(mut)]
+    pub depositor: Signer<'info>,
 
-    let bump_ref = [mint_bump];
-    let seeds = [
-        Seed::from(seed_prefix),
-        Seed::from(ps_mint),
-        Seed::from(market_id_bytes),
-        Seed::from(bump_ref.as_ref()),
-    ];
-    let pda_signer = Signer::from(&seeds);
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
 
-    // 1. Create account owned by Token-2022
-    {
-        let mut create_data = [0u8; 52];
-        create_data[4..12].copy_from_slice(&lamports.to_le_bytes());
-        create_data[12..20].copy_from_slice(&(space as u64).to_le_bytes());
-        create_data[20..52].copy_from_slice(&TOKEN_2022_ID);
-        let metas = [
-            AccountMeta::writable_signer(payer.key()),
-            AccountMeta::writable_signer(mint_account.key()),
-        ];
-        let ix = Instruction {
-            program_id: &crate::SYSTEM_ID,
-            accounts: &metas,
-            data: &create_data,
-        };
-        pinocchio::cpi::slice_invoke_signed(&ix, &[payer, mint_account], &[pda_signer])?;
-    }
+    #[account(
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+        constraint = market_state.tokens_initialized @ OracleError::MarketTokensNotInitialized,
+        constraint = !market_state.resolved @ OracleError::MarketAlreadyResolved,
+    )]
+    pub market_state: Box<Account<'info, MarketState>>,
 
-    // 2. InitializeMintCloseAuthority (Token-2022 instruction 25)
-    // Data: [25, has_close_auth(1), close_auth(32)]
-    let mut close_auth_data = [0u8; 34];
-    close_auth_data[0] = 25; // InitializeMintCloseAuthority
-    close_auth_data[1] = 1;  // COption::Some
-    close_auth_data[2..34].copy_from_slice(mint_authority.key());
+    /// CCM mint (Token-2022)
+    /// CHECK: validated against protocol_state.mint
+    #[account(
+        constraint = ccm_mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub ccm_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
-    let close_auth_metas = [
-        AccountMeta::writable(mint_account.key()),
-    ];
-    let close_auth_ix = Instruction {
-        program_id: &TOKEN_2022_ID,
-        accounts: &close_auth_metas,
-        data: &close_auth_data,
-    };
-    pinocchio::cpi::slice_invoke_signed(&close_auth_ix, &[mint_account], &[])?;
+    /// Depositor's CCM token account
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::authority = depositor,
+        token::token_program = token_program,
+    )]
+    pub depositor_ccm: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
-    // 3. InitializeMint2 (discriminator = 20)
-    let mut init_data = [0u8; 67];
-    init_data[0] = 20; // InitializeMint2
-    init_data[1] = CCM_DECIMALS;
-    init_data[2..34].copy_from_slice(mint_authority.key());
-    init_data[34] = 0; // No freeze authority
+    /// Market vault (receives CCM collateral)
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::token_program = token_program,
+        constraint = vault.key() == market_state.vault @ OracleError::InvalidMarketState,
+    )]
+    pub vault: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
-    let init_metas = [
-        AccountMeta::writable(mint_account.key()),
-    ];
-    let init_ix = Instruction {
-        program_id: &TOKEN_2022_ID,
-        accounts: &init_metas,
-        data: &init_data,
-    };
-    pinocchio::cpi::slice_invoke_signed(&init_ix, &[mint_account], &[])
+    /// YES outcome mint (SPL for old markets, Token-2022 for new)
+    #[account(
+        mut,
+        constraint = yes_mint.key() == market_state.yes_mint @ OracleError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// NO outcome mint (SPL for old markets, Token-2022 for new)
+    #[account(
+        mut,
+        constraint = no_mint.key() == market_state.no_mint @ OracleError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// Depositor's YES token account
+    #[account(
+        mut,
+        token::mint = yes_mint,
+        token::authority = depositor,
+        token::token_program = outcome_token_program,
+    )]
+    pub depositor_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Depositor's NO token account
+    #[account(
+        mut,
+        token::mint = no_mint,
+        token::authority = depositor,
+        token::token_program = outcome_token_program,
+    )]
+    pub depositor_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Mint authority PDA
+    /// CHECK: validated against market_state.mint_authority
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+        constraint = mint_authority.key() == market_state.mint_authority @ OracleError::InvalidMarketState,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    /// Token-2022 (for CCM transfers)
+    pub token_program: Interface<'info, TokenInterface>,
+    /// Token program for YES/NO outcome operations (SPL for old markets, Token-2022 for new)
+    pub outcome_token_program: Interface<'info, TokenInterface>,
 }
 
-// ============================================================================
-// 4. MINT SHARES (deposit CCM -> get YES + NO)
-// ============================================================================
-//
-// Accounts:
-//   0. [SIGNER, WRITE] depositor
-//   1. []               protocol_state PDA
-//   2. []               market_state PDA
-//   3. []               ccm_mint (Token-2022)
-//   4. [WRITE]          depositor_ccm (Token-2022 ATA)
-//   5. [WRITE]          vault (Token-2022 ATA)
-//   6. [WRITE]          yes_mint
-//   7. [WRITE]          no_mint
-//   8. [WRITE]          depositor_yes
-//   9. [WRITE]          depositor_no
-//  10. []               mint_authority PDA
-//  11. []               token_program (Token-2022, for CCM)
-//  12. []               outcome_token_program (SPL or Token-2022, for YES/NO)
-//  13..N []             remaining_accounts (transfer fee hooks)
-//
-// Instruction data:
-//   [0..8]  amount (u64 LE)
+pub fn mint_shares<'info>(
+    ctx: Context<'_, '_, '_, 'info, MintShares<'info>>,
+    amount: u64,
+) -> Result<()> {
+    let protocol_state = &ctx.accounts.protocol_state;
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
+    require!(amount > 0, OracleError::ZeroSharesMinted);
 
-#[inline(never)]
-pub fn mint_shares(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 13 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-    if ix_data.len() < 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
+    // CRITICAL: Snapshot vault balance BEFORE transfer to calculate net received
+    let vault_before = ctx.accounts.vault.amount;
 
-    let depositor = &accounts[0];
-    let protocol_state = &accounts[1];
-    let market_state = &accounts[2];
-    let ccm_mint = &accounts[3];
-    let depositor_ccm = &accounts[4];
-    let vault = &accounts[5];
-    let yes_mint = &accounts[6];
-    let no_mint = &accounts[7];
-    let depositor_yes = &accounts[8];
-    let depositor_no = &accounts[9];
-    let mint_authority = &accounts[10];
-    let token_program = &accounts[11];
-    let outcome_token_program = &accounts[12];
-    let remaining = if accounts.len() > 13 { &accounts[13..] } else { &[] };
-
-    if !depositor.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    let amount = read_u64(ix_data, 0);
-    if amount == 0 {
-        return Err(OracleError::ZeroSharesMinted.into());
-    }
-
-    let (ps_mint, _) = validate_protocol_state(protocol_state, program_id)?;
-    check_not_paused(protocol_state)?;
-
-    // Read and validate market_state
-    let (market_id, mint_auth_bump) = validate_market_for_trading(
-        market_state, &ps_mint, program_id,
-        vault, yes_mint, no_mint, mint_authority, ccm_mint,
+    // Transfer CCM from depositor to vault (Token-2022 — may deduct transfer fee)
+    transfer_checked_with_remaining(
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.depositor_ccm.to_account_info(),
+        &ctx.accounts.ccm_mint.to_account_info(),
+        &ctx.accounts.vault.to_account_info(),
+        &ctx.accounts.depositor.to_account_info(),
+        amount,
+        CCM_DECIMALS,
+        &[], // depositor signs directly
+        ctx.remaining_accounts,
     )?;
 
-    // Snapshot vault balance BEFORE transfer
-    let vault_before = {
-        let data = unsafe { vault.borrow_data_unchecked() };
-        read_token_amount(&data)
-    };
-
-    // Transfer CCM from depositor to vault (Token-2022 transfer_checked)
-    {
-        // Depositor signs directly (no PDA signer)
-        let mut data = [0u8; 10];
-        data[0] = 12; // TransferChecked
-        data[1..9].copy_from_slice(&amount.to_le_bytes());
-        data[9] = CCM_DECIMALS;
-
-        let n_total = 4 + remaining.len();
-        let mut metas_buf: [core::mem::MaybeUninit<AccountMeta>; 36] = unsafe {
-            core::mem::MaybeUninit::uninit().assume_init()
-        };
-        metas_buf[0].write(AccountMeta::writable(depositor_ccm.key()));
-        metas_buf[1].write(AccountMeta::readonly(ccm_mint.key()));
-        metas_buf[2].write(AccountMeta::writable(vault.key()));
-        metas_buf[3].write(AccountMeta::readonly_signer(depositor.key()));
-        for (i, acc) in remaining.iter().enumerate() {
-            metas_buf[4 + i].write(AccountMeta::readonly(acc.key()));
-        }
-        let metas = unsafe {
-            core::slice::from_raw_parts(metas_buf.as_ptr() as *const AccountMeta, n_total)
-        };
-
-        let mut refs_buf: [core::mem::MaybeUninit<&AccountInfo>; 36] = unsafe {
-            core::mem::MaybeUninit::uninit().assume_init()
-        };
-        refs_buf[0].write(depositor_ccm);
-        refs_buf[1].write(ccm_mint);
-        refs_buf[2].write(vault);
-        refs_buf[3].write(depositor);
-        for (i, acc) in remaining.iter().enumerate() {
-            refs_buf[4 + i].write(acc);
-        }
-        let refs = unsafe {
-            core::slice::from_raw_parts(refs_buf.as_ptr() as *const &AccountInfo, n_total)
-        };
-
-        let ix = Instruction {
-            program_id: token_program.key(),
-            accounts: metas,
-            data: &data,
-        };
-        pinocchio::cpi::slice_invoke_signed(&ix, refs, &[])?;
-    }
-
-    // Read vault balance AFTER transfer to get net_received
-    let vault_after = {
-        let data = unsafe { vault.borrow_data_unchecked() };
-        read_token_amount(&data)
-    };
+    // Reload vault to get post-transfer balance
+    ctx.accounts.vault.reload()?;
+    let vault_after = ctx.accounts.vault.amount;
     let net_received = vault_after
         .checked_sub(vault_before)
-        .ok_or(ProgramError::Custom(6041))?; // MathOverflow
-    if net_received == 0 {
-        return Err(OracleError::ZeroSharesMinted.into());
-    }
+        .ok_or(OracleError::MathOverflow)?;
 
-    // Mint YES and NO shares (1:1 with net_received)
-    let market_id_bytes = market_id.to_le_bytes();
-    let bump_ref = [mint_auth_bump];
-    let seeds = mint_auth_seeds(
-        MARKET_MINT_AUTHORITY_SEED, &ps_mint, &market_id_bytes, &bump_ref,
-    );
+    require!(net_received > 0, OracleError::ZeroSharesMinted);
 
-    mint_to_cpi(outcome_token_program, yes_mint, depositor_yes, mint_authority, net_received, &seeds)?;
-    mint_to_cpi(outcome_token_program, no_mint, depositor_no, mint_authority, net_received, &seeds)?;
+    // Mint exactly net_received YES + NO tokens (1:1 backing)
+    let market_id_bytes = ctx.accounts.market_state.market_id.to_le_bytes();
+    let mint_key = protocol_state.mint;
+    let auth_seeds: &[&[u8]] = &[
+        MARKET_MINT_AUTHORITY_SEED,
+        mint_key.as_ref(),
+        &market_id_bytes,
+        &[ctx.bumps.mint_authority],
+    ];
+
+    // Mint YES shares (routed via outcome_token_program — SPL or Token-2022)
+    anchor_spl::token_2022::mint_to(
+        CpiContext::new_with_signer(
+            ctx.accounts.outcome_token_program.to_account_info(),
+            anchor_spl::token_2022::MintTo {
+                mint: ctx.accounts.yes_mint.to_account_info(),
+                to: ctx.accounts.depositor_yes.to_account_info(),
+                authority: ctx.accounts.mint_authority.to_account_info(),
+            },
+            &[auth_seeds],
+        ),
+        net_received,
+    )?;
+
+    // Mint NO shares (routed via outcome_token_program — SPL or Token-2022)
+    anchor_spl::token_2022::mint_to(
+        CpiContext::new_with_signer(
+            ctx.accounts.outcome_token_program.to_account_info(),
+            anchor_spl::token_2022::MintTo {
+                mint: ctx.accounts.no_mint.to_account_info(),
+                to: ctx.accounts.depositor_no.to_account_info(),
+                authority: ctx.accounts.mint_authority.to_account_info(),
+            },
+            &[auth_seeds],
+        ),
+        net_received,
+    )?;
+
+    emit!(SharesMinted {
+        market: ctx.accounts.market_state.key(),
+        market_id: ctx.accounts.market_state.market_id,
+        depositor: ctx.accounts.depositor.key(),
+        deposit_amount: amount,
+        net_amount: net_received,
+        shares_minted: net_received,
+    });
 
     Ok(())
 }
 
-/// Validate market_state for trading (mint_shares, redeem_shares, settle).
-/// Returns (market_id, mint_authority_bump).
-#[inline(never)]
-fn validate_market_for_trading(
-    market_state: &AccountInfo,
-    ps_mint: &Pubkey,
-    program_id: &Pubkey,
-    vault: &AccountInfo,
-    yes_mint: &AccountInfo,
-    no_mint: &AccountInfo,
-    mint_authority: &AccountInfo,
-    ccm_mint: &AccountInfo,
-) -> Result<(u64, u8), ProgramError> {
-    if !market_state.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let data = unsafe { market_state.borrow_data_unchecked() };
-    if data.len() < MS_LEN {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if data[..8] != DISC_MARKET_STATE {
-        return Err(ProgramError::InvalidAccountData);
-    }
+// =============================================================================
+// REDEEM SHARES (burn equal YES + NO → get CCM back, pre-resolution only)
+// =============================================================================
 
-    if data[MS_TOKENS_INIT] == 0 {
-        return Err(OracleError::MarketTokensNotInitialized.into());
-    }
+#[derive(Accounts)]
+pub struct RedeemShares<'info> {
+    #[account(mut)]
+    pub redeemer: Signer<'info>,
 
-    let market_id = read_u64(&data, MS_MARKET_ID);
-    let ms_mint = read_pubkey(&data, MS_MINT);
-    if !pubkey::pubkey_eq(&ms_mint, ps_mint) {
-        return Err(OracleError::InvalidMint.into());
-    }
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
 
-    // Verify vault, yes_mint, no_mint, mint_authority match stored values
-    let ms_vault = read_pubkey(&data, MS_VAULT);
-    if !pubkey::pubkey_eq(vault.key(), &ms_vault) {
-        return Err(OracleError::InvalidMarketState.into());
-    }
-    let ms_yes = read_pubkey(&data, MS_YES_MINT);
-    if !pubkey::pubkey_eq(yes_mint.key(), &ms_yes) {
-        return Err(OracleError::InvalidMarketState.into());
-    }
-    let ms_no = read_pubkey(&data, MS_NO_MINT);
-    if !pubkey::pubkey_eq(no_mint.key(), &ms_no) {
-        return Err(OracleError::InvalidMarketState.into());
-    }
-    let ms_auth = read_pubkey(&data, MS_MINT_AUTHORITY);
-    if !pubkey::pubkey_eq(mint_authority.key(), &ms_auth) {
-        return Err(OracleError::InvalidMarketState.into());
-    }
+    #[account(
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+        constraint = market_state.tokens_initialized @ OracleError::MarketTokensNotInitialized,
+        constraint = !market_state.resolved @ OracleError::MarketAlreadyResolved,
+    )]
+    pub market_state: Box<Account<'info, MarketState>>,
 
-    // Verify ccm_mint
-    if !pubkey::pubkey_eq(ccm_mint.key(), ps_mint) {
-        return Err(OracleError::InvalidMint.into());
-    }
+    /// CCM mint (Token-2022)
+    #[account(
+        constraint = ccm_mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub ccm_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
-    let _ = verify_market_state_pda(market_state, ps_mint, market_id, program_id)?;
+    /// Market vault
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::token_program = token_program,
+        constraint = vault.key() == market_state.vault @ OracleError::InvalidMarketState,
+    )]
+    pub vault: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
-    let (_, mint_auth_bump) = derive_mint_authority(ps_mint, market_id, program_id);
+    /// YES outcome mint (SPL for old markets, Token-2022 for new)
+    #[account(
+        mut,
+        constraint = yes_mint.key() == market_state.yes_mint @ OracleError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
-    Ok((market_id, mint_auth_bump))
+    /// NO outcome mint (SPL for old markets, Token-2022 for new)
+    #[account(
+        mut,
+        constraint = no_mint.key() == market_state.no_mint @ OracleError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// Redeemer's YES token account
+    #[account(
+        mut,
+        token::mint = yes_mint,
+        token::authority = redeemer,
+        token::token_program = outcome_token_program,
+    )]
+    pub redeemer_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Redeemer's NO token account
+    #[account(
+        mut,
+        token::mint = no_mint,
+        token::authority = redeemer,
+        token::token_program = outcome_token_program,
+    )]
+    pub redeemer_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Redeemer's CCM token account (receives CCM back)
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::authority = redeemer,
+        token::token_program = token_program,
+    )]
+    pub redeemer_ccm: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Mint authority PDA
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+        constraint = mint_authority.key() == market_state.mint_authority @ OracleError::InvalidMarketState,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    /// Token program for YES/NO outcome operations (SPL for old markets, Token-2022 for new)
+    pub outcome_token_program: Interface<'info, TokenInterface>,
 }
 
-// ============================================================================
-// 5. REDEEM SHARES (burn equal YES + NO -> get CCM back, pre-resolution)
-// ============================================================================
-//
-// Accounts:
-//   0. [SIGNER, WRITE] redeemer
-//   1. []               protocol_state PDA
-//   2. []               market_state PDA
-//   3. []               ccm_mint (Token-2022)
-//   4. [WRITE]          vault
-//   5. [WRITE]          yes_mint
-//   6. [WRITE]          no_mint
-//   7. [WRITE]          redeemer_yes
-//   8. [WRITE]          redeemer_no
-//   9. [WRITE]          redeemer_ccm
-//  10. []               mint_authority PDA
-//  11. []               token_program (Token-2022, for CCM)
-//  12. []               outcome_token_program (for YES/NO)
-//  13..N []             remaining_accounts
-//
-// Instruction data:
-//   [0..8]  shares (u64 LE)
+pub fn redeem_shares<'info>(
+    ctx: Context<'_, '_, '_, 'info, RedeemShares<'info>>,
+    shares: u64,
+) -> Result<()> {
+    let protocol_state = &ctx.accounts.protocol_state;
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
+    require!(shares > 0, OracleError::ZeroSharesMinted);
 
-#[inline(never)]
-pub fn redeem_shares(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 13 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-    if ix_data.len() < 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-
-    let redeemer = &accounts[0];
-    let protocol_state = &accounts[1];
-    let market_state = &accounts[2];
-    let ccm_mint = &accounts[3];
-    let vault = &accounts[4];
-    let yes_mint = &accounts[5];
-    let no_mint = &accounts[6];
-    let redeemer_yes = &accounts[7];
-    let redeemer_no = &accounts[8];
-    let redeemer_ccm = &accounts[9];
-    let mint_authority = &accounts[10];
-    let token_program = &accounts[11];
-    let outcome_token_program = &accounts[12];
-    let remaining = if accounts.len() > 13 { &accounts[13..] } else { &[] };
-
-    if !redeemer.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    let shares = read_u64(ix_data, 0);
-    if shares == 0 {
-        return Err(OracleError::ZeroSharesMinted.into());
-    }
-
-    let (ps_mint, _) = validate_protocol_state(protocol_state, program_id)?;
-    check_not_paused(protocol_state)?;
-
-    // Market must not be resolved
-    {
-        let data = unsafe { market_state.borrow_data_unchecked() };
-        if data[MS_RESOLVED] != 0 {
-            return Err(OracleError::MarketAlreadyResolved.into());
-        }
-    }
-
-    let (market_id, mint_auth_bump) = validate_market_for_trading(
-        market_state, &ps_mint, program_id,
-        vault, yes_mint, no_mint, mint_authority, ccm_mint,
+    // Burn equal YES and NO tokens (routed via outcome_token_program)
+    anchor_spl::token_2022::burn(
+        CpiContext::new(
+            ctx.accounts.outcome_token_program.to_account_info(),
+            anchor_spl::token_2022::Burn {
+                mint: ctx.accounts.yes_mint.to_account_info(),
+                from: ctx.accounts.redeemer_yes.to_account_info(),
+                authority: ctx.accounts.redeemer.to_account_info(),
+            },
+        ),
+        shares,
     )?;
 
-    // Burn YES shares
-    burn_cpi(outcome_token_program, yes_mint, redeemer_yes, redeemer, shares)?;
-
-    // Burn NO shares
-    burn_cpi(outcome_token_program, no_mint, redeemer_no, redeemer, shares)?;
-
-    // Transfer CCM from vault to redeemer
-    let market_id_bytes = market_id.to_le_bytes();
-    let bump_ref = [mint_auth_bump];
-    let seeds = mint_auth_seeds(
-        MARKET_MINT_AUTHORITY_SEED, &ps_mint, &market_id_bytes, &bump_ref,
-    );
-    transfer_checked_signed(
-        token_program, vault, ccm_mint, redeemer_ccm, mint_authority,
-        shares, CCM_DECIMALS, &seeds, remaining,
+    anchor_spl::token_2022::burn(
+        CpiContext::new(
+            ctx.accounts.outcome_token_program.to_account_info(),
+            anchor_spl::token_2022::Burn {
+                mint: ctx.accounts.no_mint.to_account_info(),
+                from: ctx.accounts.redeemer_no.to_account_info(),
+                authority: ctx.accounts.redeemer.to_account_info(),
+            },
+        ),
+        shares,
     )?;
+
+    // Transfer CCM from vault back to redeemer (outbound transfer fee applies)
+    let market_id_bytes = ctx.accounts.market_state.market_id.to_le_bytes();
+    let mint_key = protocol_state.mint;
+    let auth_seeds: &[&[u8]] = &[
+        MARKET_MINT_AUTHORITY_SEED,
+        mint_key.as_ref(),
+        &market_id_bytes,
+        &[ctx.bumps.mint_authority],
+    ];
+
+    transfer_checked_with_remaining(
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.vault.to_account_info(),
+        &ctx.accounts.ccm_mint.to_account_info(),
+        &ctx.accounts.redeemer_ccm.to_account_info(),
+        &ctx.accounts.mint_authority.to_account_info(),
+        shares,
+        CCM_DECIMALS,
+        &[auth_seeds],
+        ctx.remaining_accounts,
+    )?;
+
+    emit!(SharesRedeemed {
+        market: ctx.accounts.market_state.key(),
+        market_id: ctx.accounts.market_state.market_id,
+        redeemer: ctx.accounts.redeemer.key(),
+        shares_burned: shares,
+        ccm_returned: shares, // gross; net is less after transfer fee
+    });
 
     Ok(())
 }
 
-// ============================================================================
-// 6. RESOLVE MARKET (set outcome via merkle proof)
-// ============================================================================
-//
-// Accounts:
-//   0. [SIGNER]  resolver
-//   1. []        protocol_state PDA
-//   2. []        global_root_config PDA
-//   3. [WRITE]   market_state PDA
-//
-// Instruction data:
-//   [0..8]      cumulative_total (u64 LE)
-//   [8..10]     proof_len (u16 LE)
-//   [10..10+proof_len*32]  proof entries (each 32 bytes)
+// =============================================================================
+// RESOLVE MARKET
+// =============================================================================
 
-#[inline(never)]
+#[derive(Accounts)]
+pub struct ResolveMarket<'info> {
+    pub resolver: Signer<'info>,
+
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        seeds = [GLOBAL_ROOT_SEED, protocol_state.mint.as_ref()],
+        bump = global_root_config.bump,
+    )]
+    pub global_root_config: Account<'info, GlobalRootConfig>,
+
+    #[account(
+        mut,
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+    )]
+    pub market_state: Account<'info, MarketState>,
+}
+
 pub fn resolve_market(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 4 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-    if ix_data.len() < 10 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
+    ctx: Context<ResolveMarket>,
+    cumulative_total: u64,
+    proof: Vec<[u8; 32]>,
+) -> Result<()> {
+    let protocol_state = &ctx.accounts.protocol_state;
+    let global_root_config = &ctx.accounts.global_root_config;
+    let market_state = &mut ctx.accounts.market_state;
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
+    require!(
+        proof.len() <= MAX_PROOF_LEN,
+        OracleError::InvalidProofLength
+    );
+    require!(
+        market_state.version == MARKET_STATE_VERSION,
+        OracleError::InvalidMarketState
+    );
+    require_keys_eq!(
+        market_state.mint,
+        protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(
+        market_state.metric == MARKET_METRIC_ATTENTION_SCORE,
+        OracleError::UnsupportedMarketMetric
+    );
+    require!(!market_state.resolved, OracleError::MarketAlreadyResolved);
+    require!(
+        global_root_config.version > 0,
+        OracleError::GlobalRootNotInitialized
+    );
+    require_keys_eq!(
+        global_root_config.mint,
+        protocol_state.mint,
+        OracleError::InvalidMint
+    );
+    require!(
+        market_state.resolution_root_seq <= global_root_config.latest_root_seq,
+        OracleError::MarketNotResolvableYet
+    );
 
-    let _resolver = &accounts[0];
-    let protocol_state = &accounts[1];
-    let global_root_config = &accounts[2];
-    let market_state = &accounts[3];
+    let root_seq = market_state.resolution_root_seq;
+    let idx = (root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
+    let entry = global_root_config.roots[idx];
+    require!(entry.seq == root_seq, OracleError::RootTooOldOrMissing);
 
-    if !_resolver.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
+    let leaf = compute_global_leaf(
+        &protocol_state.mint,
+        root_seq,
+        &market_state.creator_wallet,
+        cumulative_total,
+    );
+    require!(
+        verify_proof(&proof, leaf, entry.root),
+        OracleError::InvalidProof
+    );
 
-    let (ps_mint, _) = validate_protocol_state(protocol_state, program_id)?;
-    check_not_paused(protocol_state)?;
-
-    // Parse instruction data
-    let cumulative_total = read_u64(ix_data, 0);
-    let proof_len = u16::from_le_bytes([ix_data[8], ix_data[9]]) as usize;
-    if proof_len > MAX_PROOF_LEN {
-        return Err(OracleError::InvalidProofLength.into());
-    }
-    let proof_data_len = proof_len * 32;
-    if ix_data.len() < 10 + proof_data_len {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-
-    // Parse proof
-    let mut proof = [[0u8; 32]; 32]; // MAX_PROOF_LEN
-    for i in 0..proof_len {
-        let off = 10 + i * 32;
-        proof[i].copy_from_slice(&ix_data[off..off + 32]);
-    }
-    let proof_slice = &proof[..proof_len];
-
-    // Validate global root config
-    validate_global_root_config(global_root_config, &ps_mint, program_id)?;
-
-    // Read and validate market_state
-    if !market_state.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-
-    let (market_id, resolution_root_seq, _ms_bump, _ms_mint, _ms_metric, ms_creator_wallet, ms_target) = {
-        let data = unsafe { market_state.borrow_data_unchecked() };
-        if data.len() < MS_LEN || data[..8] != DISC_MARKET_STATE {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        if data[MS_VERSION] != MARKET_STATE_VERSION {
-            return Err(OracleError::InvalidMarketState.into());
-        }
-        if data[MS_RESOLVED] != 0 {
-            return Err(OracleError::MarketAlreadyResolved.into());
-        }
-        let ms_mint_val = read_pubkey(&data, MS_MINT);
-        if !pubkey::pubkey_eq(&ms_mint_val, &ps_mint) {
-            return Err(OracleError::InvalidMint.into());
-        }
-        let ms_metric_val = data[MS_METRIC];
-        if ms_metric_val != MARKET_METRIC_ATTENTION_SCORE {
-            return Err(OracleError::UnsupportedMarketMetric.into());
-        }
-        (
-            read_u64(&data, MS_MARKET_ID),
-            read_u64(&data, MS_RES_ROOT_SEQ),
-            data[MS_BUMP],
-            ms_mint_val,
-            ms_metric_val,
-            read_pubkey(&data, MS_CREATOR_WALLET),
-            read_u64(&data, MS_TARGET),
-        )
-    };
-
-    let _ = verify_market_state_pda(market_state, &ps_mint, market_id, program_id)?;
-
-    // Check that resolution_root_seq is available in global root config
-    let grc_data = unsafe { global_root_config.borrow_data_unchecked() };
-    let grc_latest_seq = read_u64(&grc_data, GRC_LATEST_ROOT_SEQ);
-    if resolution_root_seq > grc_latest_seq {
-        return Err(OracleError::MarketNotResolvableYet.into());
-    }
-
-    // Look up root entry
-    let idx = (resolution_root_seq as usize) % CUMULATIVE_ROOT_HISTORY;
-    let entry_off = GRC_ROOTS_START + idx * ROOT_ENTRY_SIZE;
-    let entry_seq = read_u64(&grc_data, entry_off);
-    if entry_seq != resolution_root_seq {
-        return Err(OracleError::RootTooOldOrMissing.into());
-    }
-    let mut root = [0u8; 32];
-    root.copy_from_slice(&grc_data[entry_off + 8..entry_off + 40]);
-    let _ = grc_data;
-
-    // Compute leaf and verify proof
-    let leaf = compute_global_leaf_v4(&ps_mint, resolution_root_seq, &ms_creator_wallet, cumulative_total);
-    if !verify_proof(proof_slice, leaf, root) {
-        return Err(OracleError::InvalidProof.into());
-    }
-
-    // Set outcome
-    let outcome = cumulative_total >= ms_target;
+    let outcome = cumulative_total >= market_state.target;
     let slot = Clock::get()?.slot;
+    market_state.resolved = true;
+    market_state.outcome = outcome;
+    market_state.resolution_cumulative_total = cumulative_total;
+    market_state.resolved_slot = slot;
 
-    {
-        let data = unsafe { market_state.borrow_mut_data_unchecked() };
-        data[MS_RESOLVED] = 1;
-        data[MS_OUTCOME] = if outcome { 1 } else { 0 };
-        data[MS_RES_CUM_TOTAL..MS_RES_CUM_TOTAL + 8].copy_from_slice(&cumulative_total.to_le_bytes());
-        data[MS_RESOLVED_SLOT..MS_RESOLVED_SLOT + 8].copy_from_slice(&slot.to_le_bytes());
-    }
+    emit!(MarketResolved {
+        market: market_state.key(),
+        market_id: market_state.market_id,
+        resolver: ctx.accounts.resolver.key(),
+        creator_wallet: market_state.creator_wallet,
+        metric: market_state.metric,
+        target: market_state.target,
+        resolution_root_seq: market_state.resolution_root_seq,
+        verified_cumulative_total: cumulative_total,
+        outcome,
+        resolved_slot: slot,
+    });
 
     Ok(())
 }
 
-// ============================================================================
-// 7. SETTLE (burn winning shares -> claim CCM, post-resolution)
-// ============================================================================
-//
-// Accounts:
-//   0. [SIGNER, WRITE] settler
-//   1. []               protocol_state PDA
-//   2. []               market_state PDA
-//   3. []               ccm_mint (Token-2022)
-//   4. [WRITE]          vault
-//   5. [WRITE]          winning_mint (YES or NO depending on outcome)
-//   6. [WRITE]          settler_winning (settler's winning token account)
-//   7. [WRITE]          settler_ccm (settler's CCM token account)
-//   8. []               mint_authority PDA
-//   9. []               token_program (Token-2022)
-//  10. []               outcome_token_program (for YES/NO)
-//  11..N []             remaining_accounts
-//
-// Instruction data:
-//   [0..8]  shares (u64 LE)
+// =============================================================================
+// SETTLE (burn winning shares → claim CCM, post-resolution only)
+// =============================================================================
 
-#[inline(never)]
-pub fn settle(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 11 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-    if ix_data.len() < 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
+#[derive(Accounts)]
+pub struct Settle<'info> {
+    #[account(mut)]
+    pub settler: Signer<'info>,
 
-    let settler = &accounts[0];
-    let protocol_state = &accounts[1];
-    let market_state = &accounts[2];
-    let ccm_mint = &accounts[3];
-    let vault = &accounts[4];
-    let winning_mint = &accounts[5];
-    let settler_winning = &accounts[6];
-    let settler_ccm = &accounts[7];
-    let mint_authority = &accounts[8];
-    let token_program = &accounts[9];
-    let outcome_token_program = &accounts[10];
-    let remaining = if accounts.len() > 11 { &accounts[11..] } else { &[] };
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
 
-    if !settler.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
+    #[account(
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+        constraint = market_state.tokens_initialized @ OracleError::MarketTokensNotInitialized,
+        constraint = market_state.resolved @ OracleError::MarketNotResolved,
+    )]
+    pub market_state: Box<Account<'info, MarketState>>,
 
-    let shares = read_u64(ix_data, 0);
-    if shares == 0 {
-        return Err(OracleError::ZeroSharesMinted.into());
-    }
+    /// CCM mint (Token-2022)
+    #[account(
+        constraint = ccm_mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub ccm_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
-    let (ps_mint, _) = validate_protocol_state(protocol_state, program_id)?;
-    check_not_paused(protocol_state)?;
+    /// Market vault
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::token_program = token_program,
+        constraint = vault.key() == market_state.vault @ OracleError::InvalidMarketState,
+    )]
+    pub vault: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
-    // Read market_state
-    if !market_state.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let (market_id, mint_auth_bump, expected_winning) = {
-        let data = unsafe { market_state.borrow_data_unchecked() };
-        if data.len() < MS_LEN || data[..8] != DISC_MARKET_STATE {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        if data[MS_TOKENS_INIT] == 0 {
-            return Err(OracleError::MarketTokensNotInitialized.into());
-        }
-        if data[MS_RESOLVED] == 0 {
-            return Err(OracleError::MarketNotResolved.into());
-        }
-        let outcome = data[MS_OUTCOME] != 0;
-        let expected = if outcome {
-            read_pubkey(&data, MS_YES_MINT)
-        } else {
-            read_pubkey(&data, MS_NO_MINT)
-        };
-        let ms_mint = read_pubkey(&data, MS_MINT);
-        if !pubkey::pubkey_eq(&ms_mint, &ps_mint) {
-            return Err(OracleError::InvalidMint.into());
-        }
-        let ms_vault = read_pubkey(&data, MS_VAULT);
-        if !pubkey::pubkey_eq(vault.key(), &ms_vault) {
-            return Err(OracleError::InvalidMarketState.into());
-        }
-        let ms_auth = read_pubkey(&data, MS_MINT_AUTHORITY);
-        if !pubkey::pubkey_eq(mint_authority.key(), &ms_auth) {
-            return Err(OracleError::InvalidMarketState.into());
-        }
-        let mid = read_u64(&data, MS_MARKET_ID);
-        let (_, mab) = derive_mint_authority(&ps_mint, mid, program_id);
-        (mid, mab, expected)
+    /// The WINNING outcome mint (YES if outcome=true, NO if outcome=false)
+    #[account(
+        mut,
+        mint::token_program = outcome_token_program,
+    )]
+    pub winning_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// Settler's winning token account
+    #[account(
+        mut,
+        token::mint = winning_mint,
+        token::authority = settler,
+        token::token_program = outcome_token_program,
+    )]
+    pub settler_winning: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Settler's CCM token account (receives settlement)
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::authority = settler,
+        token::token_program = token_program,
+    )]
+    pub settler_ccm: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Mint authority PDA
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+        constraint = mint_authority.key() == market_state.mint_authority @ OracleError::InvalidMarketState,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    /// Token program for YES/NO outcome operations (SPL for old markets, Token-2022 for new)
+    pub outcome_token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn settle<'info>(ctx: Context<'_, '_, '_, 'info, Settle<'info>>, shares: u64) -> Result<()> {
+    let protocol_state = &ctx.accounts.protocol_state;
+    let market_state = &ctx.accounts.market_state;
+    require!(!protocol_state.paused, OracleError::ProtocolPaused);
+    require!(shares > 0, OracleError::ZeroSharesMinted);
+
+    // Verify the settler is burning the correct winning side
+    let expected_winning_mint = if market_state.outcome {
+        market_state.yes_mint
+    } else {
+        market_state.no_mint
     };
-
-    let _ = verify_market_state_pda(market_state, &ps_mint, market_id, program_id)?;
-
-    // Verify winning_mint matches expected
-    if !pubkey::pubkey_eq(winning_mint.key(), &expected_winning) {
-        return Err(OracleError::WrongOutcomeToken.into());
-    }
-
-    // Verify ccm_mint
-    if !pubkey::pubkey_eq(ccm_mint.key(), &ps_mint) {
-        return Err(OracleError::InvalidMint.into());
-    }
+    require_keys_eq!(
+        ctx.accounts.winning_mint.key(),
+        expected_winning_mint,
+        OracleError::WrongOutcomeToken
+    );
 
     // Verify vault has enough CCM
-    {
-        let data = unsafe { vault.borrow_data_unchecked() };
-        let vault_amount = read_token_amount(&data);
-        if vault_amount < shares {
-            return Err(OracleError::InsufficientVaultBalance.into());
-        }
-    }
-
-    // Burn winning shares
-    burn_cpi(outcome_token_program, winning_mint, settler_winning, settler, shares)?;
-
-    // Transfer CCM from vault to settler
-    let market_id_bytes = market_id.to_le_bytes();
-    let bump_ref = [mint_auth_bump];
-    let seeds = mint_auth_seeds(
-        MARKET_MINT_AUTHORITY_SEED, &ps_mint, &market_id_bytes, &bump_ref,
+    require!(
+        ctx.accounts.vault.amount >= shares,
+        OracleError::InsufficientVaultBalance
     );
-    transfer_checked_signed(
-        token_program, vault, ccm_mint, settler_ccm, mint_authority,
-        shares, CCM_DECIMALS, &seeds, remaining,
+
+    // Burn winning shares (routed via outcome_token_program)
+    anchor_spl::token_2022::burn(
+        CpiContext::new(
+            ctx.accounts.outcome_token_program.to_account_info(),
+            anchor_spl::token_2022::Burn {
+                mint: ctx.accounts.winning_mint.to_account_info(),
+                from: ctx.accounts.settler_winning.to_account_info(),
+                authority: ctx.accounts.settler.to_account_info(),
+            },
+        ),
+        shares,
     )?;
 
-    Ok(())
-}
+    // Transfer CCM from vault to settler (Token-2022 transfer fee applies on exit)
+    let market_id_bytes = market_state.market_id.to_le_bytes();
+    let mint_key = protocol_state.mint;
+    let auth_seeds: &[&[u8]] = &[
+        MARKET_MINT_AUTHORITY_SEED,
+        mint_key.as_ref(),
+        &market_id_bytes,
+        &[ctx.bumps.mint_authority],
+    ];
 
-// ============================================================================
-// 8. SWEEP RESIDUAL (admin recovers leftover CCM after all winners settle)
-// ============================================================================
-//
-// Accounts:
-//   0. [SIGNER]  admin
-//   1. []        protocol_state PDA
-//   2. []        market_state PDA
-//   3. []        ccm_mint (Token-2022)
-//   4. [WRITE]   vault
-//   5. []        winning_mint (supply must be 0)
-//   6. [WRITE]   treasury_ccm
-//   7. []        mint_authority PDA
-//   8. []        token_program (Token-2022)
-//   9..N []      remaining_accounts
-
-#[inline(never)]
-pub fn sweep_residual(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    _ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 9 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-
-    let admin = &accounts[0];
-    let protocol_state = &accounts[1];
-    let market_state = &accounts[2];
-    let ccm_mint = &accounts[3];
-    let vault = &accounts[4];
-    let winning_mint = &accounts[5];
-    let treasury_ccm = &accounts[6];
-    let mint_authority = &accounts[7];
-    let token_program = &accounts[8];
-    let remaining = if accounts.len() > 9 { &accounts[9..] } else { &[] };
-
-    if !admin.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    let (ps_mint, _) = validate_protocol_state(protocol_state, program_id)?;
-    check_admin(admin, protocol_state)?;
-
-    // Read market_state
-    if !market_state.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let (market_id, mint_auth_bump, expected_winning) = {
-        let data = unsafe { market_state.borrow_data_unchecked() };
-        if data.len() < MS_LEN || data[..8] != DISC_MARKET_STATE {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        if data[MS_TOKENS_INIT] == 0 {
-            return Err(OracleError::MarketTokensNotInitialized.into());
-        }
-        if data[MS_RESOLVED] == 0 {
-            return Err(OracleError::MarketNotResolved.into());
-        }
-        let outcome = data[MS_OUTCOME] != 0;
-        let expected = if outcome {
-            read_pubkey(&data, MS_YES_MINT)
-        } else {
-            read_pubkey(&data, MS_NO_MINT)
-        };
-        let ms_vault = read_pubkey(&data, MS_VAULT);
-        if !pubkey::pubkey_eq(vault.key(), &ms_vault) {
-            return Err(OracleError::InvalidMarketState.into());
-        }
-        let ms_auth = read_pubkey(&data, MS_MINT_AUTHORITY);
-        if !pubkey::pubkey_eq(mint_authority.key(), &ms_auth) {
-            return Err(OracleError::InvalidMarketState.into());
-        }
-        let mid = read_u64(&data, MS_MARKET_ID);
-        let (_, mab) = derive_mint_authority(&ps_mint, mid, program_id);
-        (mid, mab, expected)
-    };
-
-    let _ = verify_market_state_pda(market_state, &ps_mint, market_id, program_id)?;
-
-    // Verify winning_mint
-    if !pubkey::pubkey_eq(winning_mint.key(), &expected_winning) {
-        return Err(OracleError::WrongOutcomeToken.into());
-    }
-
-    // Winning mint supply must be 0
-    {
-        let data = unsafe { winning_mint.borrow_data_unchecked() };
-        let supply = read_mint_supply(&data);
-        if supply != 0 {
-            return Err(OracleError::WinningSharesStillOutstanding.into());
-        }
-    }
-
-    // Get residual amount from vault
-    let residual = {
-        let data = unsafe { vault.borrow_data_unchecked() };
-        read_token_amount(&data)
-    };
-    if residual == 0 {
-        return Err(OracleError::InsufficientVaultBalance.into());
-    }
-
-    if !pubkey::pubkey_eq(ccm_mint.key(), &ps_mint) {
-        return Err(OracleError::InvalidMint.into());
-    }
-
-    // Transfer all remaining CCM to treasury
-    let market_id_bytes = market_id.to_le_bytes();
-    let bump_ref = [mint_auth_bump];
-    let seeds = mint_auth_seeds(
-        MARKET_MINT_AUTHORITY_SEED, &ps_mint, &market_id_bytes, &bump_ref,
-    );
-    transfer_checked_signed(
-        token_program, vault, ccm_mint, treasury_ccm, mint_authority,
-        residual, CCM_DECIMALS, &seeds, remaining,
+    transfer_checked_with_remaining(
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.vault.to_account_info(),
+        &ctx.accounts.ccm_mint.to_account_info(),
+        &ctx.accounts.settler_ccm.to_account_info(),
+        &ctx.accounts.mint_authority.to_account_info(),
+        shares,
+        CCM_DECIMALS,
+        &[auth_seeds],
+        ctx.remaining_accounts,
     )?;
 
+    emit!(MarketSettled {
+        market: market_state.key(),
+        market_id: market_state.market_id,
+        settler: ctx.accounts.settler.key(),
+        winning_side: market_state.outcome,
+        shares_burned: shares,
+        ccm_returned: shares, // gross; net is less after transfer fee
+    });
+
     Ok(())
 }
 
-// ============================================================================
-// 9. CLOSE MARKET (reclaim rent from MarketState + vault, post-resolution)
-// ============================================================================
-//
-// Accounts:
-//   0. [SIGNER, WRITE] admin
-//   1. []               protocol_state PDA
-//   2. [WRITE]          market_state PDA (will be closed)
-//   3. [WRITE]          vault (must be empty, will be closed)
-//   4. []               ccm_mint
-//   5. []               yes_mint (supply must be 0)
-//   6. []               no_mint (supply must be 0)
-//   7. []               mint_authority PDA
-//   8. []               token_program (Token-2022)
+// =============================================================================
+// SWEEP RESIDUAL (admin recovers locked losing-side CCM after all winners settle)
+// =============================================================================
 
-#[inline(never)]
-pub fn close_market(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    _ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 9 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
+#[derive(Accounts)]
+pub struct SweepResidual<'info> {
+    pub admin: Signer<'info>,
 
-    let admin = &accounts[0];
-    let protocol_state = &accounts[1];
-    let market_state = &accounts[2];
-    let vault = &accounts[3];
-    let ccm_mint = &accounts[4];
-    let yes_mint = &accounts[5];
-    let no_mint = &accounts[6];
-    let mint_authority = &accounts[7];
-    let token_program = &accounts[8];
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
 
-    if !admin.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
+    #[account(
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+        constraint = market_state.tokens_initialized @ OracleError::MarketTokensNotInitialized,
+        constraint = market_state.resolved @ OracleError::MarketNotResolved,
+    )]
+    pub market_state: Account<'info, MarketState>,
 
-    let (ps_mint, _) = validate_protocol_state(protocol_state, program_id)?;
+    /// CCM mint (Token-2022)
+    #[account(
+        constraint = ccm_mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub ccm_mint: InterfaceAccount<'info, MintInterface>,
 
-    // Check admin or market authority
-    {
-        let ms_data = unsafe { market_state.borrow_data_unchecked() };
-        if ms_data.len() < MS_LEN || ms_data[..8] != DISC_MARKET_STATE {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        let ms_authority = read_pubkey(&ms_data, MS_AUTHORITY);
-        let ps_data = unsafe { protocol_state.borrow_data_unchecked() };
-        let ps_admin = read_pubkey(&ps_data, PS_ADMIN);
-        if !pubkey::pubkey_eq(admin.key(), &ps_admin)
-            && !pubkey::pubkey_eq(admin.key(), &ms_authority)
-        {
-            return Err(OracleError::Unauthorized.into());
-        }
-    }
+    /// Market vault (holds residual CCM from losing side)
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::token_program = token_program,
+        constraint = vault.key() == market_state.vault @ OracleError::InvalidMarketState,
+    )]
+    pub vault: InterfaceAccount<'info, TokenAccountInterface>,
 
-    // Validate market_state
-    if !market_state.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let (market_id, mint_auth_bump) = {
-        let data = unsafe { market_state.borrow_data_unchecked() };
-        if data[MS_RESOLVED] == 0 {
-            return Err(OracleError::MarketNotResolved.into());
-        }
-        if data[MS_TOKENS_INIT] == 0 {
-            return Err(OracleError::MarketTokensNotInitialized.into());
-        }
-        let ms_vault = read_pubkey(&data, MS_VAULT);
-        if !pubkey::pubkey_eq(vault.key(), &ms_vault) {
-            return Err(OracleError::InvalidMarketState.into());
-        }
-        let ms_yes = read_pubkey(&data, MS_YES_MINT);
-        if !pubkey::pubkey_eq(yes_mint.key(), &ms_yes) {
-            return Err(OracleError::InvalidMarketState.into());
-        }
-        let ms_no = read_pubkey(&data, MS_NO_MINT);
-        if !pubkey::pubkey_eq(no_mint.key(), &ms_no) {
-            return Err(OracleError::InvalidMarketState.into());
-        }
-        let ms_auth = read_pubkey(&data, MS_MINT_AUTHORITY);
-        if !pubkey::pubkey_eq(mint_authority.key(), &ms_auth) {
-            return Err(OracleError::InvalidMarketState.into());
-        }
+    /// Winning outcome mint — must have supply == 0 (all winners settled)
+    #[account(
+        constraint = winning_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
+    )]
+    pub winning_mint: InterfaceAccount<'info, MintInterface>,
 
-        if !pubkey::pubkey_eq(ccm_mint.key(), &ps_mint) {
-            return Err(OracleError::InvalidMint.into());
-        }
+    /// Treasury CCM account (receives swept funds)
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::authority = protocol_state.treasury,
+        token::token_program = token_program,
+    )]
+    pub treasury_ccm: InterfaceAccount<'info, TokenAccountInterface>,
 
-        let mid = read_u64(&data, MS_MARKET_ID);
-        let (_, mab) = derive_mint_authority(&ps_mint, mid, program_id);
-        (mid, mab)
+    /// Mint authority PDA (signs vault transfer)
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+        constraint = mint_authority.key() == market_state.mint_authority @ OracleError::InvalidMarketState,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn sweep_residual<'info>(ctx: Context<'_, '_, '_, 'info, SweepResidual<'info>>) -> Result<()> {
+    let market_state = &ctx.accounts.market_state;
+
+    // Verify the correct winning mint was provided
+    let expected_winning_mint = if market_state.outcome {
+        market_state.yes_mint
+    } else {
+        market_state.no_mint
     };
-
-    let _ = verify_market_state_pda(market_state, &ps_mint, market_id, program_id)?;
-
-    // Vault must be empty
-    {
-        let data = unsafe { vault.borrow_data_unchecked() };
-        let vault_amount = read_token_amount(&data);
-        if vault_amount != 0 {
-            return Err(OracleError::VaultNotEmpty.into());
-        }
-    }
-
-    // YES and NO mint supply must be 0
-    {
-        let data = unsafe { yes_mint.borrow_data_unchecked() };
-        if read_mint_supply(&data) != 0 {
-            return Err(OracleError::WinningSharesStillOutstanding.into());
-        }
-    }
-    {
-        let data = unsafe { no_mint.borrow_data_unchecked() };
-        if read_mint_supply(&data) != 0 {
-            return Err(OracleError::WinningSharesStillOutstanding.into());
-        }
-    }
-
-    // Close vault ATA via Token-2022 CloseAccount CPI
-    let market_id_bytes = market_id.to_le_bytes();
-    let bump_ref = [mint_auth_bump];
-    let seeds = mint_auth_seeds(
-        MARKET_MINT_AUTHORITY_SEED, &ps_mint, &market_id_bytes, &bump_ref,
+    require_keys_eq!(
+        ctx.accounts.winning_mint.key(),
+        expected_winning_mint,
+        OracleError::WrongOutcomeToken
     );
-    close_account_cpi(token_program, vault, admin, mint_authority, &seeds)?;
 
-    // Close MarketState PDA (transfer lamports to admin, zero data)
-    {
-        let lamports = market_state.lamports();
-        // Transfer lamports from market_state to admin
-        unsafe {
-            *market_state.borrow_mut_lamports_unchecked() = 0;
-            *admin.borrow_mut_lamports_unchecked() = admin
-                .lamports()
-                .checked_add(lamports)
-                .ok_or(ProgramError::ArithmeticOverflow)?;
-        }
-        // Zero account data
-        let data = unsafe { market_state.borrow_mut_data_unchecked() };
-        for byte in data.iter_mut() {
-            *byte = 0;
-        }
-    }
+    let residual = ctx.accounts.vault.amount;
+    require!(residual > 0, OracleError::InsufficientVaultBalance);
+
+    // Transfer all remaining CCM from vault to treasury
+    let market_id_bytes = market_state.market_id.to_le_bytes();
+    let mint_key = ctx.accounts.protocol_state.mint;
+    let auth_seeds: &[&[u8]] = &[
+        MARKET_MINT_AUTHORITY_SEED,
+        mint_key.as_ref(),
+        &market_id_bytes,
+        &[ctx.bumps.mint_authority],
+    ];
+
+    transfer_checked_with_remaining(
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.vault.to_account_info(),
+        &ctx.accounts.ccm_mint.to_account_info(),
+        &ctx.accounts.treasury_ccm.to_account_info(),
+        &ctx.accounts.mint_authority.to_account_info(),
+        residual,
+        CCM_DECIMALS,
+        &[auth_seeds],
+        ctx.remaining_accounts,
+    )?;
+
+    emit!(MarketSwept {
+        market: market_state.key(),
+        market_id: market_state.market_id,
+        admin: ctx.accounts.admin.key(),
+        amount_swept: residual,
+        treasury: ctx.accounts.protocol_state.treasury,
+    });
 
     Ok(())
 }
 
-// ============================================================================
-// 10. CLOSE MARKET MINTS (reclaim rent from zero-supply YES/NO mints)
-// ============================================================================
-//
-// Accounts:
-//   0. [SIGNER, WRITE] admin
-//   1. []               protocol_state PDA
-//   2. [WRITE]          yes_mint (supply must be 0)
-//   3. [WRITE]          no_mint (supply must be 0)
-//   4. []               mint_authority PDA
-//   5. []               outcome_token_program (SPL or Token-2022)
-//
-// Instruction data:
-//   [0..8]  market_id (u64 LE)
+// =============================================================================
+// CLOSE MARKET (reclaim rent from fully-resolved, fully-settled markets)
+// =============================================================================
 
-#[inline(never)]
-pub fn close_market_mints(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 6 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-    if ix_data.len() < 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
+#[derive(Accounts)]
+pub struct CloseMarket<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
 
-    let admin = &accounts[0];
-    let protocol_state = &accounts[1];
-    let yes_mint = &accounts[2];
-    let no_mint = &accounts[3];
-    let mint_authority = &accounts[4];
-    let outcome_token_program = &accounts[5];
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        constraint = (admin.key() == protocol_state.admin
+                  || admin.key() == market_state.authority) @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
 
-    if !admin.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
+    #[account(
+        mut,
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+        constraint = market_state.resolved @ OracleError::MarketNotResolved,
+        constraint = market_state.tokens_initialized @ OracleError::MarketTokensNotInitialized,
+        close = admin,
+    )]
+    pub market_state: Account<'info, MarketState>,
 
-    let (ps_mint, _) = validate_protocol_state(protocol_state, program_id)?;
-    check_admin(admin, protocol_state)?;
+    /// Market vault (Token-2022 ATA holding CCM collateral — must be empty)
+    #[account(
+        mut,
+        token::mint = ccm_mint,
+        token::token_program = token_program,
+        constraint = vault.key() == market_state.vault @ OracleError::InvalidMarketState,
+        constraint = vault.amount == 0 @ OracleError::VaultNotEmpty,
+    )]
+    pub vault: InterfaceAccount<'info, TokenAccountInterface>,
 
-    let market_id = read_u64(ix_data, 0);
+    /// CCM mint (Token-2022) — needed for vault close CPI
+    #[account(
+        constraint = ccm_mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub ccm_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// YES outcome mint — supply must be 0 (all shares burned/settled)
+    #[account(
+        constraint = yes_mint.key() == market_state.yes_mint @ OracleError::InvalidMarketState,
+        constraint = yes_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
+    )]
+    pub yes_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// NO outcome mint — supply must be 0 (all shares burned/settled)
+    #[account(
+        constraint = no_mint.key() == market_state.no_mint @ OracleError::InvalidMarketState,
+        constraint = no_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
+    )]
+    pub no_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// Mint authority PDA (signs vault close CPI)
+    /// CHECK: PDA derived from seeds, no data stored
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+        constraint = mint_authority.key() == market_state.mint_authority @ OracleError::InvalidMarketState,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    /// Token-2022 program (for closing the vault ATA)
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn close_market(ctx: Context<CloseMarket>) -> Result<()> {
+    let market_state = &ctx.accounts.market_state;
+    let market_key = market_state.key();
+    let market_id = market_state.market_id;
+
+    // Build PDA signer seeds for mint_authority
+    let market_id_bytes = market_state.market_id.to_le_bytes();
+    let mint_key = ctx.accounts.protocol_state.mint;
+    let auth_seeds: &[&[u8]] = &[
+        MARKET_MINT_AUTHORITY_SEED,
+        mint_key.as_ref(),
+        &market_id_bytes,
+        &[ctx.bumps.mint_authority],
+    ];
+
+    // Close the vault ATA via Token-2022 close_account CPI.
+    // The mint_authority PDA is the vault's owner/authority, so it signs.
+    // Rent lamports are sent to admin.
+    let close_ix = spl_token_2022::instruction::close_account(
+        ctx.accounts.token_program.key,
+        &ctx.accounts.vault.key(),
+        &ctx.accounts.admin.key(),
+        &ctx.accounts.mint_authority.key(),
+        &[],
+    )?;
+
+    anchor_lang::solana_program::program::invoke_signed(
+        &close_ix,
+        &[
+            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.admin.to_account_info(),
+            ctx.accounts.mint_authority.to_account_info(),
+        ],
+        &[auth_seeds],
+    )?;
+
+    // MarketState PDA is closed by Anchor's `close = admin` attribute above.
+    // YES/NO mints are left as dead accounts (0 supply, rent locked).
+
+    emit!(MarketClosed {
+        market: market_key,
+        market_id,
+        admin: ctx.accounts.admin.key(),
+    });
+
+    Ok(())
+}
+
+// =============================================================================
+// CLOSE MARKET MINTS (reclaim rent from zero-supply YES/NO mints)
+// =============================================================================
+
+#[derive(Accounts)]
+#[instruction(market_id: u64)]
+pub struct CloseMarketMints<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        constraint = admin.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    /// YES outcome mint — supply must be 0
+    #[account(
+        mut,
+        seeds = [MARKET_YES_MINT_SEED, protocol_state.mint.as_ref(), &market_id.to_le_bytes()],
+        bump,
+        mint::token_program = outcome_token_program,
+        constraint = yes_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
+    )]
+    pub yes_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// NO outcome mint — supply must be 0
+    #[account(
+        mut,
+        seeds = [MARKET_NO_MINT_SEED, protocol_state.mint.as_ref(), &market_id.to_le_bytes()],
+        bump,
+        mint::token_program = outcome_token_program,
+        constraint = no_mint.supply == 0 @ OracleError::WinningSharesStillOutstanding,
+    )]
+    pub no_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// Mint authority PDA (signs mint close CPI)
+    /// CHECK: PDA derived from seeds, no data stored
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_id.to_le_bytes()],
+        bump,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    /// Token program for YES/NO outcome operations (SPL for old markets, Token-2022 for new)
+    pub outcome_token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn close_market_mints(ctx: Context<CloseMarketMints>, market_id: u64) -> Result<()> {
+    let mint_key = ctx.accounts.protocol_state.mint;
     let market_id_bytes = market_id.to_le_bytes();
 
-    // Verify YES mint PDA
-    let (expected_yes, _yes_bump) = pubkey::find_program_address(
-        &[MARKET_YES_MINT_SEED, &ps_mint, &market_id_bytes],
-        program_id,
+    let auth_seeds: &[&[u8]] = &[
+        MARKET_MINT_AUTHORITY_SEED,
+        mint_key.as_ref(),
+        &market_id_bytes,
+        &[ctx.bumps.mint_authority],
+    ];
+
+    // Close YES mint (routed via outcome_token_program — Token-2022 for new markets)
+    let close_yes_ix = spl_token_2022::instruction::close_account(
+        ctx.accounts.outcome_token_program.key,
+        &ctx.accounts.yes_mint.key(),
+        &ctx.accounts.admin.key(),
+        &ctx.accounts.mint_authority.key(),
+        &[],
+    )?;
+    anchor_lang::solana_program::program::invoke_signed(
+        &close_yes_ix,
+        &[
+            ctx.accounts.yes_mint.to_account_info(),
+            ctx.accounts.admin.to_account_info(),
+            ctx.accounts.mint_authority.to_account_info(),
+        ],
+        &[auth_seeds],
+    )?;
+
+    // Close NO mint (routed via outcome_token_program — Token-2022 for new markets)
+    let close_no_ix = spl_token_2022::instruction::close_account(
+        ctx.accounts.outcome_token_program.key,
+        &ctx.accounts.no_mint.key(),
+        &ctx.accounts.admin.key(),
+        &ctx.accounts.mint_authority.key(),
+        &[],
+    )?;
+    anchor_lang::solana_program::program::invoke_signed(
+        &close_no_ix,
+        &[
+            ctx.accounts.no_mint.to_account_info(),
+            ctx.accounts.admin.to_account_info(),
+            ctx.accounts.mint_authority.to_account_info(),
+        ],
+        &[auth_seeds],
+    )?;
+
+    emit!(MarketMintsClosed {
+        market_id,
+        yes_mint: ctx.accounts.yes_mint.key(),
+        no_mint: ctx.accounts.no_mint.key(),
+        admin: ctx.accounts.admin.key(),
+    });
+
+    Ok(())
+}
+
+// =============================================================================
+// INITIALIZE MARKET TOKENS V2 (Token-2022 with MintCloseAuthority)
+// =============================================================================
+
+#[derive(Accounts)]
+pub struct InitializeMarketTokensV2<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+    )]
+    pub protocol_state: Account<'info, ProtocolState>,
+
+    #[account(
+        mut,
+        seeds = [MARKET_STATE_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump = market_state.bump,
+        constraint = market_state.authority == payer.key() @ OracleError::Unauthorized,
+    )]
+    pub market_state: Account<'info, MarketState>,
+
+    /// CCM mint (Token-2022)
+    #[account(
+        constraint = ccm_mint.key() == protocol_state.mint @ OracleError::InvalidMint,
+    )]
+    pub ccm_mint: InterfaceAccount<'info, MintInterface>,
+
+    /// Market vault — holds CCM collateral backing all shares
+    #[account(
+        init,
+        payer = payer,
+        token::mint = ccm_mint,
+        token::authority = mint_authority,
+        token::token_program = token_program,
+        seeds = [MARKET_VAULT_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub vault: InterfaceAccount<'info, TokenAccountInterface>,
+
+    /// YES outcome mint (Token-2022 with MintCloseAuthority extension)
+    /// CHECK: initialized via manual CPI — Anchor 0.32 can't init with extensions
+    #[account(
+        mut,
+        seeds = [MARKET_YES_MINT_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub yes_mint: SystemAccount<'info>,
+
+    /// NO outcome mint (Token-2022 with MintCloseAuthority extension)
+    /// CHECK: initialized via manual CPI — Anchor 0.32 can't init with extensions
+    #[account(
+        mut,
+        seeds = [MARKET_NO_MINT_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub no_mint: SystemAccount<'info>,
+
+    /// Mint authority PDA (signs mint/burn of YES/NO tokens, also close authority)
+    /// CHECK: PDA derived from seeds, no data stored
+    #[account(
+        seeds = [MARKET_MINT_AUTHORITY_SEED, protocol_state.mint.as_ref(), &market_state.market_id.to_le_bytes()],
+        bump,
+    )]
+    pub mint_authority: SystemAccount<'info>,
+
+    /// Token-2022 program (for vault AND YES/NO mints — enforced)
+    #[account(
+        constraint = token_program.key() == spl_token_2022::ID @ OracleError::InvalidTokenProgram,
+    )]
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+pub fn initialize_market_tokens_v2(ctx: Context<InitializeMarketTokensV2>) -> Result<()> {
+    require!(
+        !ctx.accounts.protocol_state.paused,
+        OracleError::ProtocolPaused
     );
-    if !pubkey::pubkey_eq(yes_mint.key(), &expected_yes) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Verify NO mint PDA
-    let (expected_no, _no_bump) = pubkey::find_program_address(
-        &[MARKET_NO_MINT_SEED, &ps_mint, &market_id_bytes],
-        program_id,
+    let market_state = &mut ctx.accounts.market_state;
+    require!(
+        !market_state.tokens_initialized,
+        OracleError::MarketTokensAlreadyInitialized
     );
-    if !pubkey::pubkey_eq(no_mint.key(), &expected_no) {
-        return Err(ProgramError::InvalidSeeds);
-    }
 
-    // Verify mint_authority PDA
-    let (expected_auth, mint_auth_bump) = derive_mint_authority(&ps_mint, market_id, program_id);
-    if !pubkey::pubkey_eq(mint_authority.key(), &expected_auth) {
-        return Err(ProgramError::InvalidSeeds);
-    }
+    // Initialize YES mint (Token-2022 + MintCloseAuthority)
+    initialize_outcome_mint(
+        &ctx.accounts.payer.to_account_info(),
+        &ctx.accounts.yes_mint.to_account_info(),
+        &ctx.accounts.mint_authority.to_account_info(),
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        &ctx.accounts.rent,
+        MARKET_YES_MINT_SEED,
+        ctx.accounts.protocol_state.mint.as_ref(),
+        &market_state.market_id.to_le_bytes(),
+        ctx.bumps.yes_mint,
+    )?;
 
-    // Both mints must have supply == 0
-    {
-        let data = unsafe { yes_mint.borrow_data_unchecked() };
-        if read_mint_supply(&data) != 0 {
-            return Err(OracleError::WinningSharesStillOutstanding.into());
-        }
-    }
-    {
-        let data = unsafe { no_mint.borrow_data_unchecked() };
-        if read_mint_supply(&data) != 0 {
-            return Err(OracleError::WinningSharesStillOutstanding.into());
-        }
-    }
+    // Initialize NO mint (Token-2022 + MintCloseAuthority)
+    initialize_outcome_mint(
+        &ctx.accounts.payer.to_account_info(),
+        &ctx.accounts.no_mint.to_account_info(),
+        &ctx.accounts.mint_authority.to_account_info(),
+        &ctx.accounts.token_program.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        &ctx.accounts.rent,
+        MARKET_NO_MINT_SEED,
+        ctx.accounts.protocol_state.mint.as_ref(),
+        &market_state.market_id.to_le_bytes(),
+        ctx.bumps.no_mint,
+    )?;
 
-    // Close YES mint
-    let bump_ref = [mint_auth_bump];
-    let seeds = mint_auth_seeds(
-        MARKET_MINT_AUTHORITY_SEED, &ps_mint, &market_id_bytes, &bump_ref,
-    );
-    close_account_cpi(outcome_token_program, yes_mint, admin, mint_authority, &seeds)?;
+    market_state.vault = ctx.accounts.vault.key();
+    market_state.yes_mint = ctx.accounts.yes_mint.key();
+    market_state.no_mint = ctx.accounts.no_mint.key();
+    market_state.mint_authority = ctx.accounts.mint_authority.key();
+    market_state.tokens_initialized = true;
 
-    // Close NO mint
-    close_account_cpi(outcome_token_program, no_mint, admin, mint_authority, &seeds)?;
+    emit!(MarketTokensInitialized {
+        market: market_state.key(),
+        market_id: market_state.market_id,
+        vault: market_state.vault,
+        yes_mint: market_state.yes_mint,
+        no_mint: market_state.no_mint,
+        mint_authority: market_state.mint_authority,
+    });
+
+    Ok(())
+}
+
+/// Create a Token-2022 mint with MintCloseAuthority extension.
+/// Isolated into its own stack frame to stay within SBF's 4096-byte limit.
+#[inline(never)]
+fn initialize_outcome_mint<'info>(
+    payer: &AccountInfo<'info>,
+    mint_account: &AccountInfo<'info>,
+    mint_authority: &AccountInfo<'info>,
+    token_program: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    rent: &Sysvar<'info, Rent>,
+    seed_prefix: &[u8],
+    mint_ref: &[u8],
+    market_id_bytes: &[u8],
+    bump: u8,
+) -> Result<()> {
+    let extension_types = &[spl_token_2022::extension::ExtensionType::MintCloseAuthority];
+    let space = spl_token_2022::extension::ExtensionType::try_calculate_account_len::<
+        spl_token_2022::state::Mint,
+    >(extension_types)
+    .map_err(|_| OracleError::MathOverflow)?;
+    let rent_lamports = rent.minimum_balance(space);
+
+    let signer_seeds: &[&[u8]] = &[seed_prefix, mint_ref, market_id_bytes, &[bump]];
+
+    // 1. Create account owned by Token-2022
+    anchor_lang::solana_program::program::invoke_signed(
+        &anchor_lang::solana_program::system_instruction::create_account(
+            payer.key,
+            mint_account.key,
+            rent_lamports,
+            space as u64, // SAFE: usize == u64 on 64-bit
+            token_program.key,
+        ),
+        &[payer.clone(), mint_account.clone(), system_program.clone()],
+        &[signer_seeds],
+    )?;
+
+    // 2. Initialize MintCloseAuthority extension (close authority = mint_authority PDA)
+    let close_auth_ix = spl_token_2022::instruction::initialize_mint_close_authority(
+        token_program.key,
+        mint_account.key,
+        Some(mint_authority.key),
+    )?;
+    anchor_lang::solana_program::program::invoke(
+        &close_auth_ix,
+        &[mint_account.clone(), token_program.clone()],
+    )?;
+
+    // 3. Initialize mint (decimals = 9, authority = mint_authority PDA)
+    let init_mint_ix = spl_token_2022::instruction::initialize_mint2(
+        token_program.key,
+        mint_account.key,
+        mint_authority.key,
+        None, // no freeze authority
+        CCM_DECIMALS,
+    )?;
+    anchor_lang::solana_program::program::invoke(
+        &init_mint_ix,
+        &[mint_account.clone(), token_program.clone()],
+    )?;
 
     Ok(())
 }

@@ -1,191 +1,403 @@
-//! Market Vault instructions — the core product loop (Pinocchio).
+//! Market Vault instructions — the core product loop.
 //!
-//! Byte-compatible with the Anchor program. Same discriminators, same PDA seeds,
-//! same account layouts. Every handler validates accounts manually and uses
-//! pinocchio-token for SPL CPIs.
-//!
-//! Handlers:
-//!   initialize_protocol_state — creates ProtocolState PDA
-//!   initialize_market_vault  — creates MarketVault PDA with vLOFI mint
-//!   realloc_market_vault     — grows MarketVault 137 → 153 bytes
-//!   deposit_market           — USDC → vault, mint vLOFI 1:1
-//!   update_attention         — oracle sets multiplier BPS on position
-//!   update_nav               — oracle sets NAV per share on MarketVault
-//!   claim_yield              — deprecated, returns error
-//!   settle_market            — burn vLOFI, return USDC, close position
+//! deposit_market:   USDC -> Vault, vLOFI -> User (1:1)
+//! update_attention: Oracle sets multiplier BPS on user position
+//! settle_market:    Burn vLOFI, return USDC (CCM is merkle-claimed)
 
-use pinocchio::{
-    account_info::AccountInfo,
-    instruction::Signer,
-    program_error::ProgramError,
-    pubkey::{self, Pubkey},
-    seeds,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
-    ProgramResult,
-};
-use pinocchio::instruction::{AccountMeta, Instruction};
-
-use crate::error::OracleError;
-use crate::state::{
-    MarketVault, ProtocolState, UserMarketPosition,
-    DISC_MARKET_VAULT, DISC_PROTOCOL_STATE, DISC_USER_MARKET_POSITION,
-    MARKET_VAULT_SEED, MARKET_POSITION_SEED, PROTOCOL_STATE_SEED,
+use anchor_lang::prelude::*;
+use anchor_spl::{
+    token::{
+        self, Mint as SplMint, Token, TokenAccount as SplTokenAccount, Transfer as SplTransfer,
+    },
+    token_interface::{burn, mint_to, Burn, Mint, MintTo, Token2022, TokenAccount},
 };
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+use crate::errors::OracleError;
+use crate::state::{MarketVault, ProtocolState, UserMarketPosition};
 
-// ---------------------------------------------------------------------------
-// Compact CPI helpers (avoids const-generic monomorphization)
-// ---------------------------------------------------------------------------
+// =============================================================================
+// INITIALIZE PROTOCOL STATE — One-time setup for the protocol
+// =============================================================================
 
-#[inline(never)]
-fn cpi_spl_transfer(
-    from: &AccountInfo, to: &AccountInfo, authority: &AccountInfo,
-    amount: u64,
-) -> ProgramResult {
-    let mut data = [0u8; 9];
-    data[0] = 3; // SPL Transfer
-    data[1..9].copy_from_slice(&amount.to_le_bytes());
-    let metas = [
-        AccountMeta::writable(from.key()),
-        AccountMeta::writable(to.key()),
-        AccountMeta::readonly_signer(authority.key()),
-    ];
-    let ix = Instruction { program_id: &crate::SPL_TOKEN_ID, accounts: &metas, data: &data };
-    pinocchio::cpi::slice_invoke_signed(&ix, &[from, to, authority], &[])
+#[derive(Accounts)]
+pub struct InitializeProtocolState<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        init,
+        payer = admin,
+        space = ProtocolState::LEN,
+        seeds = [b"protocol_state"],
+        bump,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
+
+    pub system_program: Program<'info, System>,
 }
 
-#[inline(never)]
-fn cpi_spl_mint_to(
-    mint: &AccountInfo, account: &AccountInfo, authority: &AccountInfo,
-    amount: u64, signers: &[Signer],
-) -> ProgramResult {
-    let mut data = [0u8; 9];
-    data[0] = 7; // MintTo
-    data[1..9].copy_from_slice(&amount.to_le_bytes());
-    let metas = [
-        AccountMeta::writable(mint.key()),
-        AccountMeta::writable(account.key()),
-        AccountMeta::readonly_signer(authority.key()),
-    ];
-    let ix = Instruction { program_id: &crate::SPL_TOKEN_ID, accounts: &metas, data: &data };
-    pinocchio::cpi::slice_invoke_signed(&ix, &[mint, account, authority], signers)
-}
+pub fn initialize_protocol_state(
+    ctx: Context<InitializeProtocolState>,
+    publisher: Pubkey,
+    treasury: Pubkey,
+    oracle_authority: Pubkey,
+    ccm_mint: Pubkey,
+) -> Result<()> {
+    let state = &mut ctx.accounts.protocol_state;
+    state.is_initialized = true;
+    state.version = 1;
+    state.admin = ctx.accounts.admin.key();
+    state.publisher = publisher;
+    state.treasury = treasury;
+    state.oracle_authority = oracle_authority;
+    state.mint = ccm_mint;
+    state.paused = false;
+    state.require_receipt = false;
+    state.bump = ctx.bumps.protocol_state;
 
-#[inline(never)]
-fn cpi_spl_burn(
-    account: &AccountInfo, mint: &AccountInfo, authority: &AccountInfo,
-    amount: u64,
-) -> ProgramResult {
-    let mut data = [0u8; 9];
-    data[0] = 8; // Burn
-    data[1..9].copy_from_slice(&amount.to_le_bytes());
-    let metas = [
-        AccountMeta::writable(account.key()),
-        AccountMeta::writable(mint.key()),
-        AccountMeta::readonly_signer(authority.key()),
-    ];
-    let ix = Instruction { program_id: &crate::SPL_TOKEN_ID, accounts: &metas, data: &data };
-    pinocchio::cpi::slice_invoke_signed(&ix, &[account, mint, authority], &[])
-}
-
-#[inline(never)]
-fn cpi_sys_transfer(
-    from: &AccountInfo, to: &AccountInfo, lamports: u64,
-) -> ProgramResult {
-    let data = lamports.to_le_bytes();
-    // System program transfer instruction = index 2, followed by u64 amount
-    let mut ix_data = [0u8; 12];
-    ix_data[0..4].copy_from_slice(&2u32.to_le_bytes());
-    ix_data[4..12].copy_from_slice(&data);
-    let metas = [
-        AccountMeta::writable_signer(from.key()),
-        AccountMeta::writable(to.key()),
-    ];
-    let ix = Instruction { program_id: &crate::SYSTEM_ID, accounts: &metas, data: &ix_data };
-    pinocchio::cpi::slice_invoke_signed(&ix, &[from, to], &[])
-}
-
-#[inline(never)]
-fn cpi_spl_transfer_signed(
-    from: &AccountInfo, to: &AccountInfo, authority: &AccountInfo,
-    amount: u64, signers: &[Signer],
-) -> ProgramResult {
-    let mut data = [0u8; 9];
-    data[0] = 3; // SPL Transfer
-    data[1..9].copy_from_slice(&amount.to_le_bytes());
-    let metas = [
-        AccountMeta::writable(from.key()),
-        AccountMeta::writable(to.key()),
-        AccountMeta::readonly_signer(authority.key()),
-    ];
-    let ix = Instruction { program_id: &crate::SPL_TOKEN_ID, accounts: &metas, data: &data };
-    pinocchio::cpi::slice_invoke_signed(&ix, &[from, to, authority], signers)
-}
-
-const MIN_MULTIPLIER_BPS: u64 = 10_000;
-const MAX_MULTIPLIER_BPS: u64 = 50_000;
-const BASE_YIELD_MULTIPLIER_BPS: u64 = 10_000;
-
-// ---------------------------------------------------------------------------
-// Helpers: read SPL Token account fields
-// ---------------------------------------------------------------------------
-
-/// Token-2022 program ID (for ownership checks alongside SPL Token).
-use crate::TOKEN_2022_ID;
-
-/// Verify a token account is owned by SPL Token or Token-2022.
-#[inline(always)]
-fn verify_token_account(account: &AccountInfo) -> Result<(), ProgramError> {
-    let owner = account.owner();
-    if !pubkey::pubkey_eq(owner, &crate::SPL_TOKEN_ID)
-        && !pubkey::pubkey_eq(owner, &TOKEN_2022_ID)
-    {
-        return Err(ProgramError::IllegalOwner);
-    }
+    msg!("ProtocolState initialized. Admin: {}", state.admin);
     Ok(())
 }
 
-/// SPL Token account layout: offset 0 = mint (Pubkey, 32 bytes)
-#[inline(always)]
-fn token_account_mint(account: &AccountInfo) -> Result<&Pubkey, ProgramError> {
-    let data = unsafe { account.borrow_data_unchecked() };
-    if data.len() < 32 {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    Ok(unsafe { &*(data.as_ptr() as *const Pubkey) })
+// =============================================================================
+// INITIALIZE MARKET VAULT — Create a USDC vault + vLOFI mint for a market
+// =============================================================================
+
+#[derive(Accounts)]
+#[instruction(market_id: u64)]
+pub struct InitializeMarketVault<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        has_one = admin,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
+
+    #[account(
+        init,
+        payer = admin,
+        space = MarketVault::LEN,
+        seeds = [b"market_vault", protocol_state.key().as_ref(), &market_id.to_le_bytes()],
+        bump,
+    )]
+    pub market_vault: Box<Account<'info, MarketVault>>,
+
+    /// The USDC (or deposit token) mint.
+    pub deposit_mint: Box<Account<'info, SplMint>>,
+
+    /// The global vLOFI mint (Token-2022).
+    pub vlofi_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    /// The vault's USDC ATA (must be owned by the market_vault PDA).
+    #[account(
+        constraint = vault_ata.owner == market_vault.key(),
+        constraint = vault_ata.mint == deposit_mint.key(),
+    )]
+    pub vault_ata: Box<Account<'info, SplTokenAccount>>,
+
+    pub system_program: Program<'info, System>,
 }
 
-/// SPL Token account layout: offset 32 = owner (Pubkey, 32 bytes)
-#[inline(always)]
-fn token_account_owner(account: &AccountInfo) -> Result<&Pubkey, ProgramError> {
-    let data = unsafe { account.borrow_data_unchecked() };
-    if data.len() < 64 {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    Ok(unsafe { &*(data[32..].as_ptr() as *const Pubkey) })
+pub fn initialize_market_vault(ctx: Context<InitializeMarketVault>, market_id: u64) -> Result<()> {
+    let vault = &mut ctx.accounts.market_vault;
+    vault.bump = ctx.bumps.market_vault;
+    vault.market_id = market_id;
+    vault.deposit_mint = ctx.accounts.deposit_mint.key();
+    vault.vlofi_mint = ctx.accounts.vlofi_mint.key();
+    vault.vault_ata = ctx.accounts.vault_ata.key();
+    vault.total_deposited = 0;
+    vault.total_shares = 0;
+    vault.created_slot = Clock::get()?.slot;
+
+    msg!(
+        "MarketVault initialized. market_id: {}, deposit_mint: {}",
+        market_id,
+        vault.deposit_mint
+    );
+    Ok(())
 }
 
-/// SPL Token account layout: offset 64 = amount (u64, LE)
-#[inline(always)]
-fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
-    let data = unsafe { account.borrow_data_unchecked() };
-    if data.len() < 72 {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
+// =============================================================================
+// REALLOC MARKET VAULT — Grow existing 137-byte vaults to 153 bytes (Phase 2)
+// =============================================================================
+//
+// New fields (nav_per_share_bps, last_nav_update_slot) are appended at the end.
+// realloc(false) zero-fills the new bytes → nav=0, slot=0 → treated as 1:1 (safe).
+
+#[derive(Accounts)]
+#[instruction(market_id: u64)]
+pub struct ReallocMarketVault<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        constraint = payer.key() == protocol_state.admin @ OracleError::Unauthorized,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
+
+    /// CHECK: MarketVault PDA may be undersized (137 bytes) — cannot use Account<MarketVault>
+    /// which expects 153 bytes. PDA address verified via seed constraint.
+    #[account(
+        mut,
+        seeds = [b"market_vault", protocol_state.key().as_ref(), &market_id.to_le_bytes()],
+        bump,
+    )]
+    pub market_vault: AccountInfo<'info>,
+
+    pub system_program: Program<'info, System>,
 }
 
-// ---------------------------------------------------------------------------
-// Helper: compute_position_yield_components (for settle_market audit logs)
-// ---------------------------------------------------------------------------
+pub fn realloc_market_vault(ctx: Context<ReallocMarketVault>, market_id: u64) -> Result<()> {
+    let vault = &ctx.accounts.market_vault;
+    let current_len = vault.data_len();
+    let target_len = MarketVault::LEN; // 153
+
+    if current_len >= target_len {
+        msg!(
+            "MarketVault {} already at {} bytes, no-op",
+            market_id,
+            current_len
+        );
+        return Ok(());
+    }
+
+    // Transfer rent difference
+    let rent = Rent::get()?;
+    let lamports_needed = rent
+        .minimum_balance(target_len)
+        .saturating_sub(vault.lamports());
+
+    if lamports_needed > 0 {
+        anchor_lang::system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                anchor_lang::system_program::Transfer {
+                    from: ctx.accounts.payer.to_account_info(),
+                    to: vault.to_account_info(),
+                },
+            ),
+            lamports_needed,
+        )?;
+    }
+
+    // Grow account — new bytes are zero (nav_per_share_bps=0, last_nav_update_slot=0)
+    #[allow(deprecated)]
+    vault.realloc(target_len, false)?;
+
+    msg!(
+        "MarketVault {} reallocated: {} -> {} bytes",
+        market_id,
+        current_len,
+        target_len
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// DEPOSIT MARKET — USDC -> Vault, vLOFI -> User (1:1)
+// =============================================================================
+
+#[derive(Accounts)]
+#[instruction(market_id: u64, amount: u64)]
+pub struct DepositMarket<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
+
+    #[account(
+        mut,
+        seeds = [b"market_vault", protocol_state.key().as_ref(), &market_id.to_le_bytes()],
+        bump = market_vault.bump,
+    )]
+    pub market_vault: Box<Account<'info, MarketVault>>,
+
+    #[account(
+        init_if_needed,
+        payer = user,
+        space = UserMarketPosition::LEN,
+        seeds = [b"market_position", market_vault.key().as_ref(), user.key().as_ref()],
+        bump,
+    )]
+    pub user_market_position: Box<Account<'info, UserMarketPosition>>,
+
+    #[account(mut)]
+    pub user_usdc_ata: Box<Account<'info, SplTokenAccount>>,
+
+    #[account(
+        mut,
+        constraint = vault_usdc_ata.owner == market_vault.key(),
+        constraint = vault_usdc_ata.mint == market_vault.deposit_mint,
+    )]
+    pub vault_usdc_ata: Box<Account<'info, SplTokenAccount>>,
+
+    #[account(mut, address = market_vault.vlofi_mint)]
+    pub vlofi_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        constraint = user_vlofi_ata.mint == market_vault.vlofi_mint,
+        constraint = user_vlofi_ata.owner == user.key(),
+    )]
+    pub user_vlofi_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub token_program: Program<'info, Token>,
+    pub token_2022_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn deposit_market(ctx: Context<DepositMarket>, _market_id: u64, amount: u64) -> Result<()> {
+    require!(amount > 0, OracleError::InvalidInputLength);
+
+    // 1. Transfer USDC from user to vault
+    let transfer_accounts = SplTransfer {
+        from: ctx.accounts.user_usdc_ata.to_account_info(),
+        to: ctx.accounts.vault_usdc_ata.to_account_info(),
+        authority: ctx.accounts.user.to_account_info(),
+    };
+    token::transfer(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_accounts,
+        ),
+        amount,
+    )?;
+
+    // 2. Compute shares to mint using current NAV.
+    //    nav_per_share_bps == 0 before Phase 2 realloc — treat as 10_000 (1:1).
+    //    shares = amount * 10_000 / nav_per_share_bps
+    //    At genesis (nav=10_000): shares == amount (1:1, backward compatible).
+    //    After yield (nav>10_000): fewer shares minted per USDC, but each worth more.
+    let vault = &mut ctx.accounts.market_vault;
+    let effective_nav = if vault.nav_per_share_bps == 0 {
+        10_000u64
+    } else {
+        vault.nav_per_share_bps
+    };
+    let shares_to_mint = amount
+        .checked_mul(10_000)
+        .ok_or(OracleError::MathOverflow)?
+        .checked_div(effective_nav)
+        .ok_or(OracleError::MathOverflow)?;
+    require!(shares_to_mint > 0, OracleError::InvalidInputLength);
+
+    // 3. Mint vLOFI (shares_to_mint) to user (ProtocolState PDA as mint authority)
+    let protocol_bump = ctx.accounts.protocol_state.bump;
+    let protocol_seeds = &[b"protocol_state".as_ref(), &[protocol_bump]];
+    let signer = &[&protocol_seeds[..]];
+
+    let mint_accounts = MintTo {
+        mint: ctx.accounts.vlofi_mint.to_account_info(),
+        to: ctx.accounts.user_vlofi_ata.to_account_info(),
+        authority: ctx.accounts.protocol_state.to_account_info(),
+    };
+    mint_to(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            mint_accounts,
+            signer,
+        ),
+        shares_to_mint,
+    )?;
+
+    // 4. Update vault accounting
+    vault.total_deposited = vault
+        .total_deposited
+        .checked_add(amount)
+        .ok_or(OracleError::MathOverflow)?;
+    vault.total_shares = vault
+        .total_shares
+        .checked_add(shares_to_mint)
+        .ok_or(OracleError::MathOverflow)?;
+
+    // 5. Update user position
+    let position = &mut ctx.accounts.user_market_position;
+    if position.bump == 0 {
+        position.bump = ctx.bumps.user_market_position;
+        position.user = ctx.accounts.user.key();
+        position.market_vault = ctx.accounts.market_vault.key();
+        position.entry_slot = Clock::get()?.slot;
+    }
+    // Reset settled flag if re-depositing after a previous settlement
+    if position.settled {
+        position.settled = false;
+        position.entry_slot = Clock::get()?.slot;
+    }
+    position.deposited_amount = position
+        .deposited_amount
+        .checked_add(amount)
+        .ok_or(OracleError::MathOverflow)?;
+    position.shares_minted = position
+        .shares_minted
+        .checked_add(shares_to_mint)
+        .ok_or(OracleError::MathOverflow)?;
+
+    msg!(
+        "Deposited {} USDC, minted {} vLOFI (nav={} bps)",
+        amount,
+        shares_to_mint,
+        effective_nav
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// UPDATE ATTENTION — Oracle sets multiplier BPS on user position
+// =============================================================================
+
+#[derive(Accounts)]
+#[instruction(market_id: u64, user_pubkey: Pubkey, multiplier_bps: u64)]
+pub struct UpdateAttention<'info> {
+    /// The authorized backend wallet that pushes attention scores.
+    #[account(mut)]
+    pub oracle_authority: Signer<'info>,
+
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        has_one = oracle_authority,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
+
+    #[account(
+        seeds = [b"market_vault", protocol_state.key().as_ref(), &market_id.to_le_bytes()],
+        bump = market_vault.bump,
+    )]
+    pub market_vault: Box<Account<'info, MarketVault>>,
+
+    #[account(
+        mut,
+        seeds = [b"market_position", market_vault.key().as_ref(), user_pubkey.as_ref()],
+        bump = user_market_position.bump,
+        constraint = user_market_position.market_vault == market_vault.key(),
+        constraint = user_market_position.user == user_pubkey,
+        constraint = !user_market_position.settled,
+    )]
+    pub user_market_position: Box<Account<'info, UserMarketPosition>>,
+}
+
+/// Minimum attention multiplier: 1.0x = 10,000 BPS. Enforces the floor set in scoring.rs.
+const MIN_MULTIPLIER_BPS: u64 = 10_000;
+/// Maximum attention multiplier: 5.0x = 50,000 BPS.
+const MAX_MULTIPLIER_BPS: u64 = 50_000;
+const BASE_YIELD_MULTIPLIER_BPS: u64 = 10_000;
 
 fn compute_position_yield_components(
     deposited_amount: u64,
     attention_multiplier_bps: u64,
-) -> Result<(u64, u64, u64), ProgramError> {
+) -> Result<(u64, u64, u64)> {
     let effective_multiplier = if attention_multiplier_bps == 0 {
         BASE_YIELD_MULTIPLIER_BPS
     } else {
@@ -194,902 +406,317 @@ fn compute_position_yield_components(
     let base_yield = deposited_amount;
     let attention_bonus = deposited_amount
         .checked_mul(effective_multiplier.saturating_sub(BASE_YIELD_MULTIPLIER_BPS))
-        .ok_or(ProgramError::ArithmeticOverflow)?
+        .ok_or(OracleError::MathOverflow)?
         .checked_div(BASE_YIELD_MULTIPLIER_BPS)
-        .ok_or(ProgramError::ArithmeticOverflow)?;
+        .ok_or(OracleError::MathOverflow)?;
     let total_earned = base_yield
         .checked_add(attention_bonus)
-        .ok_or(ProgramError::ArithmeticOverflow)?;
+        .ok_or(OracleError::MathOverflow)?;
     Ok((base_yield, attention_bonus, total_earned))
 }
 
-// =============================================================================
-// INITIALIZE PROTOCOL STATE
-// =============================================================================
-// Accounts: [admin (signer, mut), protocol_state (mut), system_program]
-// Instruction data (after 8-byte discriminator):
-//   publisher: Pubkey (32), treasury: Pubkey (32),
-//   oracle_authority: Pubkey (32), ccm_mint: Pubkey (32)
-
-pub fn initialize_protocol_state(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if ix_data.len() < 128 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let publisher: &Pubkey = unsafe { &*(ix_data[0..32].as_ptr() as *const Pubkey) };
-    let treasury: &Pubkey = unsafe { &*(ix_data[32..64].as_ptr() as *const Pubkey) };
-    let oracle_authority: &Pubkey = unsafe { &*(ix_data[64..96].as_ptr() as *const Pubkey) };
-    let ccm_mint: &Pubkey = unsafe { &*(ix_data[96..128].as_ptr() as *const Pubkey) };
-
-    let [admin, protocol_state_acc, system_program, ..] = accounts else {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    };
-
-    // Validate admin
-    if !admin.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    // Validate system program
-    if !pubkey::pubkey_eq(system_program.key(), &crate::SYSTEM_ID) {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-
-    // Derive PDA
-    let (expected_pda, bump) = ProtocolState::find_pda(program_id);
-    if !pubkey::pubkey_eq(protocol_state_acc.key(), &expected_pda) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Create account
-    let rent = Rent::get()?;
-    let lamports = rent.minimum_balance(ProtocolState::LEN);
-
-    let bump_ref = [bump];
-    let pda_seeds = seeds!(PROTOCOL_STATE_SEED, &bump_ref);
-    let pda_signer = Signer::from(&pda_seeds);
-    crate::cpi_create_account(admin, protocol_state_acc, lamports, ProtocolState::LEN as u64, program_id, &[pda_signer])?;
-
-    // Initialize data via typed struct
-    let state = ProtocolState::from_account_mut(protocol_state_acc)?;
-    state.discriminator = DISC_PROTOCOL_STATE;
-    state.is_initialized = 1;
-    state.version = 1;
-    state.admin = *admin.key();
-    state.publisher = *publisher;
-    state.treasury = *treasury;
-    state.oracle_authority = *oracle_authority;
-    state.mint = *ccm_mint;
-    state.paused = 0;
-    state.require_receipt = 0;
-    state.bump = bump;
-
-    Ok(())
-}
-
-// =============================================================================
-// INITIALIZE MARKET VAULT
-// =============================================================================
-// Accounts: [admin (signer, mut), protocol_state, market_vault (mut),
-//            deposit_mint, vlofi_mint, vault_ata, system_program]
-// Instruction data (after discriminator): market_id: u64
-
-pub fn initialize_market_vault(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if ix_data.len() < 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let market_id = u64::from_le_bytes(ix_data[0..8].try_into().unwrap());
-
-    let [admin, protocol_state_acc, market_vault_acc, deposit_mint,
-         vlofi_mint, vault_ata, system_program, ..] = accounts else {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    };
-
-    // Validate admin signer
-    if !admin.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    // Validate system program
-    if !pubkey::pubkey_eq(system_program.key(), &crate::SYSTEM_ID) {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-
-    // Validate protocol_state: owned by program, correct disc, admin matches
-    if !protocol_state_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let ps = ProtocolState::from_account(protocol_state_acc)?;
-    if !pubkey::pubkey_eq(&ps.admin, admin.key()) {
-        return Err(OracleError::Unauthorized.into());
-    }
-    // Verify PDA
-    let (expected_ps, _) = ProtocolState::find_pda(program_id);
-    if !pubkey::pubkey_eq(protocol_state_acc.key(), &expected_ps) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Derive market_vault PDA
-    let market_id_bytes = market_id.to_le_bytes();
-    let (expected_mv, mv_bump) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
-    );
-    if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Validate vault_ata: token program ownership, owner == market_vault PDA, mint == deposit_mint
-    verify_token_account(vault_ata)?;
-    if !pubkey::pubkey_eq(token_account_owner(vault_ata)?, &expected_mv) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if !pubkey::pubkey_eq(token_account_mint(vault_ata)?, deposit_mint.key()) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // Create market_vault account
-    let rent = Rent::get()?;
-    let lamports = rent.minimum_balance(MarketVault::LEN);
-
-    let mv_bump_ref = [mv_bump];
-    let mv_seeds = seeds!(
-        MARKET_VAULT_SEED,
-        protocol_state_acc.key(),
-        &market_id_bytes,
-        &mv_bump_ref
-    );
-    let mv_signer = Signer::from(&mv_seeds);
-    crate::cpi_create_account(admin, market_vault_acc, lamports, MarketVault::LEN as u64, program_id, &[mv_signer])?;
-
-    // Initialize market_vault data
-    let vault = MarketVault::from_account_mut(market_vault_acc)?;
-    vault.discriminator = DISC_MARKET_VAULT;
-    vault.bump = mv_bump;
-    vault.set_market_id(market_id);
-    vault.deposit_mint = *deposit_mint.key();
-    vault.vlofi_mint = *vlofi_mint.key();
-    vault.vault_ata = *vault_ata.key();
-    vault.set_total_deposited(0);
-    vault.set_total_shares(0);
-    let clock = Clock::get()?;
-    vault.created_slot = clock.slot.to_le_bytes();
-    vault.set_nav_per_share_bps(0);
-    vault.set_last_nav_update_slot(0);
-
-    Ok(())
-}
-
-// =============================================================================
-// REALLOC MARKET VAULT — Grow 137 → 153 bytes
-// =============================================================================
-// Accounts: [payer (signer, mut), protocol_state, market_vault (mut),
-//            system_program]
-// Instruction data (after discriminator): market_id: u64
-
-pub fn realloc_market_vault(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if ix_data.len() < 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let market_id = u64::from_le_bytes(ix_data[0..8].try_into().unwrap());
-
-    let [payer, protocol_state_acc, market_vault_acc, system_program, ..] = accounts else {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    };
-
-    if !payer.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    if !pubkey::pubkey_eq(system_program.key(), &crate::SYSTEM_ID) {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-
-    // Validate protocol_state
-    if !protocol_state_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let ps = ProtocolState::from_account(protocol_state_acc)?;
-    // constraint: payer == admin
-    if !pubkey::pubkey_eq(&ps.admin, payer.key()) {
-        return Err(OracleError::Unauthorized.into());
-    }
-
-    // Validate market_vault PDA
-    let (expected_mv, _) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
-    );
-    if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Check current size
-    let current_len = market_vault_acc.data_len();
-    let target_len = MarketVault::LEN;
-
-    if current_len >= target_len {
-        return Ok(());
-    }
-
-    // Transfer rent difference
-    let rent = Rent::get()?;
-    let lamports_needed = rent
-        .minimum_balance(target_len)
-        .saturating_sub(market_vault_acc.lamports());
-
-    if lamports_needed > 0 {
-        cpi_sys_transfer(payer, market_vault_acc, lamports_needed)?;
-    }
-
-    // Grow account — new bytes zero-filled (nav_per_share_bps=0, last_nav_update_slot=0)
-    market_vault_acc.resize(target_len)?;
-
-    Ok(())
-}
-
-// =============================================================================
-// DEPOSIT MARKET — USDC → Vault, mint vLOFI 1:1
-// =============================================================================
-// Accounts: [user (signer, mut), protocol_state, market_vault (mut),
-//            user_market_position (mut), user_usdc_ata (mut),
-//            vault_usdc_ata (mut), vlofi_mint (mut), user_vlofi_ata (mut),
-//            token_program, token_2022_program, system_program]
-// Instruction data (after discriminator): market_id: u64, amount: u64
-
-pub fn deposit_market(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if ix_data.len() < 16 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let market_id = u64::from_le_bytes(ix_data[0..8].try_into().unwrap());
-    let amount = u64::from_le_bytes(ix_data[8..16].try_into().unwrap());
-
-    if amount == 0 {
-        return Err(OracleError::InvalidInputLength.into());
-    }
-
-    let [user, protocol_state_acc, market_vault_acc, user_position_acc,
-         user_usdc_ata, vault_usdc_ata, vlofi_mint, user_vlofi_ata,
-         token_program, _token_2022_program, _system_program, ..] = accounts else {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    };
-
-    // Validate user signer
-    if !user.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    // Validate protocol_state: owned, correct disc, not paused
-    if !protocol_state_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let ps = ProtocolState::from_account(protocol_state_acc)?;
-    if ps.is_paused() {
-        return Err(OracleError::ProtocolPaused.into());
-    }
-    let ps_bump = ps.bump;
-
-    // Verify protocol_state PDA
-    let (expected_ps, _) = ProtocolState::find_pda(program_id);
-    if !pubkey::pubkey_eq(protocol_state_acc.key(), &expected_ps) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Validate market_vault: owned, correct disc, PDA matches
-    if !market_vault_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    // Read vault fields before any mutation. Use raw data for v1 compat (may be 137 bytes).
-    let mv_data = unsafe { market_vault_acc.borrow_data_unchecked() };
-    if mv_data.len() < MarketVault::LEN_V1 || mv_data[..8] != DISC_MARKET_VAULT {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let mv_deposit_mint: Pubkey = mv_data[17..49].try_into().unwrap();
-    let mv_vlofi_mint: Pubkey = mv_data[49..81].try_into().unwrap();
-    let effective_nav = if mv_data.len() >= 145 {
-        let nav = u64::from_le_bytes(mv_data[137..145].try_into().unwrap());
-        if nav == 0 { 10_000u64 } else { nav }
-    } else {
-        10_000u64
-    };
-    let _ = mv_data;
-
-    // Verify market_vault PDA
-    let (expected_mv, _) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
-    );
-    if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Validate vault_usdc_ata: token program ownership, owner == market_vault, mint == deposit_mint
-    verify_token_account(vault_usdc_ata)?;
-    if !pubkey::pubkey_eq(token_account_owner(vault_usdc_ata)?, market_vault_acc.key()) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if !pubkey::pubkey_eq(token_account_mint(vault_usdc_ata)?, &mv_deposit_mint) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // Validate vlofi_mint address
-    if !pubkey::pubkey_eq(vlofi_mint.key(), &mv_vlofi_mint) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // Validate user_vlofi_ata: token program ownership, mint == vlofi_mint, owner == user
-    verify_token_account(user_vlofi_ata)?;
-    if !pubkey::pubkey_eq(token_account_mint(user_vlofi_ata)?, &mv_vlofi_mint) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if !pubkey::pubkey_eq(token_account_owner(user_vlofi_ata)?, user.key()) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // Validate user_usdc_ata: token program ownership
-    verify_token_account(user_usdc_ata)?;
-
-    // Validate token_program
-    if !pubkey::pubkey_eq(token_program.key(), &crate::SPL_TOKEN_ID) {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-
-    // 1. Transfer USDC from user to vault
-    cpi_spl_transfer(user_usdc_ata, vault_usdc_ata, user, amount)?;
-
-    // 2. Compute shares to mint: shares = amount * 10_000 / nav
-    let shares_to_mint = amount
-        .checked_mul(10_000)
-        .ok_or(ProgramError::ArithmeticOverflow)?
-        .checked_div(effective_nav)
-        .ok_or(ProgramError::ArithmeticOverflow)?;
-
-    if shares_to_mint == 0 {
-        return Err(OracleError::InvalidInputLength.into());
-    }
-
-    // 3. Mint vLOFI to user (ProtocolState PDA = mint authority)
-    let ps_bump_ref = [ps_bump];
-    let mint_seeds = seeds!(PROTOCOL_STATE_SEED, &ps_bump_ref);
-    let mint_signer = Signer::from(&mint_seeds);
-    cpi_spl_mint_to(vlofi_mint, user_vlofi_ata, protocol_state_acc, shares_to_mint, &[mint_signer])?;
-
-    // 4. Update market_vault accounting
-    {
-        let mv_data = unsafe { market_vault_acc.borrow_mut_data_unchecked() };
-        let total_deposited = u64::from_le_bytes(mv_data[113..121].try_into().unwrap());
-        let total_shares = u64::from_le_bytes(mv_data[121..129].try_into().unwrap());
-        mv_data[113..121].copy_from_slice(&total_deposited
-            .checked_add(amount)
-            .ok_or(ProgramError::ArithmeticOverflow)?
-            .to_le_bytes());
-        mv_data[121..129].copy_from_slice(&total_shares
-            .checked_add(shares_to_mint)
-            .ok_or(ProgramError::ArithmeticOverflow)?
-            .to_le_bytes());
-    }
-
-    // 5. Create or update user position (init_if_needed pattern)
-    let (expected_pos, pos_bump) = UserMarketPosition::find_pda(
-        market_vault_acc.key(), user.key(), program_id,
-    );
-    if !pubkey::pubkey_eq(user_position_acc.key(), &expected_pos) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    if user_position_acc.lamports() == 0 {
-        // Account doesn't exist — create it
-        let rent = Rent::get()?;
-        let pos_lamports = rent.minimum_balance(UserMarketPosition::LEN);
-
-        let pos_bump_ref = [pos_bump];
-        let pos_seeds = seeds!(
-            MARKET_POSITION_SEED,
-            market_vault_acc.key(),
-            user.key(),
-            &pos_bump_ref
-        );
-        let pos_signer = Signer::from(&pos_seeds);
-        crate::cpi_create_account(user, user_position_acc, pos_lamports, UserMarketPosition::LEN as u64, program_id, &[pos_signer])?;
-
-        // Initialize position data
-        let pos = UserMarketPosition::from_account_mut(user_position_acc)?;
-        pos.discriminator = DISC_USER_MARKET_POSITION;
-        pos.bump = pos_bump;
-        pos.user = *user.key();
-        pos.market_vault = *market_vault_acc.key();
-        pos.set_deposited_amount(amount);
-        pos.set_shares_minted(shares_to_mint);
-        pos.set_attention_multiplier_bps(0);
-        pos.settled = 0;
-        let clock = Clock::get()?;
-        pos.entry_slot = clock.slot.to_le_bytes();
-        pos.cumulative_claimed = 0u64.to_le_bytes();
-    } else {
-        // Position already exists — validate and update
-        if !user_position_acc.is_owned_by(program_id) {
-            return Err(ProgramError::IllegalOwner);
-        }
-        let pos = UserMarketPosition::from_account_mut(user_position_acc)?;
-        if pos.discriminator != DISC_USER_MARKET_POSITION {
-            return Err(ProgramError::InvalidAccountData);
-        }
-
-        // If bump is 0, first deposit — initialize identity fields
-        if pos.bump == 0 {
-            pos.bump = pos_bump;
-            pos.user = *user.key();
-            pos.market_vault = *market_vault_acc.key();
-            let clock = Clock::get()?;
-            pos.entry_slot = clock.slot.to_le_bytes();
-        }
-
-        let deposited = pos.get_deposited_amount();
-        let shares = pos.get_shares_minted();
-        pos.set_deposited_amount(
-            deposited
-                .checked_add(amount)
-                .ok_or(ProgramError::ArithmeticOverflow)?,
-        );
-        pos.set_shares_minted(
-            shares
-                .checked_add(shares_to_mint)
-                .ok_or(ProgramError::ArithmeticOverflow)?,
-        );
-    }
-
-    Ok(())
-}
-
-// =============================================================================
-// UPDATE ATTENTION — Oracle sets multiplier BPS on user position
-// =============================================================================
-// Accounts: [oracle_authority (signer, mut), protocol_state, market_vault,
-//            user_market_position (mut)]
-// Instruction data (after discriminator):
-//   market_id: u64, user_pubkey: Pubkey (32), multiplier_bps: u64
-
 pub fn update_attention(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if ix_data.len() < 48 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let market_id = u64::from_le_bytes(ix_data[0..8].try_into().unwrap());
-    let user_pubkey: &Pubkey = unsafe { &*(ix_data[8..40].as_ptr() as *const Pubkey) };
-    let multiplier_bps = u64::from_le_bytes(ix_data[40..48].try_into().unwrap());
-
-    let [oracle_authority, protocol_state_acc, market_vault_acc,
-         user_position_acc, ..] = accounts else {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    };
-
-    // Validate oracle_authority signer
-    if !oracle_authority.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    // Validate protocol_state
-    if !protocol_state_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let ps = ProtocolState::from_account(protocol_state_acc)?;
-    // has_one = oracle_authority
-    if !pubkey::pubkey_eq(&ps.oracle_authority, oracle_authority.key()) {
-        return Err(OracleError::Unauthorized.into());
-    }
-    // Verify PDA
-    let (expected_ps, _) = ProtocolState::find_pda(program_id);
-    if !pubkey::pubkey_eq(protocol_state_acc.key(), &expected_ps) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Validate market_vault PDA
-    if !market_vault_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    {
-        let mv_data = unsafe { market_vault_acc.borrow_data_unchecked() };
-        if mv_data.len() < MarketVault::LEN_V1 || mv_data[..8] != DISC_MARKET_VAULT {
-            return Err(ProgramError::InvalidAccountData);
-        }
-    }
-
-    let (expected_mv, _) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
+    ctx: Context<UpdateAttention>,
+    _market_id: u64,
+    _user_pubkey: Pubkey,
+    multiplier_bps: u64,
+) -> Result<()> {
+    require!(
+        multiplier_bps >= MIN_MULTIPLIER_BPS,
+        OracleError::MultiplierBelowMinimum
     );
-    if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Validate user_market_position PDA
-    if !user_position_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    if !user_position_acc.is_writable() {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // Validate position discriminator and length
-    let pos_data = unsafe { user_position_acc.borrow_data_unchecked() };
-    if pos_data.len() < UserMarketPosition::LEN || pos_data[..8] != DISC_USER_MARKET_POSITION {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let _ = pos_data;
-
-    // Verify PDA seeds
-    let (expected_pos, _) = UserMarketPosition::find_pda(
-        market_vault_acc.key(), user_pubkey, program_id,
+    require!(
+        multiplier_bps <= MAX_MULTIPLIER_BPS,
+        OracleError::MaxMultiplierExceeded
     );
-    if !pubkey::pubkey_eq(user_position_acc.key(), &expected_pos) {
-        return Err(ProgramError::InvalidSeeds);
-    }
 
-    // Read position for constraint checks
-    {
-        let pos_data = unsafe { user_position_acc.borrow_data_unchecked() };
-        // position.market_vault == market_vault.key()
-        let pos_mv: &Pubkey = unsafe { &*(pos_data[41..73].as_ptr() as *const Pubkey) };
-        if !pubkey::pubkey_eq(pos_mv, market_vault_acc.key()) {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        // position.user == user_pubkey
-        let pos_user: &Pubkey = unsafe { &*(pos_data[9..41].as_ptr() as *const Pubkey) };
-        if !pubkey::pubkey_eq(pos_user, user_pubkey) {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        // !settled
-        if pos_data[97] != 0 {
-            return Err(OracleError::AlreadySettled.into());
-        }
-    }
+    let position = &mut ctx.accounts.user_market_position;
+    position.attention_multiplier_bps = multiplier_bps;
 
-    // Validate multiplier range
-    if multiplier_bps < MIN_MULTIPLIER_BPS {
-        return Err(OracleError::MultiplierBelowMinimum.into());
-    }
-    if multiplier_bps > MAX_MULTIPLIER_BPS {
-        return Err(OracleError::MaxMultiplierExceeded.into());
-    }
-
-    // Write multiplier (offset 89, 8 bytes LE)
-    let pos_data = unsafe { user_position_acc.borrow_mut_data_unchecked() };
-    pos_data[89..97].copy_from_slice(&multiplier_bps.to_le_bytes());
+    msg!(
+        "Attention Multiplier Updated: {} bps for User {}",
+        multiplier_bps,
+        ctx.accounts.user_market_position.user
+    );
 
     Ok(())
 }
 
 // =============================================================================
-// UPDATE NAV — Oracle sets NAV per vLOFI share on MarketVault
+// UPDATE NAV — Oracle sets NAV per vLOFI share on MarketVault (Option C Phase 2)
 // =============================================================================
-// Accounts: [oracle_authority (signer, mut), protocol_state, market_vault (mut)]
-// Instruction data (after discriminator): market_id: u64, nav_per_share_bps: u64
+//
+// Called by the oracle authority once per rebalance cycle (every 5 min).
+// nav_per_share_bps encodes the USDC value of 1 vLOFI:
+//   10_000 = 1.00 USDC (genesis / pre-yield)
+//   10_100 = 1.01 USDC (1% Kamino yield accrued)
+//
+// deposit_market and settle_market read this field to give depositors yield exposure.
 
-pub fn update_nav(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if ix_data.len() < 16 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let market_id = u64::from_le_bytes(ix_data[0..8].try_into().unwrap());
-    let nav_per_share_bps = u64::from_le_bytes(ix_data[8..16].try_into().unwrap());
+#[derive(Accounts)]
+#[instruction(market_id: u64)]
+pub struct UpdateNav<'info> {
+    #[account(mut)]
+    pub oracle_authority: Signer<'info>,
 
-    let [oracle_authority, protocol_state_acc, market_vault_acc, ..] = accounts else {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    };
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        has_one = oracle_authority,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
 
-    // Validate oracle_authority signer
-    if !oracle_authority.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
+    #[account(
+        mut,
+        seeds = [b"market_vault", protocol_state.key().as_ref(), &market_id.to_le_bytes()],
+        bump = market_vault.bump,
+    )]
+    pub market_vault: Box<Account<'info, MarketVault>>,
+}
 
-    // Validate protocol_state
-    if !protocol_state_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let ps = ProtocolState::from_account(protocol_state_acc)?;
-    if !pubkey::pubkey_eq(&ps.oracle_authority, oracle_authority.key()) {
-        return Err(OracleError::Unauthorized.into());
-    }
-    let (expected_ps, _) = ProtocolState::find_pda(program_id);
-    if !pubkey::pubkey_eq(protocol_state_acc.key(), &expected_ps) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Validate market_vault: owned, correct disc, full LEN (must have NAV fields)
-    if !market_vault_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let mv_data = unsafe { market_vault_acc.borrow_data_unchecked() };
-    if mv_data.len() < MarketVault::LEN || mv_data[..8] != DISC_MARKET_VAULT {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let current_nav = u64::from_le_bytes(mv_data[137..145].try_into().unwrap());
-    let _ = mv_data;
-
-    // Verify PDA
-    let (expected_mv, _) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
+pub fn update_nav(ctx: Context<UpdateNav>, _market_id: u64, nav_per_share_bps: u64) -> Result<()> {
+    // NAV must stay in [10_000, 50_000] and be monotonic non-decreasing.
+    // 10_000 = 1.00x principal floor, 50_000 = 5.00x hard ceiling.
+    let vault = &mut ctx.accounts.market_vault;
+    require!(nav_per_share_bps >= 10_000, OracleError::NavBelowMinimum);
+    require!(
+        nav_per_share_bps >= vault.nav_per_share_bps.max(10_000),
+        OracleError::NavDecreaseNotAllowed
     );
-    if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
-        return Err(ProgramError::InvalidSeeds);
-    }
+    require!(nav_per_share_bps <= 50_000, OracleError::NavAboveMaximum);
 
-    // Validate NAV constraints
-    if nav_per_share_bps < 10_000 {
-        return Err(OracleError::NavBelowMinimum.into());
-    }
-    // Monotonic non-decreasing
-    let floor = if current_nav > 10_000 { current_nav } else { 10_000 };
-    if nav_per_share_bps < floor {
-        return Err(OracleError::NavDecreaseNotAllowed.into());
-    }
-    if nav_per_share_bps > 50_000 {
-        return Err(OracleError::NavAboveMaximum.into());
-    }
+    vault.nav_per_share_bps = nav_per_share_bps;
+    vault.last_nav_update_slot = Clock::get()?.slot;
 
-    // Write NAV + slot
-    let vault = MarketVault::from_account_mut(market_vault_acc)?;
-    vault.set_nav_per_share_bps(nav_per_share_bps);
-    let clock = Clock::get()?;
-    vault.set_last_nav_update_slot(clock.slot);
-
+    msg!(
+        "NAV updated: market_id={} nav_per_share_bps={}",
+        vault.market_id,
+        nav_per_share_bps
+    );
     Ok(())
 }
 
 // =============================================================================
-// CLAIM YIELD — Deprecated, returns error
+// CLAIM YIELD — Deprecated; CCM distribution is merkle-claim only
 // =============================================================================
-// Accounts: [user (signer, mut), protocol_state, market_vault,
-//            user_market_position (mut)]
-// Instruction data (after discriminator): market_id: u64
 
-pub fn claim_yield(
-    _program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    _ix_data: &[u8],
-) -> ProgramResult {
-    let [user, ..] = accounts else {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    };
+#[derive(Accounts)]
+#[instruction(market_id: u64)]
+pub struct ClaimYield<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
 
-    if !user.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
 
-    Err(OracleError::ClaimYieldDeprecated.into())
+    #[account(
+        seeds = [b"market_vault", protocol_state.key().as_ref(), &market_id.to_le_bytes()],
+        bump = market_vault.bump,
+    )]
+    pub market_vault: Box<Account<'info, MarketVault>>,
+
+    #[account(
+        mut,
+        seeds = [b"market_position", market_vault.key().as_ref(), user.key().as_ref()],
+        bump = user_market_position.bump,
+        constraint = user_market_position.market_vault == market_vault.key(),
+        constraint = user_market_position.user == user.key(),
+        constraint = !user_market_position.settled @ OracleError::AlreadySettled,
+    )]
+    pub user_market_position: Box<Account<'info, UserMarketPosition>>,
+}
+
+pub fn claim_yield(ctx: Context<ClaimYield>, _market_id: u64) -> Result<()> {
+    msg!("claim_yield is disabled; claim CCM via claim_global/claim_global_v2 merkle proofs");
+    let _ = &ctx.accounts.user_market_position;
+    err!(OracleError::ClaimYieldDeprecated)
 }
 
 // =============================================================================
-// SETTLE MARKET — Burn vLOFI, return USDC, close position
+// SETTLE MARKET — Burn vLOFI, return USDC (CCM is merkle-claimed)
 // =============================================================================
-// Accounts: [user (signer, mut), protocol_state, market_vault (mut),
-//            user_market_position (mut), vlofi_mint (mut),
-//            user_vlofi_ata (mut), vault_usdc_ata (mut), user_usdc_ata (mut),
-//            token_program, token_2022_program]
-// Instruction data (after discriminator): market_id: u64
 
-pub fn settle_market(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if ix_data.len() < 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let market_id = u64::from_le_bytes(ix_data[0..8].try_into().unwrap());
+#[derive(Accounts)]
+#[instruction(market_id: u64)]
+pub struct SettleMarket<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
 
-    let [user, protocol_state_acc, market_vault_acc, user_position_acc,
-         vlofi_mint, user_vlofi_ata, vault_usdc_ata, user_usdc_ata,
-         token_program, _token_2022_program, ..] = accounts else {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    };
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        constraint = !protocol_state.paused @ OracleError::ProtocolPaused,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
 
-    // Validate user signer
-    if !user.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
+    #[account(
+        mut,
+        seeds = [b"market_vault", protocol_state.key().as_ref(), &market_id.to_le_bytes()],
+        bump = market_vault.bump,
+    )]
+    pub market_vault: Box<Account<'info, MarketVault>>,
 
-    // Validate protocol_state: not paused
-    if !protocol_state_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let ps = ProtocolState::from_account(protocol_state_acc)?;
-    if ps.is_paused() {
-        return Err(OracleError::ProtocolPaused.into());
-    }
-    let (expected_ps, _) = ProtocolState::find_pda(program_id);
-    if !pubkey::pubkey_eq(protocol_state_acc.key(), &expected_ps) {
-        return Err(ProgramError::InvalidSeeds);
-    }
+    #[account(
+        mut,
+        seeds = [b"market_position", market_vault.key().as_ref(), user.key().as_ref()],
+        bump = user_market_position.bump,
+        constraint = user_market_position.market_vault == market_vault.key(),
+        constraint = user_market_position.user == user.key(),
+        constraint = !user_market_position.settled @ OracleError::AlreadySettled,
+    )]
+    pub user_market_position: Box<Account<'info, UserMarketPosition>>,
 
-    // Validate market_vault
-    if !market_vault_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let market_id_bytes = market_id.to_le_bytes();
-    let mv_data = unsafe { market_vault_acc.borrow_data_unchecked() };
-    if mv_data.len() < MarketVault::LEN_V1 || mv_data[..8] != DISC_MARKET_VAULT {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let mv_bump = mv_data[8];
-    let mv_vlofi_mint: Pubkey = mv_data[49..81].try_into().unwrap();
-    let mv_deposit_mint: Pubkey = mv_data[17..49].try_into().unwrap();
-    let nav_per_share_bps = if mv_data.len() >= 145 {
-        u64::from_le_bytes(mv_data[137..145].try_into().unwrap())
+    // --- Token Accounts ---
+    /// Global vLOFI Mint (Token-2022)
+    #[account(mut, address = market_vault.vlofi_mint)]
+    pub vlofi_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    /// User's vLOFI account (to burn)
+    #[account(
+        mut,
+        constraint = user_vlofi_ata.mint == market_vault.vlofi_mint,
+        constraint = user_vlofi_ata.owner == user.key(),
+    )]
+    pub user_vlofi_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// Vault's USDC account (to send principal from)
+    #[account(
+        mut,
+        constraint = vault_usdc_ata.owner == market_vault.key(),
+        constraint = vault_usdc_ata.mint == market_vault.deposit_mint,
+    )]
+    pub vault_usdc_ata: Box<Account<'info, SplTokenAccount>>,
+
+    /// User's USDC account (to receive principal back)
+    #[account(mut)]
+    pub user_usdc_ata: Box<Account<'info, SplTokenAccount>>,
+
+    // --- Programs ---
+    pub token_program: Program<'info, Token>,
+    pub token_2022_program: Program<'info, Token2022>,
+}
+
+pub fn settle_market(ctx: Context<SettleMarket>, market_id: u64) -> Result<()> {
+    let vault = &mut ctx.accounts.market_vault;
+    let position = &mut ctx.accounts.user_market_position;
+
+    let shares_to_burn = position.shares_minted;
+
+    // Fail-fast: reject zero-share settlements before any NAV math or CPI
+    require!(shares_to_burn > 0, OracleError::ZeroSharesMinted);
+
+    // NAV-adjusted principal return (Option C Phase 2).
+    // nav_per_share_bps == 0 before realloc — fall back to deposited_amount (1:1).
+    // principal = shares * nav / 10_000
+    // At genesis (nav=10_000): principal == deposited_amount (backward compatible).
+    // After yield (nav=10_100): principal = deposited_amount * 1.01 (yield captured!).
+    let effective_nav = if vault.nav_per_share_bps == 0 {
+        10_000u64
     } else {
-        0
+        vault.nav_per_share_bps
     };
-    let _ = mv_data;
-
-    let (expected_mv, _) = MarketVault::find_pda(
-        protocol_state_acc.key(), market_id, program_id,
-    );
-    if !pubkey::pubkey_eq(market_vault_acc.key(), &expected_mv) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Validate user_market_position
-    if !user_position_acc.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let pos_data = unsafe { user_position_acc.borrow_data_unchecked() };
-    if pos_data.len() < UserMarketPosition::LEN || pos_data[..8] != DISC_USER_MARKET_POSITION {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // Verify PDA
-    let (expected_pos, _) = UserMarketPosition::find_pda(
-        market_vault_acc.key(), user.key(), program_id,
-    );
-    if !pubkey::pubkey_eq(user_position_acc.key(), &expected_pos) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Position constraints
-    let pos_mv: &Pubkey = unsafe { &*(pos_data[41..73].as_ptr() as *const Pubkey) };
-    if !pubkey::pubkey_eq(pos_mv, market_vault_acc.key()) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let pos_user: &Pubkey = unsafe { &*(pos_data[9..41].as_ptr() as *const Pubkey) };
-    if !pubkey::pubkey_eq(pos_user, user.key()) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if pos_data[97] != 0 {
-        return Err(OracleError::AlreadySettled.into());
-    }
-
-    // Read position fields
-    let deposited_amount = u64::from_le_bytes(pos_data[73..81].try_into().unwrap());
-    let shares_to_burn = u64::from_le_bytes(pos_data[81..89].try_into().unwrap());
-    let attention_multiplier_bps = u64::from_le_bytes(pos_data[89..97].try_into().unwrap());
-    let cumulative_claimed = u64::from_le_bytes(pos_data[106..114].try_into().unwrap());
-    let _ = pos_data;
-
-    // Fail-fast: reject zero-share settlements
-    if shares_to_burn == 0 {
-        return Err(OracleError::ZeroSharesMinted.into());
-    }
-
-    // NAV-adjusted principal return
-    let effective_nav = if nav_per_share_bps == 0 { 10_000u64 } else { nav_per_share_bps };
     let principal_to_return = if effective_nav == 10_000 {
-        deposited_amount
+        position.deposited_amount
     } else {
         shares_to_burn
             .checked_mul(effective_nav)
-            .ok_or(ProgramError::ArithmeticOverflow)?
+            .ok_or(OracleError::MathOverflow)?
             .checked_div(10_000)
-            .ok_or(ProgramError::ArithmeticOverflow)?
+            .ok_or(OracleError::MathOverflow)?
     };
 
-    // Compute CCM yield for audit logs only
-    let (_base_yield, _attention_bonus, total_earned) =
-        compute_position_yield_components(deposited_amount, attention_multiplier_bps)?;
-    let ccm_yield = total_earned.saturating_sub(cumulative_claimed);
+    // 1. Compute outstanding CCM yield for audit logs only.
+    //    Distribution is handled by global merkle claims, not this instruction.
+    //    We keep the calculation for settlement observability and legacy reconciliation.
+    let (_base_yield, _attention_bonus, total_earned) = compute_position_yield_components(
+        position.deposited_amount,
+        position.attention_multiplier_bps,
+    )?;
+    let ccm_yield = total_earned.saturating_sub(position.cumulative_claimed);
 
-    // Validate vlofi_mint
-    if !pubkey::pubkey_eq(vlofi_mint.key(), &mv_vlofi_mint) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // Validate user_vlofi_ata: mint == vlofi, owner == user
-    if !pubkey::pubkey_eq(token_account_mint(user_vlofi_ata)?, &mv_vlofi_mint) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if !pubkey::pubkey_eq(token_account_owner(user_vlofi_ata)?, user.key()) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // Validate vault_usdc_ata: token program ownership, owner == market_vault, mint == deposit_mint
-    verify_token_account(vault_usdc_ata)?;
-    if !pubkey::pubkey_eq(token_account_owner(vault_usdc_ata)?, market_vault_acc.key()) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if !pubkey::pubkey_eq(token_account_mint(vault_usdc_ata)?, &mv_deposit_mint) {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // Validate user_usdc_ata: token program ownership
-    verify_token_account(user_usdc_ata)?;
-
-    // Reserve guard
-    let vault_balance = token_account_amount(vault_usdc_ata)?;
-    if vault_balance < principal_to_return {
-        return Err(OracleError::InsufficientReserve.into());
-    }
-
-    // Validate token_program
-    if !pubkey::pubkey_eq(token_program.key(), &crate::SPL_TOKEN_ID) {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-
-    // 1. Burn user's vLOFI
-    cpi_spl_burn(user_vlofi_ata, vlofi_mint, user, shares_to_burn)?;
-
-    // 2. Return USDC from vault to user (vault PDA signs)
-    let protocol_key = *protocol_state_acc.key();
-    let mv_bump_ref = [mv_bump];
-    let vault_sign_seeds = seeds!(
-        MARKET_VAULT_SEED,
-        &protocol_key,
-        &market_id_bytes,
-        &mv_bump_ref
+    // 1b. Reserve guard — vault USDC ATA must cover the principal return.
+    //     When a StrategyVault is deployed (Phase 2), some USDC lives in Kamino.
+    //     settle_market NEVER calls Kamino CPI — it draws from reserve only.
+    //     If reserve is insufficient, revert cleanly so the rebalancer/queue can top up.
+    require!(
+        ctx.accounts.vault_usdc_ata.amount >= principal_to_return,
+        OracleError::InsufficientReserve
     );
-    let vault_signer = Signer::from(&vault_sign_seeds);
 
-    cpi_spl_transfer_signed(vault_usdc_ata, user_usdc_ata, market_vault_acc, principal_to_return, &[vault_signer])?;
+    // 2. Burn User's vLOFI
+    let burn_cpi_accounts = Burn {
+        mint: ctx.accounts.vlofi_mint.to_account_info(),
+        from: ctx.accounts.user_vlofi_ata.to_account_info(),
+        authority: ctx.accounts.user.to_account_info(),
+    };
+    burn(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            burn_cpi_accounts,
+        ),
+        shares_to_burn,
+    )?;
 
-    // 3. CCM yield distributed via merkle claims only — log for auditability
+    // 3. Return Base USDC from Vault to User (vault PDA signs)
+    let protocol_key = ctx.accounts.protocol_state.key();
+    let market_id_bytes = market_id.to_le_bytes();
+    let vault_bump = vault.bump;
+    let vault_seeds = &[
+        b"market_vault".as_ref(),
+        protocol_key.as_ref(),
+        market_id_bytes.as_ref(),
+        &[vault_bump],
+    ];
+    let vault_signer = &[&vault_seeds[..]];
+
+    let transfer_usdc_accounts = SplTransfer {
+        from: ctx.accounts.vault_usdc_ata.to_account_info(),
+        to: ctx.accounts.user_usdc_ata.to_account_info(),
+        authority: vault.to_account_info(),
+    };
+    token::transfer(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_usdc_accounts,
+            vault_signer,
+        ),
+        principal_to_return,
+    )?;
+
+    // 4. CCM Yield — distributed via merkle claims (claim_global), NOT mint_to.
+    //    CCM mint authority is revoked; calling mint_to would brick this tx.
+    //    Log the accrued yield so settlement receipts remain auditable.
     if ccm_yield > 0 {
+        msg!(
+            "CCM yield: {} (claim via claim_global merkle proof)",
+            ccm_yield
+        );
     }
 
-    // 4. Update vault accounting
-    {
-        let mv_data = unsafe { market_vault_acc.borrow_mut_data_unchecked() };
-        let total_deposited = u64::from_le_bytes(mv_data[113..121].try_into().unwrap());
-        let total_shares = u64::from_le_bytes(mv_data[121..129].try_into().unwrap());
-        // Subtract original deposited_amount (not NAV-adjusted) to avoid underflow
-        mv_data[113..121].copy_from_slice(&total_deposited
-            .checked_sub(deposited_amount)
-            .ok_or(ProgramError::ArithmeticOverflow)?
-            .to_le_bytes());
-        mv_data[121..129].copy_from_slice(&total_shares
-            .checked_sub(shares_to_burn)
-            .ok_or(ProgramError::ArithmeticOverflow)?
-            .to_le_bytes());
-    }
+    // 5. Update State Accounting
+    //    Subtract the original deposited_amount (not NAV-adjusted principal_to_return)
+    //    to keep total_deposited consistent. NAV appreciation is vault-level yield,
+    //    not additional deposits — subtracting principal_to_return when NAV > 1.0x
+    //    would underflow total_deposited for later settlers.
+    vault.total_deposited = vault
+        .total_deposited
+        .checked_sub(position.deposited_amount)
+        .ok_or(OracleError::MathOverflow)?;
+    vault.total_shares = vault
+        .total_shares
+        .checked_sub(shares_to_burn)
+        .ok_or(OracleError::MathOverflow)?;
 
-    // 5. Mark position as settled
-    {
-        let pos_data = unsafe { user_position_acc.borrow_mut_data_unchecked() };
-        pos_data[81..89].copy_from_slice(&0u64.to_le_bytes()); // shares_minted = 0
-        pos_data[73..81].copy_from_slice(&0u64.to_le_bytes()); // deposited_amount = 0
-        pos_data[97] = 1; // settled = true
-    }
+    position.shares_minted = 0;
+    position.deposited_amount = 0;
+    position.settled = true;
 
     Ok(())
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -1097,7 +724,10 @@ mod tests {
 
     #[test]
     fn yield_components_baseline_multiplier() {
-        let (base, bonus, total) = compute_position_yield_components(1_000_000, 10_000).unwrap();
+        // test: 1x multiplier → zero bonus
+        let r = compute_position_yield_components(1_000_000, 10_000);
+        assert!(r.is_ok());
+        let (base, bonus, total) = r.ok().expect("test"); // test
         assert_eq!(base, 1_000_000);
         assert_eq!(bonus, 0);
         assert_eq!(total, 1_000_000);
@@ -1105,7 +735,10 @@ mod tests {
 
     #[test]
     fn yield_components_zero_multiplier_falls_back() {
-        let (base, bonus, total) = compute_position_yield_components(1_000_000, 0).unwrap();
+        // test: 0 multiplier falls back to BASE_YIELD
+        let r = compute_position_yield_components(1_000_000, 0);
+        assert!(r.is_ok());
+        let (base, bonus, total) = r.ok().expect("test"); // test
         assert_eq!(base, 1_000_000);
         assert_eq!(bonus, 0);
         assert_eq!(total, 1_000_000);
@@ -1113,7 +746,9 @@ mod tests {
 
     #[test]
     fn yield_components_2x_multiplier() {
-        let (base, bonus, total) = compute_position_yield_components(1_000_000, 20_000).unwrap();
+        // test: 2x multiplier → 1x bonus
+        let r = compute_position_yield_components(1_000_000, 20_000);
+        let (base, bonus, total) = r.ok().expect("test"); // test
         assert_eq!(base, 1_000_000);
         assert_eq!(bonus, 1_000_000);
         assert_eq!(total, 2_000_000);
@@ -1121,7 +756,9 @@ mod tests {
 
     #[test]
     fn yield_components_max_multiplier() {
-        let (base, bonus, total) = compute_position_yield_components(1_000_000, 50_000).unwrap();
+        // test: 5x multiplier → 4x bonus
+        let r = compute_position_yield_components(1_000_000, 50_000);
+        let (base, bonus, total) = r.ok().expect("test"); // test
         assert_eq!(base, 1_000_000);
         assert_eq!(bonus, 4_000_000);
         assert_eq!(total, 5_000_000);
@@ -1129,7 +766,9 @@ mod tests {
 
     #[test]
     fn yield_components_zero_deposit() {
-        let (base, bonus, total) = compute_position_yield_components(0, 20_000).unwrap();
+        // test: zero deposit → zero everything
+        let r = compute_position_yield_components(0, 20_000);
+        let (base, bonus, total) = r.ok().expect("test"); // test
         assert_eq!(base, 0);
         assert_eq!(bonus, 0);
         assert_eq!(total, 0);
@@ -1137,12 +776,15 @@ mod tests {
 
     #[test]
     fn yield_components_large_deposit_no_overflow() {
-        let deposit: u64 = 368_934_881_474_191;
-        assert!(compute_position_yield_components(deposit, 50_000).is_ok());
+        // test: large deposit stays within checked bounds
+        let deposit: u64 = 368_934_881_474_191; // max safe at 5x
+        let result = compute_position_yield_components(deposit, 50_000);
+        assert!(result.is_ok());
     }
 
     #[test]
     fn nav_adjusted_principal_at_genesis() {
+        // test: NAV 1.0x → principal == shares
         let shares: u64 = 1_000_000;
         let nav_bps: u64 = 10_000;
         let principal = if nav_bps == 10_000 { shares } else { 0 };
@@ -1151,17 +793,23 @@ mod tests {
 
     #[test]
     fn nav_adjusted_principal_with_yield() {
+        // test: NAV 1.01x → 1% yield
         let shares: u64 = 1_000_000;
         let nav_bps: u64 = 10_100;
-        let principal = shares.checked_mul(nav_bps).and_then(|v| v.checked_div(10_000));
+        let principal = shares
+            .checked_mul(nav_bps)
+            .and_then(|v| v.checked_div(10_000)); // test
         assert_eq!(principal, Some(1_010_000));
     }
 
     #[test]
     fn nav_adjusted_principal_at_max() {
+        // test: NAV 5.0x → 5x principal
         let shares: u64 = 1_000_000;
         let nav_bps: u64 = 50_000;
-        let principal = shares.checked_mul(nav_bps).and_then(|v| v.checked_div(10_000));
+        let principal = shares
+            .checked_mul(nav_bps)
+            .and_then(|v| v.checked_div(10_000)); // test
         assert_eq!(principal, Some(5_000_000));
     }
 }

@@ -1,326 +1,154 @@
-//! Price feed instructions — Switchboard bridge (permissionless cranker).
+//! Switchboard price feed bridge — permissionless cranker writes validated prices.
 //!
-//! Pinocchio port of `programs/attention-oracle/src/instructions/price_feed.rs`.
-//! Wire-compatible: same PDA seeds, same account layout, same Anchor discriminators.
+//! A registered `updater` reads Switchboard PullFeed via TS SDK, then calls
+//! `update_price` to push the value on-chain. The program enforces staleness
+//! and deviation guards. Other protocols CPI-read the PriceFeedState PDA.
 //!
-//! Handlers:
-//!   - `initialize_price_feed` — admin creates a PriceFeedState PDA
-//!   - `update_price`          — registered updater pushes a new price
-//!   - `set_price_updater`     — authority rotates the updater key
+//! This is a bridge pattern — when Switchboard crate borsh versions align with
+//! Anchor 0.32, we can swap to direct PullFeed account parsing.
 
-use pinocchio::{
-    account_info::AccountInfo,
-    instruction::Signer,
-    program_error::ProgramError,
-    pubkey::{self, Pubkey},
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
-    ProgramResult,
-};
+use anchor_lang::prelude::*;
 
-use crate::error::OracleError;
-use crate::state::{
-    PriceFeedState, ProtocolState,
-    DISC_PRICE_FEED_STATE,
-    PRICE_FEED_SEED, PROTOCOL_STATE_SEED,
-};
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+use crate::errors::OracleError;
+use crate::state::{PriceFeedState, ProtocolState};
 
 /// Maximum price deviation between updates: 20% (2000 BPS).
+/// Prevents rogue cranker from pushing garbage prices.
 const MAX_DEVIATION_BPS: u64 = 2_000;
 
-// ---------------------------------------------------------------------------
-// INITIALIZE PRICE FEED
-// ---------------------------------------------------------------------------
+// =============================================================================
+// INITIALIZE PRICE FEED — Admin creates a new price feed PDA
+// =============================================================================
 
-/// Admin creates a new PriceFeedState PDA.
-///
-/// Accounts:
-///   0. `[signer, writable]` admin
-///   1. `[]`                 protocol_state PDA
-///   2. `[writable]`         price_feed PDA (uninitialized, will be created)
-///   3. `[]`                 system_program
-///
-/// Instruction data (Anchor serialization order):
-///   0..32   label ([u8; 32])
-///   32..64  updater (Pubkey)
-///   64..72  max_staleness_slots (u64 LE)
+#[derive(Accounts)]
+#[instruction(label: [u8; 32])]
+pub struct InitializePriceFeed<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [b"protocol_state"],
+        bump = protocol_state.bump,
+        has_one = admin,
+    )]
+    pub protocol_state: Box<Account<'info, ProtocolState>>,
+
+    #[account(
+        init,
+        payer = admin,
+        space = PriceFeedState::LEN,
+        seeds = [b"price_feed" as &[u8], label.as_ref()],
+        bump,
+    )]
+    pub price_feed: Box<Account<'info, PriceFeedState>>,
+
+    pub system_program: Program<'info, System>,
+}
+
 pub fn initialize_price_feed(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 4 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-    let admin = &accounts[0];
-    let protocol_state = &accounts[1];
-    let price_feed = &accounts[2];
-    let _system_program = &accounts[3];
+    ctx: Context<InitializePriceFeed>,
+    label: [u8; 32],
+    updater: Pubkey,
+    max_staleness_slots: u64,
+) -> Result<()> {
+    let feed = &mut ctx.accounts.price_feed;
+    feed.bump = ctx.bumps.price_feed;
+    feed.version = 1;
+    feed.label = label;
+    feed.authority = ctx.accounts.admin.key();
+    feed.updater = updater;
+    feed.price = 0;
+    feed.last_update_slot = 0;
+    feed.last_update_ts = 0;
+    feed.max_staleness_slots = max_staleness_slots;
+    feed.num_updates = 0;
 
-    // Parse instruction data: 32 + 32 + 8 = 72 bytes
-    if ix_data.len() < 72 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let label: [u8; 32] = ix_data[0..32]
-        .try_into()
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-    let updater: [u8; 32] = ix_data[32..64]
-        .try_into()
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-    let max_staleness_slots = u64::from_le_bytes(
-        ix_data[64..72]
-            .try_into()
-            .map_err(|_| ProgramError::InvalidInstructionData)?,
+    msg!(
+        "PriceFeed initialized. Updater: {}, max_staleness: {} slots",
+        updater,
+        max_staleness_slots
     );
-
-    // Auth: admin must be signer and match protocol_state.admin
-    if !admin.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-    if !protocol_state.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-    let ps = ProtocolState::from_account(protocol_state)?;
-    if ps.admin != *admin.key() {
-        return Err(ProgramError::Custom(
-            crate::error::ANCHOR_ERROR_OFFSET + OracleError::Unauthorized as u32,
-        ));
-    }
-    // Verify protocol_state PDA
-    let ps_pda = pubkey::create_program_address(
-        &[PROTOCOL_STATE_SEED, &[ps.bump]],
-        program_id,
-    )?;
-    if !pubkey::pubkey_eq(&ps_pda, protocol_state.key()) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Derive PriceFeedState PDA: ["price_feed", &label]
-    let (expected_pda, bump) =
-        pubkey::find_program_address(&[PRICE_FEED_SEED, &label], program_id);
-    if !pubkey::pubkey_eq(&expected_pda, price_feed.key()) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Create account via system program CPI
-    let bump_ref = [bump];
-    let seeds = [
-        pinocchio::instruction::Seed::from(PRICE_FEED_SEED),
-        pinocchio::instruction::Seed::from(label.as_ref()),
-        pinocchio::instruction::Seed::from(bump_ref.as_ref()),
-    ];
-    let pda_signer = Signer::from(&seeds);
-
-    let rent = Rent::get()?;
-    let lamports = rent.minimum_balance(PriceFeedState::LEN);
-
-    crate::cpi_create_account(
-        admin,
-        price_feed,
-        lamports,
-        PriceFeedState::LEN as u64,
-        program_id,
-        &[pda_signer],
-    )?;
-
-    // Write initial data
-    {
-        let data = unsafe { price_feed.borrow_mut_data_unchecked() };
-
-        // Discriminator
-        data[0..8].copy_from_slice(&DISC_PRICE_FEED_STATE);
-        // bump (offset 8)
-        data[8] = bump;
-        // version = 1 (offset 9)
-        data[9] = 1;
-        // label (offset 10)
-        data[10..42].copy_from_slice(&label);
-        // authority = admin (offset 42)
-        data[42..74].copy_from_slice(admin.key());
-        // updater (offset 74)
-        data[74..106].copy_from_slice(&updater);
-        // price = 0 (offset 106) — already zeroed by CreateAccount
-        // last_update_slot = 0 (offset 114) — already zeroed
-        // last_update_ts = 0 (offset 122) — already zeroed
-        // max_staleness_slots (offset 130)
-        data[130..138].copy_from_slice(&max_staleness_slots.to_le_bytes());
-        // num_updates = 0 (offset 138) — already zeroed
-    }
-
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// UPDATE PRICE
-// ---------------------------------------------------------------------------
+// =============================================================================
+// UPDATE PRICE — Permissionless cranker pushes a Switchboard-sourced price
+// =============================================================================
 
-/// Registered updater pushes a new price with 20% deviation guard.
-///
-/// Accounts:
-///   0. `[signer, writable]` updater
-///   1. `[writable]`         price_feed PDA
-///
-/// Instruction data:
-///   0..32   label ([u8; 32])
-///   32..40  price (i64 LE)
-pub fn update_price(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 2 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-    let updater = &accounts[0];
-    let price_feed = &accounts[1];
+#[derive(Accounts)]
+#[instruction(label: [u8; 32])]
+pub struct UpdatePrice<'info> {
+    #[account(mut)]
+    pub updater: Signer<'info>,
 
-    // Parse instruction data: 32 + 8 = 40 bytes
-    if ix_data.len() < 40 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let _label: [u8; 32] = ix_data[0..32]
-        .try_into()
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-    let price = i64::from_le_bytes(
-        ix_data[32..40]
-            .try_into()
-            .map_err(|_| ProgramError::InvalidInstructionData)?,
-    );
+    #[account(
+        mut,
+        seeds = [b"price_feed" as &[u8], label.as_ref()],
+        bump = price_feed.bump,
+        constraint = price_feed.updater == updater.key() @ OracleError::Unauthorized,
+    )]
+    pub price_feed: Box<Account<'info, PriceFeedState>>,
+}
 
-    // Validate signer
-    if !updater.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-    // Validate ownership
-    if !price_feed.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
+pub fn update_price(ctx: Context<UpdatePrice>, _label: [u8; 32], price: i64) -> Result<()> {
+    require!(price > 0, OracleError::InvalidInputLength);
 
-    // Read and validate PriceFeedState
-    let feed = PriceFeedState::from_account(price_feed)?;
+    let feed = &mut ctx.accounts.price_feed;
+    let clock = Clock::get()?;
 
-    // Verify PDA derivation
-    let pda = pubkey::create_program_address(
-        &[PRICE_FEED_SEED, &feed.label, &[feed.bump]],
-        program_id,
-    )?;
-    if !pubkey::pubkey_eq(&pda, price_feed.key()) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Constraint: updater must match
-    if feed.updater != *updater.key() {
-        return Err(OracleError::Unauthorized.into());
-    }
-
-    // Price must be positive
-    if price <= 0 {
-        return Err(OracleError::InvalidInputLength.into());
-    }
-
-    // Deviation guard: if we have a previous price, reject > 20% deviation
-    let prev_price = feed.get_price();
-    if prev_price > 0 {
-        let prev = prev_price as u64;
-        let curr = price as u64;
+    // Deviation guard: if we have a previous price, reject updates that deviate > 20%
+    if feed.price > 0 {
+        let prev = feed.price as u64; // SAFE: guarded by price > 0 check above
+        let curr = price as u64; // SAFE: guarded by price > 0 check above
         let diff = if curr > prev {
             curr.saturating_sub(prev)
         } else {
             prev.saturating_sub(curr)
         };
+        // diff * 10000 / prev > MAX_DEVIATION_BPS → reject
         let deviation_bps = diff
             .checked_mul(10_000)
             .and_then(|n| n.checked_div(prev))
             .unwrap_or(u64::MAX);
-        if deviation_bps > MAX_DEVIATION_BPS {
-            return Err(OracleError::PriceDeviationTooLarge.into());
-        }
+        require!(
+            deviation_bps <= MAX_DEVIATION_BPS,
+            OracleError::PriceDeviationTooLarge
+        );
     }
 
-    let clock = Clock::get()?;
+    feed.price = price;
+    feed.last_update_slot = clock.slot;
+    feed.last_update_ts = clock.unix_timestamp;
+    feed.num_updates = feed.num_updates.saturating_add(1);
 
-    // Write updated fields
-    {
-        let feed_mut = PriceFeedState::from_account_mut(price_feed)?;
-        feed_mut.set_price(price);
-        feed_mut.set_last_update_slot(clock.slot);
-        feed_mut.set_last_update_ts(clock.unix_timestamp);
-        let new_count = feed_mut.get_num_updates().saturating_add(1);
-        feed_mut.set_num_updates(new_count);
-    }
-
+    msg!("Price updated: {} (update #{})", price, feed.num_updates);
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// SET PRICE UPDATER
-// ---------------------------------------------------------------------------
+// =============================================================================
+// SET PRICE UPDATER — Authority rotates the cranker key
+// =============================================================================
 
-/// Authority rotates the cranker key.
-///
-/// Accounts:
-///   0. `[signer]`   authority
-///   1. `[writable]` price_feed PDA
-///
-/// Instruction data:
-///   0..32   label ([u8; 32])
-///   32..64  new_updater (Pubkey)
+#[derive(Accounts)]
+#[instruction(label: [u8; 32])]
+pub struct SetPriceUpdater<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"price_feed" as &[u8], label.as_ref()],
+        bump = price_feed.bump,
+        constraint = price_feed.authority == authority.key() @ OracleError::Unauthorized,
+    )]
+    pub price_feed: Box<Account<'info, PriceFeedState>>,
+}
+
 pub fn set_price_updater(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    ix_data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 2 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-    let authority = &accounts[0];
-    let price_feed = &accounts[1];
-
-    // Parse instruction data: 32 + 32 = 64 bytes
-    if ix_data.len() < 64 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let _label: [u8; 32] = ix_data[0..32]
-        .try_into()
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-    let new_updater: [u8; 32] = ix_data[32..64]
-        .try_into()
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-
-    // Validate signer
-    if !authority.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-    // Validate ownership
-    if !price_feed.is_owned_by(program_id) {
-        return Err(ProgramError::IllegalOwner);
-    }
-
-    // Read and validate PriceFeedState
-    let feed = PriceFeedState::from_account(price_feed)?;
-
-    // Verify PDA derivation
-    let pda = pubkey::create_program_address(
-        &[PRICE_FEED_SEED, &feed.label, &[feed.bump]],
-        program_id,
-    )?;
-    if !pubkey::pubkey_eq(&pda, price_feed.key()) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Constraint: authority must match
-    if feed.authority != *authority.key() {
-        return Err(OracleError::Unauthorized.into());
-    }
-
-    // Write new updater
-    {
-        let feed_mut = PriceFeedState::from_account_mut(price_feed)?;
-        feed_mut.updater = new_updater;
-    }
-
+    ctx: Context<SetPriceUpdater>,
+    _label: [u8; 32],
+    new_updater: Pubkey,
+) -> Result<()> {
+    ctx.accounts.price_feed.updater = new_updater;
+    msg!("Price updater changed to: {}", new_updater);
     Ok(())
 }
