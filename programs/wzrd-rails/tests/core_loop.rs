@@ -21,11 +21,12 @@ use solana_sdk::{
 };
 use spl_token_2022::state::{Account as TokenAccount, Mint};
 use std::path::{Path, PathBuf};
+use solana_keccak_hasher as keccak;
 use wzrd_rails::{
     accounts as rail_accounts, instruction as rail_ix,
     state::{
-        Config, StakePool, UserStake, COMP_VAULT_SEED, CONFIG_SEED, MAX_REWARD_RATE_PER_SLOT,
-        POOL_SEED,
+        CompensationClaimed, Config, StakePool, UserStake, COMPENSATION_LEAF_DOMAIN,
+        COMP_CLAIMED_SEED, COMP_VAULT_SEED, CONFIG_SEED, MAX_REWARD_RATE_PER_SLOT, POOL_SEED,
         REWARD_VAULT_SEED, STAKE_VAULT_SEED, USER_STAKE_SEED,
     },
     ID as WZRD_RAILS_PROGRAM_ID, RailsError,
@@ -46,6 +47,7 @@ struct UserFixture {
     signer: Keypair,
     ccm: LegacyPubkey,
     user_stake: LegacyPubkey,
+    comp_claimed: LegacyPubkey,
 }
 
 impl UserFixture {
@@ -127,6 +129,42 @@ impl TestEnv {
         send_tx(&mut self.svm, &[&self.admin], &[ix]);
     }
 
+    fn compensate_external_stakers(&mut self, merkle_root: [u8; 32]) {
+        let ix = build_compensate_external_stakers_ix(
+            self.config,
+            self.admin_pubkey(),
+            self.ccm_mint_pubkey(),
+            self.comp_vault,
+            merkle_root,
+        );
+        send_tx(&mut self.svm, &[&self.admin], &[ix]);
+    }
+
+    fn try_compensate_external_stakers(
+        &mut self,
+        merkle_root: [u8; 32],
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = build_compensate_external_stakers_ix(
+            self.config,
+            self.admin_pubkey(),
+            self.ccm_mint_pubkey(),
+            self.comp_vault,
+            merkle_root,
+        );
+        try_send_tx(&mut self.svm, &[&self.admin], &[ix])
+    }
+
+    fn fund_comp_vault(&mut self, amount: u64) {
+        let ix = build_direct_token_transfer_ix(
+            self.admin_pubkey(),
+            self.admin_ccm,
+            self.comp_vault,
+            self.ccm_mint_pubkey(),
+            amount,
+        );
+        send_tx(&mut self.svm, &[&self.admin], &[ix]);
+    }
+
     fn stake_user_a(&mut self, amount: u64) {
         let user = &self.user_a;
         let ix = build_stake_ix(
@@ -181,6 +219,61 @@ impl TestEnv {
             user.user_stake,
         );
         send_tx(&mut self.svm, &[&user.signer], &[ix]);
+    }
+
+    fn claim_compensation_user_a(&mut self, amount: u64, proof: Vec<[u8; 32]>) {
+        let user = &self.user_a;
+        let ix = build_claim_compensation_ix(
+            self.config,
+            user.pubkey(),
+            self.ccm_mint_pubkey(),
+            user.ccm,
+            self.comp_vault,
+            user.comp_claimed,
+            amount,
+            proof,
+        );
+        send_tx(&mut self.svm, &[&user.signer], &[ix]);
+    }
+
+    fn try_claim_compensation_user_a(
+        &mut self,
+        amount: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let user = &self.user_a;
+        let ix = build_claim_compensation_ix(
+            self.config,
+            user.pubkey(),
+            self.ccm_mint_pubkey(),
+            user.ccm,
+            self.comp_vault,
+            user.comp_claimed,
+            amount,
+            proof,
+        );
+        try_send_tx(&mut self.svm, &[&user.signer], &[ix])
+    }
+
+    fn try_claim_compensation_custom(
+        &mut self,
+        signer: &Keypair,
+        user_ccm: LegacyPubkey,
+        claimed: LegacyPubkey,
+        amount: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = build_claim_compensation_ix(
+            self.config,
+            legacy_from_signer(signer),
+            self.ccm_mint_pubkey(),
+            user_ccm,
+            self.comp_vault,
+            claimed,
+            amount,
+            proof,
+        );
+        try_send_tx(&mut self.svm, &[signer], &[ix])
     }
 
     fn unstake_user_a(&mut self) {
@@ -433,6 +526,13 @@ fn derive_user_stake(pool: &LegacyPubkey, user: &LegacyPubkey) -> (LegacyPubkey,
     )
 }
 
+fn derive_comp_claimed(user: &LegacyPubkey) -> (LegacyPubkey, u8) {
+    LegacyPubkey::find_program_address(
+        &[COMP_CLAIMED_SEED, user.as_ref()],
+        &WZRD_RAILS_PROGRAM_ID,
+    )
+}
+
 fn read_anchor_account<T: AccountDeserialize>(svm: &LiteSVM, address: &LegacyPubkey) -> T {
     let account = svm
         .get_account(&address_from_legacy(address))
@@ -456,6 +556,37 @@ fn expected_acc_reward_per_share(total_reward: u64, total_staked: u64) -> u128 {
         .unwrap()
         .checked_div(total_staked as u128)
         .unwrap()
+}
+
+fn compensation_leaf(user: &LegacyPubkey, amount: u64) -> [u8; 32] {
+    keccak::hashv(&[
+        COMPENSATION_LEAF_DOMAIN,
+        user.as_ref(),
+        amount.to_le_bytes().as_ref(),
+    ])
+    .to_bytes()
+}
+
+fn sorted_pair_hash(left: [u8; 32], right: [u8; 32]) -> [u8; 32] {
+    let (first, second) = if left <= right {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    keccak::hashv(&[first.as_ref(), second.as_ref()]).to_bytes()
+}
+
+fn two_leaf_merkle(
+    left: (LegacyPubkey, u64),
+    right: (LegacyPubkey, u64),
+) -> ([u8; 32], Vec<[u8; 32]>, Vec<[u8; 32]>) {
+    let left_leaf = compensation_leaf(&left.0, left.1);
+    let right_leaf = compensation_leaf(&right.0, right.1);
+    (
+        sorted_pair_hash(left_leaf, right_leaf),
+        vec![right_leaf],
+        vec![left_leaf],
+    )
 }
 
 fn rails_error_code(error: RailsError) -> u32 {
@@ -636,6 +767,53 @@ fn build_stake_ix(
     }
 }
 
+fn build_claim_compensation_ix(
+    config: LegacyPubkey,
+    user: LegacyPubkey,
+    ccm_mint: LegacyPubkey,
+    user_ccm: LegacyPubkey,
+    comp_vault: LegacyPubkey,
+    claimed: LegacyPubkey,
+    amount: u64,
+    proof: Vec<[u8; 32]>,
+) -> LegacyInstruction {
+    LegacyInstruction {
+        program_id: WZRD_RAILS_PROGRAM_ID,
+        accounts: rail_accounts::ClaimCompensation {
+            config,
+            user,
+            ccm_mint,
+            user_ccm,
+            comp_vault,
+            claimed,
+            token_2022_program: spl_token_2022::id(),
+            system_program: system_program::ID,
+        }
+        .to_account_metas(None),
+        data: rail_ix::ClaimCompensation { amount, proof }.data(),
+    }
+}
+
+fn build_direct_token_transfer_ix(
+    authority: LegacyPubkey,
+    from: LegacyPubkey,
+    to: LegacyPubkey,
+    mint: LegacyPubkey,
+    amount: u64,
+) -> LegacyInstruction {
+    spl_token_2022::instruction::transfer_checked(
+        &spl_token_2022::id(),
+        &from,
+        &mint,
+        &to,
+        &authority,
+        &[],
+        amount,
+        CCM_DECIMALS,
+    )
+    .unwrap()
+}
+
 fn build_claim_ix(
     config: LegacyPubkey,
     pool: LegacyPubkey,
@@ -707,10 +885,12 @@ fn create_user_fixture(
     mint_token_2022(svm, mint_authority, ccm_mint, &ccm, starting_balance);
 
     let (user_stake, _) = derive_user_stake(pool, &user_pubkey);
+    let (comp_claimed, _) = derive_comp_claimed(&user_pubkey);
     UserFixture {
         signer,
         ccm,
         user_stake,
+        comp_claimed,
     }
 }
 
@@ -1151,4 +1331,102 @@ fn test_two_users_proportional_distribution() {
     assert_eq!(user_a_after_claim.pending_rewards, 0);
     assert_eq!(user_b_after_claim.reward_debt, 105_000);
     assert_eq!(user_b_after_claim.pending_rewards, 0);
+}
+
+#[test]
+fn test_claim_compensation_happy_path() {
+    let mut env = setup_rails();
+    let user_b = env.create_user(USER_START_BALANCE);
+    let compensation_amount = 123_456;
+    let (root, user_a_proof, _) =
+        two_leaf_merkle((env.user_a.pubkey(), compensation_amount), (user_b.pubkey(), 777_777));
+
+    env.compensate_external_stakers(root);
+    env.fund_comp_vault(500_000);
+    env.claim_compensation_user_a(compensation_amount, user_a_proof);
+
+    let config: Config = read_anchor_account(&env.svm, &env.config);
+    let claimed: CompensationClaimed = read_anchor_account(&env.svm, &env.user_a.comp_claimed);
+    assert_eq!(config.comp_merkle_root, root);
+    assert_eq!(claimed.user, env.user_a.pubkey());
+    assert_eq!(claimed.amount, compensation_amount);
+    assert_eq!(read_token_balance(&env.svm, &env.comp_vault), 500_000 - compensation_amount);
+    assert_eq!(
+        read_token_balance(&env.svm, &env.user_a.ccm),
+        USER_START_BALANCE + compensation_amount
+    );
+}
+
+#[test]
+fn test_claim_compensation_already_claimed_reverts() {
+    let mut env = setup_rails();
+    let user_b = env.create_user(USER_START_BALANCE);
+    let compensation_amount = 10_000;
+    let (root, user_a_proof, _) =
+        two_leaf_merkle((env.user_a.pubkey(), compensation_amount), (user_b.pubkey(), 20_000));
+
+    env.compensate_external_stakers(root);
+    env.fund_comp_vault(50_000);
+    env.claim_compensation_user_a(compensation_amount, user_a_proof.clone());
+
+    let balance_before = read_token_balance(&env.svm, &env.user_a.ccm);
+    assert!(env
+        .try_claim_compensation_user_a(compensation_amount, user_a_proof)
+        .is_err());
+    assert_eq!(read_token_balance(&env.svm, &env.user_a.ccm), balance_before);
+}
+
+#[test]
+fn test_claim_compensation_wrong_proof_reverts() {
+    let mut env = setup_rails();
+    let user_b = env.create_user(USER_START_BALANCE);
+    let (root, _, user_b_proof) =
+        two_leaf_merkle((env.user_a.pubkey(), 33_333), (user_b.pubkey(), 44_444));
+
+    env.compensate_external_stakers(root);
+    env.fund_comp_vault(100_000);
+
+    assert_rails_error(
+        env.try_claim_compensation_user_a(33_334, user_b_proof),
+        RailsError::CompensationInvalidProof,
+    );
+}
+
+#[test]
+fn test_compensation_root_already_set_reverts() {
+    let mut env = setup_rails();
+    let user_b = env.create_user(USER_START_BALANCE);
+    let (root_one, _, _) =
+        two_leaf_merkle((env.user_a.pubkey(), 1_000), (user_b.pubkey(), 2_000));
+    let (root_two, _, _) =
+        two_leaf_merkle((env.user_a.pubkey(), 3_000), (user_b.pubkey(), 4_000));
+
+    env.compensate_external_stakers(root_one);
+    assert!(env.try_compensate_external_stakers(root_two).is_err());
+
+    let config: Config = read_anchor_account(&env.svm, &env.config);
+    assert_eq!(config.comp_merkle_root, root_one);
+}
+
+#[test]
+fn test_claim_compensation_bad_signer_reverts() {
+    let mut env = setup_rails();
+    let user_b = env.create_user(USER_START_BALANCE);
+    let compensation_amount = 55_555;
+    let (root, user_a_proof, _) =
+        two_leaf_merkle((env.user_a.pubkey(), compensation_amount), (user_b.pubkey(), 66_666));
+
+    env.compensate_external_stakers(root);
+    env.fund_comp_vault(100_000);
+
+    assert_rails_error(
+        env.try_claim_compensation_custom(
+            &user_b.signer,
+            env.user_a.ccm,
+            user_b.comp_claimed,
+            compensation_amount,
+            user_a_proof,
+        ),
+        RailsError::Unauthorized,
+    );
 }

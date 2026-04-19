@@ -42,4 +42,7 @@ pub enum RailsError {
 
     #[msg("Reward rate exceeds the configured per-slot safety cap.")]
     RewardRateTooHigh = 11,
+
+    #[msg("Compensation vault is underfunded for this claim.")]
+    CompensationUnavailable = 12,
 }

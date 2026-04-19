@@ -14,6 +14,7 @@ pub const STAKE_VAULT_SEED: &[u8] = b"stake_vault";
 pub const REWARD_VAULT_SEED: &[u8] = b"reward_vault";
 pub const COMP_VAULT_SEED: &[u8] = b"comp_vault";
 pub const COMP_CLAIMED_SEED: &[u8] = b"comp_claimed";
+pub const COMPENSATION_LEAF_DOMAIN: &[u8] = b"wzrd-rails-comp";
 
 /// Safety bound for `reward_rate_per_slot`.
 ///
@@ -45,6 +46,9 @@ pub struct Config {
     /// Compensation merkle root for the one-time external stakers drop.
     /// All-zero = unset. Set exactly once by `compensate_external_stakers`.
     ///
+    /// Future claim convention:
+    ///   leaf = keccak::hashv(&[COMPENSATION_LEAF_DOMAIN, user.as_ref(), amount.to_le_bytes().as_ref()])
+    ///   pair hash = sorted pair keccak(min, max)
     pub comp_merkle_root: [u8; 32],
     /// Count of initialized stake pools. Incremented by `initialize_pool`.
     pub total_pools: u32,
@@ -95,6 +99,16 @@ pub struct CompensationRootSet {
     pub admin: Pubkey,
     pub comp_vault: Pubkey,
     pub merkle_root: [u8; 32],
+    pub slot: u64,
+}
+
+#[event]
+pub struct CompensationClaimedEvent {
+    pub config: Pubkey,
+    pub user: Pubkey,
+    pub claimed_account: Pubkey,
+    pub comp_vault: Pubkey,
+    pub amount: u64,
     pub slot: u64,
 }
 
@@ -265,6 +279,29 @@ impl UserStake {
         let total = fresh.checked_add(carried).ok_or(AccrueError::Overflow)?;
         u64::try_from(total).map_err(|_| AccrueError::Overflow)
     }
+}
+
+/// Replay-protection marker for the one-time compensation merkle drop.
+///
+/// PDA: `[COMP_CLAIMED_SEED, user_pubkey]`
+///
+/// The account exists iff the user has already claimed their external
+/// compensation allotment. Day 1 intentionally uses `init`, not
+/// `init_if_needed`, so a second claim attempt aborts before handler logic.
+#[account]
+#[derive(Debug)]
+pub struct CompensationClaimed {
+    /// User who consumed their one-time compensation claim.
+    pub user: Pubkey,
+    /// Leaf amount claimed (pre Token-2022 transfer fee).
+    pub amount: u64,
+    /// PDA bump.
+    pub bump: u8,
+}
+
+impl CompensationClaimed {
+    /// Account size: 8 + 32 + 8 + 1 = 49 bytes.
+    pub const LEN: usize = 8 + 32 + 8 + 1;
 }
 
 #[event]

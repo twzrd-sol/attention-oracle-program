@@ -17,6 +17,7 @@ use anchor_spl::token_2022::ID as TOKEN_2022_PROGRAM_ID;
 use anchor_spl::token_interface::{
     self, Mint as MintInterface, TokenAccount, TokenInterface, TransferChecked,
 };
+use solana_keccak_hasher as keccak;
 
 declare_id!("BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9");
 
@@ -518,6 +519,100 @@ pub mod wzrd_rails {
         Ok(())
     }
 
+    /// Claim the one-time external compensation allotment proved against the
+    /// config-level merkle root.
+    ///
+    /// Day 1 policy is atomic, not streaming:
+    ///   - proof must verify against the stored root
+    ///   - replay is blocked by creating a `CompensationClaimed` PDA
+    ///   - the claim reverts if the compensation vault cannot cover the amount
+    ///
+    /// Leaf convention:
+    ///   leaf = keccak::hashv(&[
+    ///       COMPENSATION_LEAF_DOMAIN,
+    ///       user.as_ref(),
+    ///       amount.to_le_bytes().as_ref(),
+    ///   ])
+    /// Internal nodes are sorted-pair keccak(min, max).
+    pub fn claim_compensation(
+        ctx: Context<ClaimCompensation>,
+        amount: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        require!(amount > 0, RailsError::StakeAmountZero);
+        require!(ctx.accounts.config.comp_root_set(), RailsError::CompensationInvalidProof);
+        require!(
+            verify_compensation_proof(
+                &ctx.accounts.user.key(),
+                amount,
+                &proof,
+                &ctx.accounts.config.comp_merkle_root,
+            ),
+            RailsError::CompensationInvalidProof
+        );
+        require!(
+            ctx.accounts.comp_vault.amount >= amount,
+            RailsError::CompensationUnavailable
+        );
+
+        let slot = Clock::get()?.slot;
+        let config_ai = ctx.accounts.config.to_account_info();
+        let signer_seeds: &[&[&[u8]]] = &[&[CONFIG_SEED, &[ctx.accounts.config.bump]]];
+        let transfer_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_2022_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.comp_vault.to_account_info(),
+                mint: ctx.accounts.ccm_mint.to_account_info(),
+                to: ctx.accounts.user_ccm.to_account_info(),
+                authority: config_ai,
+            },
+            signer_seeds,
+        );
+        token_interface::transfer_checked(transfer_ctx, amount, ctx.accounts.ccm_mint.decimals)?;
+
+        let claimed = &mut ctx.accounts.claimed;
+        claimed.user = ctx.accounts.user.key();
+        claimed.amount = amount;
+        claimed.bump = ctx.bumps.claimed;
+
+        emit!(CompensationClaimedEvent {
+            config: ctx.accounts.config.key(),
+            user: ctx.accounts.user.key(),
+            claimed_account: ctx.accounts.claimed.key(),
+            comp_vault: ctx.accounts.comp_vault.key(),
+            amount,
+            slot,
+        });
+
+        Ok(())
+    }
+}
+
+fn compensation_leaf(user: &Pubkey, amount: u64) -> [u8; 32] {
+    keccak::hashv(&[
+        COMPENSATION_LEAF_DOMAIN,
+        user.as_ref(),
+        amount.to_le_bytes().as_ref(),
+    ])
+    .to_bytes()
+}
+
+fn sorted_pair_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+    let (first, second) = if left <= right {
+        (left.as_slice(), right.as_slice())
+    } else {
+        (right.as_slice(), left.as_slice())
+    };
+    keccak::hashv(&[first, second]).to_bytes()
+}
+
+#[inline(never)]
+fn verify_compensation_proof(user: &Pubkey, amount: u64, proof: &[[u8; 32]], root: &[u8; 32]) -> bool {
+    let mut computed = compensation_leaf(user, amount);
+    for sibling in proof {
+        computed = sorted_pair_hash(&computed, sibling);
+    }
+    &computed == root
 }
 
 #[derive(Accounts)]
@@ -818,4 +913,43 @@ pub struct Claim<'info> {
     pub user_stake: Account<'info, UserStake>,
     #[account(address = TOKEN_2022_PROGRAM_ID @ RailsError::InvalidTokenProgram)]
     pub token_2022_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct ClaimCompensation<'info> {
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        has_one = ccm_mint @ RailsError::InvalidMint
+    )]
+    pub config: Account<'info, Config>,
+    #[account(mut)]
+    pub user: Signer<'info>,
+    #[account(address = config.ccm_mint)]
+    pub ccm_mint: Box<InterfaceAccount<'info, MintInterface>>,
+    #[account(
+        mut,
+        constraint = user_ccm.owner == user.key() @ RailsError::Unauthorized,
+        constraint = user_ccm.mint == ccm_mint.key() @ RailsError::InvalidMint,
+    )]
+    pub user_ccm: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(
+        mut,
+        seeds = [COMP_VAULT_SEED, config.key().as_ref()],
+        bump,
+        constraint = comp_vault.owner == config.key() @ RailsError::Unauthorized,
+        constraint = comp_vault.mint == ccm_mint.key() @ RailsError::InvalidMint,
+    )]
+    pub comp_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(
+        init,
+        payer = user,
+        space = CompensationClaimed::LEN,
+        seeds = [COMP_CLAIMED_SEED, user.key().as_ref()],
+        bump
+    )]
+    pub claimed: Account<'info, CompensationClaimed>,
+    #[account(address = TOKEN_2022_PROGRAM_ID @ RailsError::InvalidTokenProgram)]
+    pub token_2022_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
 }
