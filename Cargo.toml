@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "programs/attention-oracle",
+  "programs/wzrd-rails",
 ]
 resolver = "2"
 
