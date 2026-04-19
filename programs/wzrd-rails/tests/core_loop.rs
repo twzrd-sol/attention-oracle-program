@@ -1430,3 +1430,346 @@ fn test_claim_compensation_bad_signer_reverts() {
         RailsError::Unauthorized,
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Token-2022 TransferFee path (shift-left fee-accounting validation)
+// ═══════════════════════════════════════════════════════════════════════
+// Added 2026-04-19. The 13 tests above use a plain Token-2022 mint with no
+// fee extension, so the stake IX's balance-diff crediting logic
+// (actual_received = balance_after - balance_before) is exercised only in
+// the degenerate case where fee = 0 and actual_received == amount. This
+// block adds a single test that re-runs the stake path against a mint
+// with TransferFeeConfig initialized, asserting the production fee math.
+// Strictly additive: no existing helper or test is modified.
+
+/// Mirror of [`create_plain_token_2022_mint`] but pre-initializes a
+/// `TransferFeeConfig` extension on the same mint account. Ordering
+/// matters: the extension IX must precede `initialize_mint2` in the same
+/// tx. The account is sized for `Mint` base + `TransferFeeConfig` extension.
+/// Authorities (config + withheld) are set to `None` — the extension is
+/// effectively immutable, matching mainnet CCM's post-launch config.
+fn create_token_2022_mint_with_transfer_fee(
+    svm: &mut LiteSVM,
+    payer: &Keypair,
+    mint: &Keypair,
+    mint_authority: &LegacyPubkey,
+    transfer_fee_basis_points: u16,
+    maximum_fee: u64,
+) {
+    use spl_token_2022::extension::transfer_fee::instruction::initialize_transfer_fee_config;
+    use spl_token_2022::extension::ExtensionType;
+
+    let payer_pubkey = legacy_from_signer(payer);
+    let mint_pubkey = legacy_from_signer(mint);
+    let mint_size = ExtensionType::try_calculate_account_len::<Mint>(&[
+        ExtensionType::TransferFeeConfig,
+    ])
+    .expect("failed to calculate mint size with TransferFee extension");
+    let rent = svm.minimum_balance_for_rent_exemption(mint_size);
+
+    let create_ix = system_instruction::create_account(
+        &payer_pubkey,
+        &mint_pubkey,
+        rent,
+        mint_size as u64,
+        &spl_token_2022::id(),
+    );
+    let fee_config_ix = initialize_transfer_fee_config(
+        &spl_token_2022::id(),
+        &mint_pubkey,
+        None,
+        None,
+        transfer_fee_basis_points,
+        maximum_fee,
+    )
+    .expect("failed to build initialize_transfer_fee_config ix");
+    let init_mint_ix = spl_token_2022::instruction::initialize_mint2(
+        &spl_token_2022::id(),
+        &mint_pubkey,
+        mint_authority,
+        None,
+        CCM_DECIMALS,
+    )
+    .expect("failed to build initialize_mint2 ix");
+
+    send_tx(svm, &[payer, mint], &[create_ix, fee_config_ix, init_mint_ix]);
+}
+
+/// Mirror of [`create_token_2022_account`] but sized for the
+/// `TransferFeeAmount` extension, required when holding a mint that has
+/// `TransferFeeConfig` initialized. The extension is auto-initialized by
+/// `initialize_account3` when the account has sufficient space allocated
+/// for it; no separate extension-init IX is needed on the account side
+/// (the withheld-fee counter starts at 0).
+fn create_token_2022_account_with_fee_amount(
+    svm: &mut LiteSVM,
+    payer: &Keypair,
+    token_account: &Keypair,
+    mint: &LegacyPubkey,
+    owner: &LegacyPubkey,
+) {
+    use spl_token_2022::extension::ExtensionType;
+
+    let payer_pubkey = legacy_from_signer(payer);
+    let token_account_pubkey = legacy_from_signer(token_account);
+    let account_size = ExtensionType::try_calculate_account_len::<TokenAccount>(&[
+        ExtensionType::TransferFeeAmount,
+    ])
+    .expect("failed to calculate token account size with TransferFeeAmount");
+    let rent = svm.minimum_balance_for_rent_exemption(account_size);
+
+    let create_ix = system_instruction::create_account(
+        &payer_pubkey,
+        &token_account_pubkey,
+        rent,
+        account_size as u64,
+        &spl_token_2022::id(),
+    );
+    let init_ix = spl_token_2022::instruction::initialize_account3(
+        &spl_token_2022::id(),
+        &token_account_pubkey,
+        mint,
+        owner,
+    )
+    .expect("failed to build initialize_account3 ix");
+
+    send_tx(svm, &[payer, token_account], &[create_ix, init_ix]);
+}
+
+/// Mirror of [`read_token_balance`] that handles Token-2022 extension
+/// accounts. Plain `TokenAccount::unpack` requires the data length to equal
+/// `TokenAccount::LEN` (165 bytes) and fails on fee-extended accounts,
+/// which carry extra bytes for `TransferFeeAmount`. `StateWithExtensions`
+/// parses the base-account slice plus the TLV extension tail.
+fn read_token_balance_with_extensions(svm: &LiteSVM, address: &LegacyPubkey) -> u64 {
+    use spl_token_2022::extension::StateWithExtensions;
+
+    let account = svm
+        .get_account(&address_from_legacy(address))
+        .unwrap_or_else(|| panic!("missing token account: {address}"));
+    let state = StateWithExtensions::<TokenAccount>::unpack(&account.data)
+        .expect("failed to unpack token account with extensions");
+    state.base.amount
+}
+
+/// Mirror of [`create_user_fixture`] that uses the fee-aware account
+/// helper. Necessary because plain token accounts cannot hold a mint with
+/// `TransferFeeConfig` — `InitializeAccount3` returns `InvalidAccountData`
+/// without the extension space.
+fn create_user_fixture_with_fee_amount(
+    svm: &mut LiteSVM,
+    mint_authority: &Keypair,
+    ccm_mint: &LegacyPubkey,
+    pool: &LegacyPubkey,
+    starting_balance: u64,
+) -> UserFixture {
+    let signer = Keypair::new();
+    let token_account = Keypair::new();
+
+    svm.airdrop(&signer.pubkey(), 100_000_000_000).unwrap();
+
+    let user_pubkey = legacy_from_signer(&signer);
+    create_token_2022_account_with_fee_amount(svm, &signer, &token_account, ccm_mint, &user_pubkey);
+
+    let ccm = legacy_from_signer(&token_account);
+    mint_token_2022(svm, mint_authority, ccm_mint, &ccm, starting_balance);
+
+    let (user_stake, _) = derive_user_stake(pool, &user_pubkey);
+    let (comp_claimed, _) = derive_comp_claimed(&user_pubkey);
+    UserFixture {
+        signer,
+        ccm,
+        user_stake,
+        comp_claimed,
+    }
+}
+
+/// Mirror of [`setup_rails`] that uses a fee-enabled CCM mint. All other
+/// initialization (Config, Pool at pool_id=0, StakeVault, RewardVault,
+/// User A) is identical to the plain-mint setup. Only the mint creation
+/// step differs.
+fn setup_rails_with_transfer_fee(
+    transfer_fee_basis_points: u16,
+    maximum_fee: u64,
+) -> TestEnv {
+    let mut svm = LiteSVM::new();
+
+    if let Err(err) = load_wzrd_rails_program(&mut svm) {
+        panic!(
+            "Failed to load wzrd-rails program: {err}. Run `anchor build --program-name wzrd_rails` first."
+        );
+    }
+    if let Err(err) = load_token_2022_program(&mut svm) {
+        panic!("Failed to load Token-2022 program into LiteSVM: {err}");
+    }
+
+    let admin = Keypair::new();
+    let ccm_mint = Keypair::new();
+    let admin_ccm_account = Keypair::new();
+
+    svm.airdrop(&admin.pubkey(), 100_000_000_000).unwrap();
+
+    let admin_pubkey = legacy_from_signer(&admin);
+    let ccm_mint_pubkey = legacy_from_signer(&ccm_mint);
+
+    create_token_2022_mint_with_transfer_fee(
+        &mut svm,
+        &admin,
+        &ccm_mint,
+        &admin_pubkey,
+        transfer_fee_basis_points,
+        maximum_fee,
+    );
+    create_token_2022_account_with_fee_amount(
+        &mut svm,
+        &admin,
+        &admin_ccm_account,
+        &ccm_mint_pubkey,
+        &admin_pubkey,
+    );
+
+    let admin_ccm = legacy_from_signer(&admin_ccm_account);
+    mint_token_2022(
+        &mut svm,
+        &admin,
+        &ccm_mint_pubkey,
+        &admin_ccm,
+        ADMIN_START_BALANCE,
+    );
+
+    let (config, _) = derive_config();
+    let (pool, _) = derive_pool(POOL_ID);
+    let (stake_vault, _) = derive_stake_vault(&pool);
+    let (reward_vault, _) = derive_reward_vault(&pool);
+    let (comp_vault, _) = derive_comp_vault(&config);
+
+    let user_a = create_user_fixture_with_fee_amount(
+        &mut svm,
+        &admin,
+        &ccm_mint_pubkey,
+        &pool,
+        USER_START_BALANCE,
+    );
+
+    send_tx(
+        &mut svm,
+        &[&admin],
+        &[build_initialize_config_ix(
+            admin_pubkey,
+            config,
+            ccm_mint_pubkey,
+            admin_ccm,
+        )],
+    );
+
+    send_tx(
+        &mut svm,
+        &[&admin],
+        &[build_initialize_pool_ix(
+            config,
+            pool,
+            ccm_mint_pubkey,
+            stake_vault,
+            reward_vault,
+            admin_pubkey,
+        )],
+    );
+
+    send_tx(
+        &mut svm,
+        &[&admin],
+        &[build_set_reward_rate_ix(
+            config,
+            pool,
+            admin_pubkey,
+            DEFAULT_REWARD_RATE_PER_SLOT,
+        )],
+    );
+
+    TestEnv {
+        svm,
+        admin,
+        ccm_mint,
+        config,
+        pool,
+        stake_vault,
+        reward_vault,
+        comp_vault,
+        admin_ccm,
+        user_a,
+    }
+}
+
+#[test]
+fn stake_with_transfer_fee_credits_actual_received() {
+    // 50 basis points = 0.5% fee. u64::MAX = no cap. Matches mainnet CCM config.
+    const FEE_BASIS_POINTS: u16 = 50;
+    const MAX_FEE: u64 = u64::MAX;
+    const STAKE_REQUEST: u64 = 1_000_000_000; // 1 CCM at 9 decimals
+
+    let mut env = setup_rails_with_transfer_fee(FEE_BASIS_POINTS, MAX_FEE);
+
+    // Expected fee: 1_000_000_000 * 50 / 10_000 = 5_000_000 units.
+    // Expected received: 1_000_000_000 - 5_000_000 = 995_000_000 units.
+    let expected_fee: u64 =
+        ((STAKE_REQUEST as u128) * (FEE_BASIS_POINTS as u128) / 10_000u128) as u64;
+    let expected_received: u64 = STAKE_REQUEST - expected_fee;
+
+    // Sanity: mint_to does NOT apply TransferFee (fee only applies between
+    // non-mint accounts), so user's ATA holds the full USER_START_BALANCE.
+    let user_balance_before = read_token_balance_with_extensions(&env.svm, &env.user_a.ccm);
+    assert!(
+        user_balance_before >= STAKE_REQUEST,
+        "user_a needs >= {STAKE_REQUEST} pre-stake, has {user_balance_before}"
+    );
+
+    env.stake_user_a(STAKE_REQUEST);
+
+    // Primary assertion: the stake vault holds only what actually arrived
+    // after the mint deducted the TransferFee in-flight. This is the bug
+    // surface `actual_received = balance_after - balance_before` exists for.
+    let stake_vault_balance = read_token_balance_with_extensions(&env.svm, &env.stake_vault);
+    assert_eq!(
+        stake_vault_balance, expected_received,
+        "stake_vault must hold post-fee amount ({expected_received}), has {stake_vault_balance}"
+    );
+
+    // Pool accounting must match vault balance — the pool is credited with
+    // `actual_received`, not `requested_amount`.
+    let pool: StakePool = read_anchor_account(&env.svm, &env.pool);
+    assert_eq!(
+        pool.total_staked, expected_received,
+        "pool.total_staked must equal post-fee received amount"
+    );
+
+    // User stake principal must also match vault balance (the user's share
+    // of the pool is what actually arrived, not what they asked for).
+    let user_stake: UserStake = read_anchor_account(&env.svm, &env.user_a.user_stake);
+    assert_eq!(
+        user_stake.amount, expected_received,
+        "user_stake.amount must equal post-fee received amount"
+    );
+    assert!(
+        user_stake.amount < STAKE_REQUEST,
+        "user_stake.amount ({}) must be strictly less than stake request ({}) -- fee not absorbed",
+        user_stake.amount,
+        STAKE_REQUEST
+    );
+
+    // At first stake in an empty pool, acc_reward_per_share = 0, so
+    // reward_debt (= amount * acc / SCALE) must be 0 regardless of the
+    // fee delta.
+    assert_eq!(
+        user_stake.reward_debt, 0u128,
+        "reward_debt at first stake in empty pool must be 0"
+    );
+
+    // The user's own balance decreased by the full STAKE_REQUEST — they
+    // paid the fee from their side, not from the pool's side.
+    let user_balance_after = read_token_balance_with_extensions(&env.svm, &env.user_a.ccm);
+    assert_eq!(
+        user_balance_before - user_balance_after,
+        STAKE_REQUEST,
+        "user should have sent STAKE_REQUEST ({STAKE_REQUEST}) units from their ATA"
+    );
+}
