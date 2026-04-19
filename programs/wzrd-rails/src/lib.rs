@@ -202,7 +202,7 @@ pub mod wzrd_rails {
         let config = &mut ctx.accounts.config;
 
         // Enforce sequential numbering. Admin must pass pool_id == total_pools.
-        require_eq!(pool_id, config.total_pools, RailsError::Unauthorized);
+        require_eq!(pool_id, config.total_pools, RailsError::InvalidPoolId);
 
         let clock = Clock::get()?;
         let pool = &mut ctx.accounts.pool;

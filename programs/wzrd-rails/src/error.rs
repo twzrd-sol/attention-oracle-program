@@ -45,4 +45,7 @@ pub enum RailsError {
 
     #[msg("Compensation vault is underfunded for this claim.")]
     CompensationUnavailable = 12,
+
+    #[msg("Pool ID must equal total_pools (sequential numbering enforced).")]
+    InvalidPoolId = 13,
 }

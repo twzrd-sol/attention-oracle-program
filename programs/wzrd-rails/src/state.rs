@@ -364,11 +364,14 @@ mod tests {
         // Anchor derives discriminator = sha256("account:Config")[..8].
         // Test ensures nobody renames the struct without noticing the
         // discriminator change (which would break on-chain compat).
+        //
+        // If this assertion fires, `Config` was renamed — intentional or not.
+        // Update the expected bytes below after confirming the rename is desired.
+        // Expected bytes computed by: sha256("account:Config")[..8]
+        //   = 9b0caae01efacc82
         let disc = Config::DISCRIMINATOR;
         assert_eq!(disc.len(), 8);
-        // If this assert fires, `Config` was renamed — intentional or not.
-        // Update the expected bytes after confirming the rename is desired.
-        // Expected bytes computed by: sha256("account:Config")[..8]
+        assert_eq!(disc, [155, 12, 170, 224, 30, 250, 204, 130]);
     }
 
     #[test]

@@ -5,8 +5,16 @@ anchor_version = "0.32.1"
 resolution = true
 skip-lint = true
 
+[programs.localnet]
+token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+wzrd_rails = "BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9"
+
+[programs.devnet]
+token_2022 = "GmGXXNjLhxKdEfCqnYgW2tev4DewPvgUXzhsVfm677VW"
+wzrd_rails = "BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9"
+
 [programs.mainnet]
-channel_vault = "8szQjRkv1PPaFAo3KUb2eEv5ZZQGr4grACRhktcMEiL4"
+token_2022 = "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
 wzrd_rails = "BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9"
 
 [registry]
