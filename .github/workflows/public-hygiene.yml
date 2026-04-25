@@ -42,7 +42,7 @@ jobs:
           fi
 
           echo "Checking file contents..."
-          BAD_SECRETS=$(git ls-files -z | xargs -0 rg -lI --pcre2 'B[E]GIN [A-Z ]*PRIVATE KEY|O[P]ENSSH PRIVATE KEY|mnemo[n]ic|s[e]ed phrase|d[o]ppler_[A-Za-z0-9]+|Authori[z]ation:\s*Bearer\s+[A-Za-z0-9._-]{24,}|x-api-k[e]y:\s*[A-Za-z0-9._-]{24,}|api-k[e]y=[A-Za-z0-9._-]{16,}|hooks\.sl[a]ck\.com/services/[A-Za-z0-9_/-]+|~\/\.wzrd-r[o]tation|old-oracle-auth[o]rity\.json' || true)
+          BAD_SECRETS=$(git ls-files -z | xargs -0 rg -lI --pcre2 'B[E]GIN [A-Z ]*PRIVATE KEY|O[P]ENSSH PRIVATE KEY|mnemo[n]ic|s[e]ed phrase|d[o]ppler_[A-Za-z0-9]+|Authori[z]ation:\s*Bearer\s+[A-Za-z0-9._-]{24,}|x-api-k[e]y:\s*[A-Za-z0-9._-]{24,}|api-k[e]y=[A-Za-z0-9._-]{16,}|hooks\.sl[a]ck\.com/services/[A-Za-z0-9_/-]+|~\/\.wzrd-r[o]tation|old-oracle-auth[o]rity\.json|oracle-auth[o]rity\.json|\/home\/tw[z]rd' || true)
           if [ -n "$BAD_SECRETS" ]; then
             echo "Potential hardcoded secret material detected in these files:"
             echo "$BAD_SECRETS"
