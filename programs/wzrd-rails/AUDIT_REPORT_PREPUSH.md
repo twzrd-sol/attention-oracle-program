@@ -2,7 +2,7 @@
 
 **Date**: 2026-04-19
 **Auditor**: Direct human-in-the-loop review (Claude Opus 4.7, 1M context)
-**Scope**: `/home/twzrd/attention-oracle-program-rails-audit-closure-and-m1/programs/wzrd-rails/` (3 source files, 1,564 lines)
+**Scope**: `programs/wzrd-rails/` (3 source files, 1,564 lines)
 **Branch**: `feat/rails-audit-closure-and-m1`
 **Commits under review**: `17134c4` (audit cleanup) + `6d9192b` (M-01 compensation)
 **Build Status**: `anchor build --program-name wzrd_rails` ✓

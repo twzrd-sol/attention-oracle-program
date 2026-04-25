@@ -2,7 +2,7 @@
 
 **Date**: 2026-04-18
 **Auditor**: Automated Security Analysis (Plamen Core, recon phase only)
-**Scope**: `/home/twzrd/attention-oracle-program/programs/wzrd-rails/` (3 files, 1203 lines)
+**Scope**: `programs/wzrd-rails/` (3 files, 1203 lines)
 **Language/Version**: Solana / Anchor 0.32.1 / Token-2022
 **Build Status**: `anchor build --program-name wzrd_rails` — success (requires lockfile pin `borsh@1.5.7` + `proc-macro-crate@3.2.0`)
 **Test Status**: 18/18 unit tests + 7/7 LiteSVM integration tests passing
@@ -318,7 +318,7 @@ The stake handler uses `user_stake.user != Pubkey::default()` as the sentinel to
 **Agents Spawned**: 4 of ~33 planned
 **Approximate API Cost**: ~$12 of the ~$84 estimated
 
-**Scratchpad location**: `/home/twzrd/.claude/plamen-audits/wzrd-rails-20260418_220335/`
+**Scratchpad location**: private local audit workspace
 
 ---
 
