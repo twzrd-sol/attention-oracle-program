@@ -123,4 +123,7 @@ pub enum ListenPayoutError {
 
     #[msg("per_window_cap_ccm must be greater than zero")]
     CapMustBeNonZero = 123,
+
+    #[msg("Cumulative claimed amount would exceed the published window total")]
+    ExceedsWindowTotal = 124,
 }
