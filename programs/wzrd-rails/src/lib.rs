@@ -588,6 +588,73 @@ pub mod wzrd_rails {
 
         Ok(())
     }
+
+    /// Publish a daily Listen payout merkle root.
+    ///
+    /// The server builds the tree off-chain from `PayoutLeafV1` leaves. This IX
+    /// commits the root, leaf count, schema version, total amount, and inline
+    /// claim bitmap on-chain so P1.3 can verify and settle individual claims.
+    pub fn publish_listen_payout_root(
+        ctx: Context<PublishListenPayoutRoot>,
+        args: PublishListenPayoutRootArgs,
+    ) -> Result<()> {
+        let cfg = &mut ctx.accounts.authority_config;
+        let cap = &ctx.accounts.cap_config;
+        let win = &mut ctx.accounts.payout_window;
+        let signer = ctx.accounts.authority.key();
+
+        require!(!cfg.paused, ListenPayoutError::Paused);
+        require!(
+            cfg.publisher_allowed(&signer),
+            ListenPayoutError::UnauthorizedPublisher
+        );
+        require!(
+            args.schema_version == LISTEN_PAYOUT_LEAF_SCHEMA_V1,
+            ListenPayoutError::SchemaVersionMismatch
+        );
+        require!(
+            args.window_id > cfg.last_published_window_id,
+            ListenPayoutError::WindowIdNotMonotonic
+        );
+        require!(args.leaf_count > 0, ListenPayoutError::ZeroLeafCount);
+        require!(
+            args.leaf_count <= MAX_LEAVES_PER_WINDOW,
+            ListenPayoutError::LeafCountExceedsMax
+        );
+        require!(
+            args.merkle_root != [0u8; 32],
+            ListenPayoutError::ZeroMerkleRoot
+        );
+        require!(
+            args.total_amount_ccm <= cap.per_window_cap_ccm,
+            ListenPayoutError::ExceedsPerWindowCap
+        );
+
+        let slot = Clock::get()?.slot;
+        win.bump = ctx.bumps.payout_window;
+        win.window_id = args.window_id;
+        win.merkle_root = args.merkle_root;
+        win.leaf_count = args.leaf_count;
+        win.schema_version = args.schema_version;
+        win.total_amount_ccm = args.total_amount_ccm;
+        win.published_by = signer;
+        win.published_at_slot = slot;
+        win.claim_bitmap = vec![0u8; PayoutWindow::bitmap_bytes(args.leaf_count)];
+
+        cfg.last_published_window_id = args.window_id;
+
+        emit!(PayoutWindowPublished {
+            window_id: args.window_id,
+            merkle_root: args.merkle_root,
+            leaf_count: args.leaf_count,
+            schema_version: args.schema_version,
+            total_amount_ccm: args.total_amount_ccm,
+            published_by: signer,
+            published_at_slot: slot,
+        });
+
+        Ok(())
+    }
 }
 
 fn compensation_leaf(user: &Pubkey, amount: u64) -> [u8; 32] {
@@ -953,5 +1020,32 @@ pub struct ClaimCompensation<'info> {
     pub claimed: Account<'info, CompensationClaimed>,
     #[account(address = TOKEN_2022_PROGRAM_ID @ RailsError::InvalidTokenProgram)]
     pub token_2022_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(args: PublishListenPayoutRootArgs)]
+pub struct PublishListenPayoutRoot<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
+        bump = authority_config.bump,
+    )]
+    pub authority_config: Account<'info, PayoutAuthorityConfig>,
+    #[account(
+        seeds = [LISTEN_PAYOUT_CAP_CONFIG_SEED],
+        bump = cap_config.bump,
+    )]
+    pub cap_config: Account<'info, PayoutCapConfig>,
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + PayoutWindow::space(args.leaf_count),
+        seeds = [LISTEN_PAYOUT_WINDOW_SEED, &args.window_id.to_le_bytes()],
+        bump,
+    )]
+    pub payout_window: Account<'info, PayoutWindow>,
     pub system_program: Program<'info, System>,
 }
