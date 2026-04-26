@@ -40,6 +40,45 @@ pub struct ClaimListenPayoutArgs {
     pub proof: Vec<[u8; 32]>,
 }
 
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct InitPayoutAuthorityConfigArgs {
+    pub admin: Pubkey,
+    pub initial_publisher: Pubkey,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SetPayoutAuthorityAllowlistArgs {
+    /// Replaces the current publisher list entirely.
+    pub publishers: Vec<Pubkey>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct InitPayoutCapConfigArgs {
+    pub admin: Pubkey,
+    pub per_window_cap_ccm: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SetPerWindowCcmCapArgs {
+    pub new_cap_ccm: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SetPausedArgs {
+    pub paused: bool,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct InitPayoutVaultConfigArgs {
+    pub admin: Pubkey,
+    pub ccm_mint: Pubkey,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SetPayoutAdminArgs {
+    pub new_admin: Pubkey,
+}
+
 /// Allow-list + monotonic window state for Listen payout-root publishers.
 ///
 /// PDA: `[LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED]`
@@ -165,6 +204,32 @@ pub struct ListenPayoutClaimed {
     pub pool_id: [u8; 32],
     pub allocation_id: [u8; 16],
     pub claimed_at_slot: u64,
+}
+
+#[event]
+pub struct PayoutAllowlistUpdated {
+    pub publishers: Vec<Pubkey>,
+    pub updated_by: Pubkey,
+}
+
+#[event]
+pub struct PayoutCapUpdated {
+    pub old_cap: u64,
+    pub new_cap: u64,
+    pub updated_by: Pubkey,
+}
+
+#[event]
+pub struct PayoutPauseChanged {
+    pub was: bool,
+    pub now: bool,
+    pub updated_by: Pubkey,
+}
+
+#[event]
+pub struct PayoutAdminRotated {
+    pub old_admin: Pubkey,
+    pub new_admin: Pubkey,
 }
 
 /// Safety bound for `reward_rate_per_slot`.

@@ -150,6 +150,121 @@ pub mod wzrd_rails {
         Ok(())
     }
 
+    /// Initialize Listen payout publisher/admin config.
+    ///
+    /// Global config admin must sign to prevent PDA squatting. The payout
+    /// admin stored here may be the signer, an operator-governance key, or a
+    /// Squads PDA prepared by the deployment runbook.
+    pub fn init_payout_authority_config(
+        ctx: Context<InitPayoutAuthorityConfig>,
+        args: InitPayoutAuthorityConfigArgs,
+    ) -> Result<()> {
+        let publishers = vec![args.initial_publisher];
+        validate_payout_publishers(&publishers)?;
+
+        let cfg = &mut ctx.accounts.authority_config;
+        cfg.bump = ctx.bumps.authority_config;
+        cfg.publishers = publishers;
+        cfg.last_published_window_id = 0;
+        cfg.admin = args.admin;
+        cfg.paused = false;
+        cfg._reserved = [0u8; 32];
+        Ok(())
+    }
+
+    /// Replace the Listen payout root publisher allow-list.
+    pub fn set_payout_authority_allowlist(
+        ctx: Context<SetPayoutAuthorityAllowlist>,
+        args: SetPayoutAuthorityAllowlistArgs,
+    ) -> Result<()> {
+        validate_payout_publishers(&args.publishers)?;
+        ctx.accounts.authority_config.publishers = args.publishers.clone();
+
+        emit!(PayoutAllowlistUpdated {
+            publishers: args.publishers,
+            updated_by: ctx.accounts.admin.key(),
+        });
+
+        Ok(())
+    }
+
+    /// Initialize the Listen payout per-window cap config.
+    pub fn init_payout_cap_config(
+        ctx: Context<InitPayoutCapConfig>,
+        args: InitPayoutCapConfigArgs,
+    ) -> Result<()> {
+        let cfg = &mut ctx.accounts.cap_config;
+        cfg.bump = ctx.bumps.cap_config;
+        cfg.per_window_cap_ccm = args.per_window_cap_ccm;
+        cfg.admin = args.admin;
+        cfg._reserved = [0u8; 32];
+        Ok(())
+    }
+
+    /// Set the maximum total CCM that any single payout window may publish.
+    pub fn set_per_window_ccm_cap(
+        ctx: Context<SetPerWindowCcmCap>,
+        args: SetPerWindowCcmCapArgs,
+    ) -> Result<()> {
+        let old_cap = ctx.accounts.cap_config.per_window_cap_ccm;
+        ctx.accounts.cap_config.per_window_cap_ccm = args.new_cap_ccm;
+
+        emit!(PayoutCapUpdated {
+            old_cap,
+            new_cap: args.new_cap_ccm,
+            updated_by: ctx.accounts.admin.key(),
+        });
+
+        Ok(())
+    }
+
+    /// Emergency halt for Listen payout root publishing and claiming.
+    pub fn set_paused(ctx: Context<SetPaused>, args: SetPausedArgs) -> Result<()> {
+        let was = ctx.accounts.authority_config.paused;
+        ctx.accounts.authority_config.paused = args.paused;
+
+        emit!(PayoutPauseChanged {
+            was,
+            now: args.paused,
+            updated_by: ctx.accounts.admin.key(),
+        });
+
+        Ok(())
+    }
+
+    /// Initialize Listen payout vault config.
+    ///
+    /// The actual Token-2022 vault is the ATA owned by the derived
+    /// vault-authority PDA and is funded by the operator off-chain.
+    pub fn init_payout_vault_config(
+        ctx: Context<InitPayoutVaultConfig>,
+        args: InitPayoutVaultConfigArgs,
+    ) -> Result<()> {
+        let cfg = &mut ctx.accounts.vault_config;
+        cfg.bump = ctx.bumps.vault_config;
+        cfg.ccm_mint = args.ccm_mint;
+        cfg.vault_authority_bump = ctx.bumps.vault_authority;
+        cfg.admin = args.admin;
+        cfg._reserved = [0u8; 32];
+        Ok(())
+    }
+
+    /// Rotate the single Listen payout admin.
+    ///
+    /// Named `set_payout_admin` because `wzrd-rails` already has a global
+    /// `set_admin` IX for the base rails config.
+    pub fn set_payout_admin(ctx: Context<SetPayoutAdmin>, args: SetPayoutAdminArgs) -> Result<()> {
+        let old_admin = ctx.accounts.authority_config.admin;
+        ctx.accounts.authority_config.admin = args.new_admin;
+
+        emit!(PayoutAdminRotated {
+            old_admin,
+            new_admin: args.new_admin,
+        });
+
+        Ok(())
+    }
+
     /// Set the one-time compensation merkle root and eagerly create the
     /// config-level compensation vault.
     ///
@@ -778,6 +893,27 @@ fn sorted_pair_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     keccak::hashv(&[first, second]).to_bytes()
 }
 
+fn validate_payout_publishers(publishers: &[Pubkey]) -> Result<()> {
+    require!(!publishers.is_empty(), ListenPayoutError::EmptyAllowlist);
+    require!(
+        publishers.len() <= PayoutAuthorityConfig::MAX_PUBLISHERS,
+        ListenPayoutError::TooManyPublishers
+    );
+
+    let mut sorted = publishers
+        .iter()
+        .map(|publisher| publisher.to_bytes())
+        .collect::<Vec<_>>();
+    sorted.sort();
+    sorted.dedup();
+    require!(
+        sorted.len() == publishers.len(),
+        ListenPayoutError::DuplicatePublisher
+    );
+
+    Ok(())
+}
+
 #[inline(never)]
 fn verify_compensation_proof(
     user: &Pubkey,
@@ -870,6 +1006,129 @@ pub struct AdminOnly<'info> {
     )]
     pub config: Account<'info, Config>,
     pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct InitPayoutAuthorityConfig<'info> {
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        has_one = admin @ RailsError::Unauthorized,
+    )]
+    pub config: Account<'info, Config>,
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + PayoutAuthorityConfig::space(),
+        seeds = [LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
+        bump,
+    )]
+    pub authority_config: Account<'info, PayoutAuthorityConfig>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SetPayoutAuthorityAllowlist<'info> {
+    pub admin: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
+        bump = authority_config.bump,
+        constraint = authority_config.admin == admin.key() @ ListenPayoutError::NotAdmin,
+    )]
+    pub authority_config: Account<'info, PayoutAuthorityConfig>,
+}
+
+#[derive(Accounts)]
+pub struct InitPayoutCapConfig<'info> {
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        has_one = admin @ RailsError::Unauthorized,
+    )]
+    pub config: Account<'info, Config>,
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + PayoutCapConfig::space(),
+        seeds = [LISTEN_PAYOUT_CAP_CONFIG_SEED],
+        bump,
+    )]
+    pub cap_config: Account<'info, PayoutCapConfig>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SetPerWindowCcmCap<'info> {
+    pub admin: Signer<'info>,
+    #[account(
+        seeds = [LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
+        bump = authority_config.bump,
+        constraint = authority_config.admin == admin.key() @ ListenPayoutError::NotAdmin,
+    )]
+    pub authority_config: Account<'info, PayoutAuthorityConfig>,
+    #[account(
+        mut,
+        seeds = [LISTEN_PAYOUT_CAP_CONFIG_SEED],
+        bump = cap_config.bump,
+    )]
+    pub cap_config: Account<'info, PayoutCapConfig>,
+}
+
+#[derive(Accounts)]
+pub struct SetPaused<'info> {
+    pub admin: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
+        bump = authority_config.bump,
+        constraint = authority_config.admin == admin.key() @ ListenPayoutError::NotAdmin,
+    )]
+    pub authority_config: Account<'info, PayoutAuthorityConfig>,
+}
+
+#[derive(Accounts)]
+pub struct InitPayoutVaultConfig<'info> {
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        has_one = admin @ RailsError::Unauthorized,
+    )]
+    pub config: Account<'info, Config>,
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + PayoutVaultConfig::space(),
+        seeds = [LISTEN_PAYOUT_VAULT_CONFIG_SEED],
+        bump,
+    )]
+    pub vault_config: Account<'info, PayoutVaultConfig>,
+    /// CHECK: PDA-only token authority. Seeds and bump are checked here; the
+    /// bump is stored in vault_config for P1.3 claim signing.
+    #[account(
+        seeds = [LISTEN_PAYOUT_VAULT_AUTHORITY_SEED],
+        bump,
+    )]
+    pub vault_authority: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SetPayoutAdmin<'info> {
+    pub admin: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
+        bump = authority_config.bump,
+        constraint = authority_config.admin == admin.key() @ ListenPayoutError::NotAdmin,
+    )]
+    pub authority_config: Account<'info, PayoutAuthorityConfig>,
 }
 
 #[derive(Accounts)]
