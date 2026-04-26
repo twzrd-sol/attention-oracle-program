@@ -108,4 +108,7 @@ pub enum ListenPayoutError {
 
     #[msg("Allow-list contains duplicate publishers")]
     DuplicatePublisher = 118,
+
+    #[msg("Cumulative claimed amount would exceed the published window total")]
+    ExceedsWindowTotal = 119,
 }
