@@ -101,6 +101,16 @@ impl PayoutWindow {
     pub fn space(leaf_count: u32) -> usize {
         1 + 8 + 32 + 4 + 1 + 8 + 32 + 8 + 4 + Self::bitmap_bytes(leaf_count)
     }
+
+    /// Account body size for Anchor `init` before handler validation runs.
+    ///
+    /// `leaf_count` is instruction data controlled by the caller. Clamp the
+    /// allocation bound here so an invalid extreme value cannot force Anchor's
+    /// account creation path to request an enormous account before the handler
+    /// returns `LeafCountExceedsMax`.
+    pub fn init_space(leaf_count: u32) -> usize {
+        Self::space(leaf_count.min(MAX_LEAVES_PER_WINDOW))
+    }
 }
 
 #[event]
@@ -505,6 +515,15 @@ mod tests {
         assert_eq!(PayoutAuthorityConfig::space(), 334);
         assert_eq!(PayoutCapConfig::space(), 73);
         assert_eq!(PayoutWindow::space(MAX_LEAVES_PER_WINDOW), 4_194);
+    }
+
+    #[test]
+    fn listen_payout_window_init_space_clamps_untrusted_leaf_count() {
+        assert_eq!(PayoutWindow::init_space(20), PayoutWindow::space(20));
+        assert_eq!(
+            PayoutWindow::init_space(u32::MAX),
+            PayoutWindow::space(MAX_LEAVES_PER_WINDOW)
+        );
     }
 
     #[test]

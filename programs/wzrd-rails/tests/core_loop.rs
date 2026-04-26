@@ -1364,6 +1364,18 @@ fn publish_listen_payout_root_rejects_excessive_leaf_count() {
 }
 
 #[test]
+fn publish_listen_payout_root_rejects_extreme_leaf_count_before_huge_alloc() {
+    let mut env = setup_rails();
+    let mut args = payout_args(PAYOUT_WINDOW_ID);
+    args.leaf_count = u32::MAX;
+
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root_as_admin(args),
+        ListenPayoutError::LeafCountExceedsMax,
+    );
+}
+
+#[test]
 fn publish_listen_payout_root_rejects_zero_merkle_root() {
     let mut env = setup_rails();
     let mut args = payout_args(PAYOUT_WINDOW_ID);

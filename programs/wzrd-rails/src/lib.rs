@@ -1042,7 +1042,7 @@ pub struct PublishListenPayoutRoot<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + PayoutWindow::space(args.leaf_count),
+        space = 8 + PayoutWindow::init_space(args.leaf_count),
         seeds = [LISTEN_PAYOUT_WINDOW_SEED, &args.window_id.to_le_bytes()],
         bump,
     )]
