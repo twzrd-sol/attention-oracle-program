@@ -46,7 +46,7 @@ use wzrd_rails::{
         LISTEN_PAYOUT_WINDOW_SEED, MAX_LEAVES_PER_WINDOW, MAX_PROOF_LEN, MAX_REWARD_RATE_PER_SLOT,
         POOL_SEED, REWARD_VAULT_SEED, STAKE_VAULT_SEED, USER_STAKE_SEED,
     },
-    ListenPayoutError, PayoutLeafV1, RailsError, ID as WZRD_RAILS_PROGRAM_ID,
+    ListenPayoutError, PayoutAllocationLeafV1, RailsError, ID as WZRD_RAILS_PROGRAM_ID,
     LISTEN_PAYOUT_LEAF_SCHEMA_V1,
 };
 
@@ -1457,13 +1457,18 @@ fn payout_args(window_id: u64) -> PublishListenPayoutRootArgs {
 
 #[derive(Clone)]
 struct ListenPayoutTree {
-    leaves: Vec<PayoutLeafV1>,
+    leaves: Vec<PayoutAllocationLeafV1>,
     root: [u8; 32],
     proofs: Vec<Vec<[u8; 32]>>,
 }
 
-fn listen_payout_leaf(wallet: LegacyPubkey, leaf_index: u32, amount_ccm: u64) -> PayoutLeafV1 {
-    PayoutLeafV1::new(
+fn listen_payout_leaf(
+    wallet: LegacyPubkey,
+    leaf_index: u32,
+    amount_ccm: u64,
+) -> PayoutAllocationLeafV1 {
+    PayoutAllocationLeafV1::new(
+        [0x51; 32],
         PAYOUT_WINDOW_ID,
         leaf_index,
         [leaf_index as u8; 16],
@@ -1478,13 +1483,16 @@ fn listen_payout_leaf(wallet: LegacyPubkey, leaf_index: u32, amount_ccm: u64) ->
 fn build_listen_payout_tree(wallets: &[LegacyPubkey], amounts: &[u64]) -> ListenPayoutTree {
     assert_eq!(wallets.len(), amounts.len());
     assert!(wallets.len().is_power_of_two());
-    let leaves: Vec<PayoutLeafV1> = wallets
+    let leaves: Vec<PayoutAllocationLeafV1> = wallets
         .iter()
         .zip(amounts.iter())
         .enumerate()
         .map(|(idx, (wallet, amount))| listen_payout_leaf(*wallet, idx as u32, *amount))
         .collect();
-    let mut levels = vec![leaves.iter().map(PayoutLeafV1::hash).collect::<Vec<_>>()];
+    let mut levels = vec![leaves
+        .iter()
+        .map(PayoutAllocationLeafV1::hash)
+        .collect::<Vec<_>>()];
     while levels.last().unwrap().len() > 1 {
         let previous = levels.last().unwrap();
         let next = previous
@@ -1764,7 +1772,8 @@ fn claim_listen_payout_happy_path_creates_ata_and_transfers() {
     assert_eq!(event.leaf_index, 0);
     assert_eq!(event.wallet, env.user_a.pubkey());
     assert_eq!(event.amount_ccm, amount);
-    assert_eq!(event.session_id, tree.leaves[0].session_id);
+    assert_eq!(event.pool_id, tree.leaves[0].pool_id);
+    assert_eq!(event.allocation_id, tree.leaves[0].allocation_id);
     assert_eq!(event.claimed_at_slot, 789);
 }
 

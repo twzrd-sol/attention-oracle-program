@@ -597,11 +597,13 @@ pub mod wzrd_rails {
         Ok(())
     }
 
-    /// Publish a daily Listen payout merkle root.
+    /// Publish a daily Listen payout allocation merkle root.
     ///
-    /// The server builds the tree off-chain from `PayoutLeafV1` leaves. This IX
-    /// commits the root, leaf count, schema version, total amount, and inline
-    /// claim bitmap on-chain so P1.3 can verify and settle individual claims.
+    /// The server builds the tree off-chain from `PayoutAllocationLeafV1`
+    /// leaves. Each leaf represents scarce funded inventory allocated to a
+    /// wallet from a payout pool, not a direct session reward. This IX commits
+    /// the root, leaf count, schema version, total amount, and inline claim
+    /// bitmap on-chain so P1.3 can verify and settle individual claims.
     pub fn publish_listen_payout_root(
         ctx: Context<PublishListenPayoutRoot>,
         args: PublishListenPayoutRootArgs,
@@ -664,11 +666,11 @@ pub mod wzrd_rails {
         Ok(())
     }
 
-    /// Claim a Listen payout from a published merkle window.
+    /// Claim a Listen payout allocation from a published merkle window.
     ///
-    /// This verifies the `PayoutLeafV1` merkle proof, flips the inline bitmap bit
-    /// for anti-replay, and transfers pre-funded CCM from the Listen payout vault
-    /// to the claiming wallet's Token-2022 ATA.
+    /// This verifies the `PayoutAllocationLeafV1` merkle proof, flips the
+    /// inline bitmap bit for anti-replay, and transfers pre-funded CCM from the
+    /// Listen payout vault to the claiming wallet's Token-2022 ATA.
     pub fn claim_listen_payout(
         ctx: Context<ClaimListenPayout>,
         args: ClaimListenPayoutArgs,
@@ -749,7 +751,8 @@ pub mod wzrd_rails {
             leaf_index: leaf.leaf_index,
             wallet: ctx.accounts.claimer.key(),
             amount_ccm: leaf.amount_ccm,
-            session_id: leaf.session_id,
+            pool_id: leaf.pool_id,
+            allocation_id: leaf.allocation_id,
             claimed_at_slot: Clock::get()?.slot,
         });
 

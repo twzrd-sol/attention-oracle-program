@@ -5,7 +5,7 @@
 
 use anchor_lang::prelude::*;
 
-use crate::listen_payout::PayoutLeafV1;
+use crate::listen_payout::PayoutAllocationLeafV1;
 
 // PDA seed constants. Centralized here so off-chain derivation scripts
 // (keepers, SDK) can import the same values and stay in sync.
@@ -36,7 +36,7 @@ pub struct PublishListenPayoutRootArgs {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ClaimListenPayoutArgs {
-    pub leaf: PayoutLeafV1,
+    pub leaf: PayoutAllocationLeafV1,
     pub proof: Vec<[u8; 32]>,
 }
 
@@ -106,7 +106,8 @@ impl PayoutVaultConfig {
     }
 }
 
-/// One merkle commitment and inline claim bitmap per Listen payout window.
+/// One merkle commitment and inline claim bitmap per Listen payout allocation
+/// window.
 ///
 /// PDA: `[LISTEN_PAYOUT_WINDOW_SEED, window_id.to_le_bytes()]`
 #[account]
@@ -161,7 +162,8 @@ pub struct ListenPayoutClaimed {
     pub leaf_index: u32,
     pub wallet: Pubkey,
     pub amount_ccm: u64,
-    pub session_id: [u8; 16],
+    pub pool_id: [u8; 32],
+    pub allocation_id: [u8; 16],
     pub claimed_at_slot: u64,
 }
 
