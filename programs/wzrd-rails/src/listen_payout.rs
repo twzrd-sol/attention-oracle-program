@@ -1,81 +1,102 @@
-//! Listen payout leaf schema.
+//! Listen payout allocation leaf schema.
 //!
-//! This module is the byte-level contract between the server payout worker,
-//! the future `claim_listen_payout` IX, frontend proof builders, and public
+//! This module is the byte-level contract between the server pool-allocation
+//! worker, the `claim_listen_payout` IX, frontend proof builders, and public
 //! indexers. Keep it boring and exhaustively tested: a one-byte drift here
 //! makes every payout proof unverifiable.
 
 use anchor_lang::prelude::*;
 use solana_keccak_hasher as keccak;
 
-/// Canonical schema version for Listen payout leaves.
-pub const LISTEN_PAYOUT_LEAF_SCHEMA_V1: u8 = 1;
+/// Canonical schema version for Listen payout allocation leaves.
+pub const LISTEN_PAYOUT_ALLOCATION_LEAF_SCHEMA_V1: u8 = 1;
+
+/// Backwards-compatible constant name used by P1.2/P1.3 account args.
+pub const LISTEN_PAYOUT_LEAF_SCHEMA_V1: u8 = LISTEN_PAYOUT_ALLOCATION_LEAF_SCHEMA_V1;
 
 /// Domain separators for Listen payout hashes.
-pub const LISTEN_PAYOUT_LEAF_V1_DOMAIN: &[u8] = b"wzrd-rails:listen-payout-leaf:v1";
-pub const LISTEN_PAYOUT_NODE_V1_DOMAIN: &[u8] = b"wzrd-rails:listen-payout-node:v1";
+pub const LISTEN_PAYOUT_ALLOCATION_LEAF_V1_DOMAIN: &[u8] =
+    b"wzrd-rails:listen-payout-allocation-leaf:v1";
+pub const LISTEN_PAYOUT_ALLOCATION_NODE_V1_DOMAIN: &[u8] =
+    b"wzrd-rails:listen-payout-allocation-node:v1";
 
-/// A single claimable Listen payout leaf.
+/// Backwards-compatible constant names used by existing helpers/tests.
+pub const LISTEN_PAYOUT_LEAF_V1_DOMAIN: &[u8] = LISTEN_PAYOUT_ALLOCATION_LEAF_V1_DOMAIN;
+pub const LISTEN_PAYOUT_NODE_V1_DOMAIN: &[u8] = LISTEN_PAYOUT_ALLOCATION_NODE_V1_DOMAIN;
+
+/// A single claimable Listen payout allocation leaf.
+///
+/// This leaf represents scarce funded inventory allocated to a wallet from a
+/// payout pool. It is not a direct reward for one listening session. The
+/// listening sessions that justify the allocation are committed through
+/// `supporting_session_ids_root`.
 ///
 /// Canonical byte encoding for `hash()`:
 ///
 /// ```text
 /// domain ||
 /// schema_version:u8 ||
+/// pool_id:32_bytes ||
 /// window_id:u64_le ||
 /// leaf_index:u32_le ||
-/// session_id:16_bytes ||
+/// allocation_id:16_bytes ||
 /// wallet_pubkey:32_bytes ||
 /// amount_ccm:u64_le ||
-/// session_merkle_root:32_bytes ||
+/// supporting_session_ids_root:32_bytes ||
 /// metadata_hash:32_bytes ||
 /// salt:16_bytes
 /// ```
 ///
 /// Notes:
+/// - `pool_id` identifies the funded reward pool that owns this inventory.
 /// - `window_id` is a monotonic daily UTC id chosen by the server.
 /// - `leaf_index` is bound into the hash so bitmap replay protection can key
 ///   by `(window_id, leaf_index)` without letting the same leaf claim multiple
 ///   indexes.
-/// - `session_id` uses RFC 4122 UUID bytes, not a UTF-8 string.
+/// - `allocation_id` is the server-side allocation UUID bytes, not a UTF-8
+///   string.
 /// - `amount_ccm` is in CCM Token-2022 base units.
-/// - `session_merkle_root` is the finalized listening-session merkle root.
+/// - `supporting_session_ids_root` commits to the listen arcs/sessions used to
+///   justify the allocation. It does not make those sessions directly payable.
 /// - `metadata_hash` commits to the public, canonical off-chain metadata JSON
 ///   served for indexers. Use all-zero only for test fixtures.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PayoutLeafV1 {
+pub struct PayoutAllocationLeafV1 {
     pub schema_version: u8,
+    pub pool_id: [u8; 32],
     pub window_id: u64,
     pub leaf_index: u32,
-    pub session_id: [u8; 16],
+    pub allocation_id: [u8; 16],
     pub wallet_pubkey: Pubkey,
     pub amount_ccm: u64,
-    pub session_merkle_root: [u8; 32],
+    pub supporting_session_ids_root: [u8; 32],
     pub metadata_hash: [u8; 32],
     pub salt: [u8; 16],
 }
 
-impl PayoutLeafV1 {
-    pub const CANONICAL_LEN: usize = 1 + 8 + 4 + 16 + 32 + 8 + 32 + 32 + 16;
+impl PayoutAllocationLeafV1 {
+    pub const CANONICAL_LEN: usize = 1 + 32 + 8 + 4 + 16 + 32 + 8 + 32 + 32 + 16;
 
     pub fn new(
+        pool_id: [u8; 32],
         window_id: u64,
         leaf_index: u32,
-        session_id: [u8; 16],
+        allocation_id: [u8; 16],
         wallet_pubkey: Pubkey,
         amount_ccm: u64,
-        session_merkle_root: [u8; 32],
+        supporting_session_ids_root: [u8; 32],
         metadata_hash: [u8; 32],
         salt: [u8; 16],
     ) -> Self {
         Self {
-            schema_version: LISTEN_PAYOUT_LEAF_SCHEMA_V1,
+            schema_version: LISTEN_PAYOUT_ALLOCATION_LEAF_SCHEMA_V1,
+            pool_id,
             window_id,
             leaf_index,
-            session_id,
+            allocation_id,
             wallet_pubkey,
             amount_ccm,
-            session_merkle_root,
+            supporting_session_ids_root,
             metadata_hash,
             salt,
         }
@@ -88,13 +109,16 @@ impl PayoutLeafV1 {
         out[offset] = self.schema_version;
         offset += 1;
 
+        out[offset..offset + 32].copy_from_slice(&self.pool_id);
+        offset += 32;
+
         out[offset..offset + 8].copy_from_slice(&self.window_id.to_le_bytes());
         offset += 8;
 
         out[offset..offset + 4].copy_from_slice(&self.leaf_index.to_le_bytes());
         offset += 4;
 
-        out[offset..offset + 16].copy_from_slice(&self.session_id);
+        out[offset..offset + 16].copy_from_slice(&self.allocation_id);
         offset += 16;
 
         out[offset..offset + 32].copy_from_slice(self.wallet_pubkey.as_ref());
@@ -103,7 +127,7 @@ impl PayoutLeafV1 {
         out[offset..offset + 8].copy_from_slice(&self.amount_ccm.to_le_bytes());
         offset += 8;
 
-        out[offset..offset + 32].copy_from_slice(&self.session_merkle_root);
+        out[offset..offset + 32].copy_from_slice(&self.supporting_session_ids_root);
         offset += 32;
 
         out[offset..offset + 32].copy_from_slice(&self.metadata_hash);
@@ -120,6 +144,10 @@ impl PayoutLeafV1 {
     }
 }
 
+/// Backwards-compatible alias for P1.2/P1.3 callers while the instruction
+/// names remain `publish_listen_payout_root` and `claim_listen_payout`.
+pub type PayoutLeafV1 = PayoutAllocationLeafV1;
+
 /// Sorted-pair merkle node hash for Listen payout trees.
 pub fn listen_payout_node_hash_v1(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     let (first, second) = if left <= right {
@@ -135,7 +163,8 @@ mod tests {
     use super::*;
 
     fn fixture_leaf() -> PayoutLeafV1 {
-        PayoutLeafV1::new(
+        PayoutAllocationLeafV1::new(
+            [0x51; 32],
             20260426,
             7,
             [
@@ -155,32 +184,33 @@ mod tests {
 
     #[test]
     fn payout_leaf_v1_constants_are_stable() {
-        assert_eq!(LISTEN_PAYOUT_LEAF_SCHEMA_V1, 1);
+        assert_eq!(LISTEN_PAYOUT_ALLOCATION_LEAF_SCHEMA_V1, 1);
         assert_eq!(
             LISTEN_PAYOUT_LEAF_V1_DOMAIN,
-            b"wzrd-rails:listen-payout-leaf:v1"
+            b"wzrd-rails:listen-payout-allocation-leaf:v1"
         );
         assert_eq!(
             LISTEN_PAYOUT_NODE_V1_DOMAIN,
-            b"wzrd-rails:listen-payout-node:v1"
+            b"wzrd-rails:listen-payout-allocation-node:v1"
         );
-        assert_eq!(PayoutLeafV1::CANONICAL_LEN, 149);
+        assert_eq!(PayoutAllocationLeafV1::CANONICAL_LEN, 181);
     }
 
     #[test]
     fn payout_leaf_v1_canonical_bytes_are_little_endian_and_ordered() {
         let leaf = fixture_leaf();
         let bytes = leaf.canonical_bytes();
-        assert_eq!(bytes.len(), PayoutLeafV1::CANONICAL_LEN);
-        assert_eq!(bytes[0], LISTEN_PAYOUT_LEAF_SCHEMA_V1);
-        assert_eq!(&bytes[1..9], &20260426u64.to_le_bytes());
-        assert_eq!(&bytes[9..13], &7u32.to_le_bytes());
-        assert_eq!(&bytes[13..29], &leaf.session_id);
-        assert_eq!(&bytes[29..61], leaf.wallet_pubkey.as_ref());
-        assert_eq!(&bytes[61..69], &42_000_000u64.to_le_bytes());
-        assert_eq!(&bytes[69..101], &[0xaa; 32]);
-        assert_eq!(&bytes[101..133], &[0xbb; 32]);
-        assert_eq!(&bytes[133..149], &leaf.salt);
+        assert_eq!(bytes.len(), PayoutAllocationLeafV1::CANONICAL_LEN);
+        assert_eq!(bytes[0], LISTEN_PAYOUT_ALLOCATION_LEAF_SCHEMA_V1);
+        assert_eq!(&bytes[1..33], &[0x51; 32]);
+        assert_eq!(&bytes[33..41], &20260426u64.to_le_bytes());
+        assert_eq!(&bytes[41..45], &7u32.to_le_bytes());
+        assert_eq!(&bytes[45..61], &leaf.allocation_id);
+        assert_eq!(&bytes[61..93], leaf.wallet_pubkey.as_ref());
+        assert_eq!(&bytes[93..101], &42_000_000u64.to_le_bytes());
+        assert_eq!(&bytes[101..133], &[0xaa; 32]);
+        assert_eq!(&bytes[133..165], &[0xbb; 32]);
+        assert_eq!(&bytes[165..181], &leaf.salt);
     }
 
     #[test]
@@ -188,8 +218,8 @@ mod tests {
         assert_eq!(
             fixture_leaf().hash(),
             [
-                2, 89, 94, 76, 141, 232, 179, 31, 210, 49, 70, 250, 140, 120, 143, 70, 117, 137, 7,
-                32, 54, 37, 151, 230, 228, 15, 114, 151, 166, 236, 33, 152,
+                178, 31, 103, 10, 88, 220, 121, 170, 11, 115, 75, 253, 25, 64, 86, 247, 146, 38,
+                217, 223, 66, 78, 43, 197, 183, 95, 41, 33, 39, 117, 4, 92,
             ]
         );
     }
@@ -203,26 +233,27 @@ mod tests {
     /// twzrd-sol/wzrd-final).
     #[test]
     fn payout_leaf_v1_vector_all_zero() {
-        let leaf = PayoutLeafV1 {
+        let leaf = PayoutAllocationLeafV1 {
             schema_version: 1,
+            pool_id: [0u8; 32],
             window_id: 0,
             leaf_index: 0,
-            session_id: [0u8; 16],
+            allocation_id: [0u8; 16],
             wallet_pubkey: Pubkey::new_from_array([0u8; 32]),
             amount_ccm: 0,
-            session_merkle_root: [0u8; 32],
+            supporting_session_ids_root: [0u8; 32],
             metadata_hash: [0u8; 32],
             salt: [0u8; 16],
         };
-        // GOLDEN HASH — locked 2026-04-26 across both repos.
+        // GOLDEN HASH — locked 2026-04-26 allocation-leaf supersession across both repos.
         // wzrd-final/crates/types: vector_all_zero golden hash (hex):
-        //   f6465e5c70c29a36b730f784ae207fb381b193c64d437234877e933020515280
+        //   b59898f0d710f4a0460bd21102e42d40470289c63a3f9230bc9938ab62e6d5f5
         assert_eq!(
             leaf.hash(),
             [
-                0xf6, 0x46, 0x5e, 0x5c, 0x70, 0xc2, 0x9a, 0x36, 0xb7, 0x30, 0xf7, 0x84, 0xae, 0x20,
-                0x7f, 0xb3, 0x81, 0xb1, 0x93, 0xc6, 0x4d, 0x43, 0x72, 0x34, 0x87, 0x7e, 0x93, 0x30,
-                0x20, 0x51, 0x52, 0x80,
+                0xb5, 0x98, 0x98, 0xf0, 0xd7, 0x10, 0xf4, 0xa0, 0x46, 0x0b, 0xd2, 0x11, 0x02, 0xe4,
+                0x2d, 0x40, 0x47, 0x02, 0x89, 0xc6, 0x3a, 0x3f, 0x92, 0x30, 0xbc, 0x99, 0x38, 0xab,
+                0x62, 0xe6, 0xd5, 0xf5,
             ]
         );
     }
@@ -231,13 +262,21 @@ mod tests {
     fn payout_leaf_v1_binds_replay_and_metadata_fields() {
         let base = fixture_leaf();
 
+        let mut changed_pool = base;
+        changed_pool.pool_id[0] ^= 1;
+        assert_ne!(base.hash(), changed_pool.hash());
+
         let mut changed_index = base;
         changed_index.leaf_index += 1;
         assert_ne!(base.hash(), changed_index.hash());
 
-        let mut changed_session_root = base;
-        changed_session_root.session_merkle_root[0] ^= 1;
-        assert_ne!(base.hash(), changed_session_root.hash());
+        let mut changed_allocation = base;
+        changed_allocation.allocation_id[0] ^= 1;
+        assert_ne!(base.hash(), changed_allocation.hash());
+
+        let mut changed_supporting_sessions = base;
+        changed_supporting_sessions.supporting_session_ids_root[0] ^= 1;
+        assert_ne!(base.hash(), changed_supporting_sessions.hash());
 
         let mut changed_metadata = base;
         changed_metadata.metadata_hash[0] ^= 1;
@@ -255,8 +294,8 @@ mod tests {
         assert_eq!(
             listen_payout_node_hash_v1(&left, &right),
             [
-                143, 89, 102, 153, 137, 122, 72, 169, 140, 139, 202, 40, 42, 37, 154, 40, 27, 219,
-                222, 168, 52, 187, 16, 147, 249, 239, 116, 57, 220, 168, 108, 173,
+                220, 194, 170, 23, 24, 189, 186, 44, 81, 215, 161, 75, 90, 191, 16, 246, 128, 31,
+                244, 82, 199, 91, 117, 114, 158, 59, 190, 90, 115, 216, 234, 184,
             ]
         );
     }

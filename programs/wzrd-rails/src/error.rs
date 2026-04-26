@@ -58,7 +58,7 @@ pub enum ListenPayoutError {
     #[msg("Authority is not in the publisher allow-list")]
     UnauthorizedPublisher = 101,
 
-    #[msg("Schema version does not match LISTEN_PAYOUT_LEAF_SCHEMA_V1")]
+    #[msg("Schema version does not match LISTEN_PAYOUT_ALLOCATION_LEAF_SCHEMA_V1")]
     SchemaVersionMismatch = 102,
 
     #[msg("Window ID must be strictly greater than the last published")]
