@@ -100,6 +100,15 @@ pub mod wzrd_rails {
     /// Preconditions: current admin signs.
     /// Postconditions: config.admin = new_admin.
     pub fn set_admin(ctx: Context<AdminOnly>, new_admin: Pubkey) -> Result<()> {
+        // Per audit finding M-3 / EZ-7: reject Pubkey::default() — single-key
+        // typo to all-zeros permanently retires the admin role and is only
+        // recoverable via program upgrade. The doc-comment previously called
+        // this "operational immutability" via dead-key rotation; in practice
+        // it's a foot-gun. Use program upgrade for intentional retirement.
+        require!(
+            new_admin != Pubkey::default(),
+            ListenPayoutError::AdminPubkeyMustBeNonZero
+        );
         let slot = Clock::get()?.slot;
         let config_key = ctx.accounts.config.key();
         let old_admin = ctx.accounts.config.admin;
@@ -159,6 +168,11 @@ pub mod wzrd_rails {
         ctx: Context<InitPayoutAuthorityConfig>,
         args: InitPayoutAuthorityConfigArgs,
     ) -> Result<()> {
+        // Per audit finding L-3 / EZ-7: reject zero-pubkey admin at init.
+        require!(
+            args.admin != Pubkey::default(),
+            ListenPayoutError::AdminPubkeyMustBeNonZero
+        );
         let publishers = vec![args.initial_publisher];
         validate_payout_publishers(&publishers)?;
 
@@ -254,6 +268,12 @@ pub mod wzrd_rails {
     /// Named `set_payout_admin` because `wzrd-rails` already has a global
     /// `set_admin` IX for the base rails config.
     pub fn set_payout_admin(ctx: Context<SetPayoutAdmin>, args: SetPayoutAdminArgs) -> Result<()> {
+        // Per audit finding M-3 / EZ-7: reject Pubkey::default() — typo
+        // permanently bricks the payout admin role.
+        require!(
+            args.new_admin != Pubkey::default(),
+            ListenPayoutError::AdminPubkeyMustBeNonZero
+        );
         let old_admin = ctx.accounts.authority_config.admin;
         ctx.accounts.authority_config.admin = args.new_admin;
 
@@ -741,6 +761,13 @@ pub mod wzrd_rails {
             args.window_id > cfg.last_published_window_id,
             ListenPayoutError::WindowIdNotMonotonic
         );
+        // Per audit finding M-7: cap window_id to prevent publisher boundary
+        // attack (window_id = u64::MAX permanently bricks the monotonicity
+        // check, no future u64 can exceed it).
+        require!(
+            args.window_id <= MAX_WINDOW_ID,
+            ListenPayoutError::WindowIdOutOfRange
+        );
         require!(args.leaf_count > 0, ListenPayoutError::ZeroLeafCount);
         require!(
             args.leaf_count <= MAX_LEAVES_PER_WINDOW,
@@ -898,6 +925,14 @@ fn validate_payout_publishers(publishers: &[Pubkey]) -> Result<()> {
     require!(
         publishers.len() <= PayoutAuthorityConfig::MAX_PUBLISHERS,
         ListenPayoutError::TooManyPublishers
+    );
+    // Per audit finding L-16 / RS2-1: reject Pubkey::default() in the
+    // publisher allow-list. The System Program address ([0u8; 32]) cannot
+    // sign any transaction, so admitting it as the sole publisher would
+    // permanently brick publish_listen_payout_root with UnauthorizedPublisher.
+    require!(
+        publishers.iter().all(|p| *p != Pubkey::default()),
+        ListenPayoutError::AdminPubkeyMustBeNonZero
     );
 
     let mut sorted = publishers
