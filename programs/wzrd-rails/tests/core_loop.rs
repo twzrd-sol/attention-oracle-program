@@ -5,8 +5,16 @@
 //!   anchor build --program-name wzrd_rails
 //!   cargo test -p wzrd-rails --features localtest --test core_loop -- --nocapture
 
-use anchor_lang::{error::ERROR_CODE_OFFSET, AccountDeserialize, InstructionData, ToAccountMetas};
-use litesvm::{types::FailedTransactionMetadata, LiteSVM};
+use anchor_lang::{
+    __private::base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _},
+    error::ERROR_CODE_OFFSET,
+    AccountDeserialize, AccountSerialize, Event, InstructionData, ToAccountMetas,
+};
+use litesvm::{
+    types::{FailedTransactionMetadata, TransactionMetadata},
+    LiteSVM,
+};
+use solana_account::Account;
 use solana_address::Address;
 use solana_instruction::error::InstructionError;
 use solana_keypair::Keypair;
@@ -25,11 +33,14 @@ use solana_keccak_hasher as keccak;
 use wzrd_rails::{
     accounts as rail_accounts, instruction as rail_ix,
     state::{
-        CompensationClaimed, Config, StakePool, UserStake, COMPENSATION_LEAF_DOMAIN,
-        COMP_CLAIMED_SEED, COMP_VAULT_SEED, CONFIG_SEED, MAX_REWARD_RATE_PER_SLOT, POOL_SEED,
+        CompensationClaimed, Config, PayoutAuthorityConfig, PayoutCapConfig, PayoutWindow,
+        PayoutWindowPublished, PublishListenPayoutRootArgs, StakePool, UserStake,
+        COMPENSATION_LEAF_DOMAIN, COMP_CLAIMED_SEED, COMP_VAULT_SEED, CONFIG_SEED,
+        LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED, LISTEN_PAYOUT_CAP_CONFIG_SEED,
+        LISTEN_PAYOUT_WINDOW_SEED, MAX_LEAVES_PER_WINDOW, MAX_REWARD_RATE_PER_SLOT, POOL_SEED,
         REWARD_VAULT_SEED, STAKE_VAULT_SEED, USER_STAKE_SEED,
     },
-    ID as WZRD_RAILS_PROGRAM_ID, RailsError,
+    ID as WZRD_RAILS_PROGRAM_ID, ListenPayoutError, RailsError, LISTEN_PAYOUT_LEAF_SCHEMA_V1,
 };
 
 const CCM_DECIMALS: u8 = 9;
@@ -42,6 +53,9 @@ const GOLDEN_PATH_FUND_AMOUNT: u64 = 5_000_000_000;
 const GOLDEN_PATH_STAKE_AMOUNT: u64 = 2_000_000_000;
 const SMALL_STAKE_AMOUNT: u64 = 100;
 const USER_B_STAKE_AMOUNT: u64 = 300;
+const PAYOUT_WINDOW_ID: u64 = 20_260_426;
+const PAYOUT_TOTAL_AMOUNT_CCM: u64 = 42_000_000;
+const PAYOUT_CAP_CCM: u64 = 1_000_000_000_000;
 
 struct UserFixture {
     signer: Keypair,
@@ -65,6 +79,8 @@ struct TestEnv {
     stake_vault: LegacyPubkey,
     reward_vault: LegacyPubkey,
     comp_vault: LegacyPubkey,
+    payout_authority_config: LegacyPubkey,
+    payout_cap_config: LegacyPubkey,
     admin_ccm: LegacyPubkey,
     user_a: UserFixture,
 }
@@ -276,6 +292,72 @@ impl TestEnv {
         try_send_tx(&mut self.svm, &[signer], &[ix])
     }
 
+    fn publish_listen_payout_root(
+        &mut self,
+        args: PublishListenPayoutRootArgs,
+    ) -> TransactionMetadata {
+        let payout_window = derive_payout_window(args.window_id).0;
+        let ix = build_publish_listen_payout_root_ix(
+            self.admin_pubkey(),
+            self.payout_authority_config,
+            self.payout_cap_config,
+            payout_window,
+            args,
+        );
+        send_tx_with_metadata(&mut self.svm, &[&self.admin], &[ix])
+    }
+
+    fn try_publish_listen_payout_root(
+        &mut self,
+        authority: &Keypair,
+        args: PublishListenPayoutRootArgs,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let payout_window = derive_payout_window(args.window_id).0;
+        let ix = build_publish_listen_payout_root_ix(
+            legacy_from_signer(authority),
+            self.payout_authority_config,
+            self.payout_cap_config,
+            payout_window,
+            args,
+        );
+        try_send_tx_with_metadata(&mut self.svm, &[authority], &[ix])
+    }
+
+    fn try_publish_listen_payout_root_as_admin(
+        &mut self,
+        args: PublishListenPayoutRootArgs,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let payout_window = derive_payout_window(args.window_id).0;
+        let ix = build_publish_listen_payout_root_ix(
+            self.admin_pubkey(),
+            self.payout_authority_config,
+            self.payout_cap_config,
+            payout_window,
+            args,
+        );
+        try_send_tx_with_metadata(&mut self.svm, &[&self.admin], &[ix])
+    }
+
+    fn seed_payout_configs(
+        &mut self,
+        publishers: Vec<LegacyPubkey>,
+        last_published_window_id: u64,
+        paused: bool,
+        per_window_cap_ccm: u64,
+    ) {
+        let admin = self.admin_pubkey();
+        seed_listen_payout_configs(
+            &mut self.svm,
+            &self.payout_authority_config,
+            &self.payout_cap_config,
+            admin,
+            publishers,
+            last_published_window_id,
+            paused,
+            per_window_cap_ccm,
+        );
+    }
+
     fn unstake_user_a(&mut self) {
         let user = &self.user_a;
         let ix = build_unstake_ix(
@@ -388,6 +470,14 @@ fn load_token_2022_program(svm: &mut LiteSVM) -> Result<(), String> {
 }
 
 fn send_tx(svm: &mut LiteSVM, signers: &[&Keypair], instructions: &[LegacyInstruction]) {
+    let _ = send_tx_with_metadata(svm, signers, instructions);
+}
+
+fn send_tx_with_metadata(
+    svm: &mut LiteSVM,
+    signers: &[&Keypair],
+    instructions: &[LegacyInstruction],
+) -> TransactionMetadata {
     let payer = signers
         .first()
         .expect("at least one signer is required");
@@ -396,7 +486,7 @@ fn send_tx(svm: &mut LiteSVM, signers: &[&Keypair], instructions: &[LegacyInstru
     let tx = Transaction::new(signers, message, svm.latest_blockhash());
 
     match svm.send_transaction(tx) {
-        Ok(_) => {}
+        Ok(meta) => meta,
         Err(err) => {
             eprintln!("TX FAILED: {:?}", err.err);
             for log in &err.meta.logs {
@@ -420,6 +510,21 @@ fn try_send_tx(
     let tx = Transaction::new(signers, message, svm.latest_blockhash());
 
     svm.send_transaction(tx).map(|_| ())
+}
+
+fn try_send_tx_with_metadata(
+    svm: &mut LiteSVM,
+    signers: &[&Keypair],
+    instructions: &[LegacyInstruction],
+) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+    let payer = signers
+        .first()
+        .expect("at least one signer is required");
+    let instructions: Vec<_> = instructions.iter().map(convert_instruction).collect();
+    let message = Message::new(&instructions, Some(&payer.pubkey()));
+    let tx = Transaction::new(signers, message, svm.latest_blockhash());
+
+    svm.send_transaction(tx)
 }
 
 fn create_plain_token_2022_mint(
@@ -533,6 +638,91 @@ fn derive_comp_claimed(user: &LegacyPubkey) -> (LegacyPubkey, u8) {
     )
 }
 
+fn derive_payout_authority_config() -> (LegacyPubkey, u8) {
+    LegacyPubkey::find_program_address(
+        &[LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
+        &WZRD_RAILS_PROGRAM_ID,
+    )
+}
+
+fn derive_payout_cap_config() -> (LegacyPubkey, u8) {
+    LegacyPubkey::find_program_address(&[LISTEN_PAYOUT_CAP_CONFIG_SEED], &WZRD_RAILS_PROGRAM_ID)
+}
+
+fn derive_payout_window(window_id: u64) -> (LegacyPubkey, u8) {
+    LegacyPubkey::find_program_address(
+        &[LISTEN_PAYOUT_WINDOW_SEED, &window_id.to_le_bytes()],
+        &WZRD_RAILS_PROGRAM_ID,
+    )
+}
+
+fn write_anchor_account<T: AccountSerialize>(
+    svm: &mut LiteSVM,
+    address: &LegacyPubkey,
+    body_space: usize,
+    value: &T,
+) {
+    let mut data = Vec::with_capacity(8 + body_space);
+    value
+        .try_serialize(&mut data)
+        .expect("failed to serialize anchor account");
+    data.resize(8 + body_space, 0);
+    let lamports = svm.minimum_balance_for_rent_exemption(data.len());
+    svm.set_account(
+        address_from_legacy(address),
+        Account {
+            lamports,
+            data,
+            owner: address_from_legacy(&WZRD_RAILS_PROGRAM_ID),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("failed to seed anchor account");
+}
+
+fn seed_listen_payout_configs(
+    svm: &mut LiteSVM,
+    authority_config: &LegacyPubkey,
+    cap_config: &LegacyPubkey,
+    admin: LegacyPubkey,
+    publishers: Vec<LegacyPubkey>,
+    last_published_window_id: u64,
+    paused: bool,
+    per_window_cap_ccm: u64,
+) {
+    assert!(
+        publishers.len() <= PayoutAuthorityConfig::MAX_PUBLISHERS,
+        "test fixture exceeded max publishers"
+    );
+    let authority_bump = derive_payout_authority_config().1;
+    let cap_bump = derive_payout_cap_config().1;
+    write_anchor_account(
+        svm,
+        authority_config,
+        PayoutAuthorityConfig::space(),
+        &PayoutAuthorityConfig {
+            bump: authority_bump,
+            publishers,
+            last_published_window_id,
+            admin,
+            paused,
+            _reserved: [0u8; 32],
+        },
+    );
+    write_anchor_account(
+        svm,
+        cap_config,
+        PayoutCapConfig::space(),
+        &PayoutCapConfig {
+            bump: cap_bump,
+            per_window_cap_ccm,
+            admin,
+            _reserved: [0u8; 32],
+        },
+    );
+}
+
 fn read_anchor_account<T: AccountDeserialize>(svm: &LiteSVM, address: &LegacyPubkey) -> T {
     let account = svm
         .get_account(&address_from_legacy(address))
@@ -593,6 +783,10 @@ fn rails_error_code(error: RailsError) -> u32 {
     ERROR_CODE_OFFSET + error as u32
 }
 
+fn listen_payout_error_code(error: ListenPayoutError) -> u32 {
+    ERROR_CODE_OFFSET + error as u32
+}
+
 fn assert_rails_error(result: Result<(), FailedTransactionMetadata>, error: RailsError) {
     let failure = result.expect_err("expected transaction to fail");
     assert_eq!(
@@ -602,6 +796,36 @@ fn assert_rails_error(result: Result<(), FailedTransactionMetadata>, error: Rail
             InstructionError::Custom(rails_error_code(error)),
         )
     );
+}
+
+fn assert_listen_payout_error(
+    result: Result<TransactionMetadata, FailedTransactionMetadata>,
+    error: ListenPayoutError,
+) {
+    let failure = result.expect_err("expected transaction to fail");
+    assert_eq!(
+        failure.err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(listen_payout_error_code(error)),
+        )
+    );
+}
+
+fn decode_anchor_event<T: Event>(logs: &[String]) -> T {
+    for log in logs {
+        let Some(encoded) = log.strip_prefix("Program data: ") else {
+            continue;
+        };
+        let data = BASE64_STANDARD
+            .decode(encoded)
+            .expect("event log was not base64");
+        if data.starts_with(T::DISCRIMINATOR) {
+            let mut payload = &data[T::DISCRIMINATOR.len()..];
+            return T::deserialize(&mut payload).expect("failed to deserialize event");
+        }
+    }
+    panic!("event not found in logs");
 }
 
 fn warp_to_slot(env: &mut TestEnv, slot: u64) {
@@ -794,6 +1018,27 @@ fn build_claim_compensation_ix(
     }
 }
 
+fn build_publish_listen_payout_root_ix(
+    authority: LegacyPubkey,
+    authority_config: LegacyPubkey,
+    cap_config: LegacyPubkey,
+    payout_window: LegacyPubkey,
+    args: PublishListenPayoutRootArgs,
+) -> LegacyInstruction {
+    LegacyInstruction {
+        program_id: WZRD_RAILS_PROGRAM_ID,
+        accounts: rail_accounts::PublishListenPayoutRoot {
+            authority,
+            authority_config,
+            cap_config,
+            payout_window,
+            system_program: system_program::ID,
+        }
+        .to_account_metas(None),
+        data: rail_ix::PublishListenPayoutRoot { args }.data(),
+    }
+}
+
 fn build_direct_token_transfer_ix(
     authority: LegacyPubkey,
     from: LegacyPubkey,
@@ -938,6 +1183,8 @@ fn setup_rails() -> TestEnv {
     let (stake_vault, _) = derive_stake_vault(&pool);
     let (reward_vault, _) = derive_reward_vault(&pool);
     let (comp_vault, _) = derive_comp_vault(&config);
+    let (payout_authority_config, _) = derive_payout_authority_config();
+    let (payout_cap_config, _) = derive_payout_cap_config();
 
     let user_a = create_user_fixture(
         &mut svm,
@@ -982,6 +1229,17 @@ fn setup_rails() -> TestEnv {
         )],
     );
 
+    seed_listen_payout_configs(
+        &mut svm,
+        &payout_authority_config,
+        &payout_cap_config,
+        admin_pubkey,
+        vec![admin_pubkey],
+        0,
+        false,
+        PAYOUT_CAP_CCM,
+    );
+
     TestEnv {
         svm,
         admin,
@@ -991,9 +1249,202 @@ fn setup_rails() -> TestEnv {
         stake_vault,
         reward_vault,
         comp_vault,
+        payout_authority_config,
+        payout_cap_config,
         admin_ccm,
         user_a,
     }
+}
+
+fn payout_args(window_id: u64) -> PublishListenPayoutRootArgs {
+    PublishListenPayoutRootArgs {
+        window_id,
+        merkle_root: [0x42; 32],
+        leaf_count: 20,
+        schema_version: LISTEN_PAYOUT_LEAF_SCHEMA_V1,
+        total_amount_ccm: PAYOUT_TOTAL_AMOUNT_CCM,
+    }
+}
+
+#[test]
+fn publish_listen_payout_root_happy_path_creates_window() {
+    let mut env = setup_rails();
+    let args = payout_args(PAYOUT_WINDOW_ID);
+    let window = derive_payout_window(args.window_id).0;
+    env.svm.warp_to_slot(123);
+    env.svm.expire_blockhash();
+
+    env.publish_listen_payout_root(args.clone());
+
+    let cfg: PayoutAuthorityConfig =
+        read_anchor_account(&env.svm, &env.payout_authority_config);
+    let win: PayoutWindow = read_anchor_account(&env.svm, &window);
+    assert_eq!(cfg.last_published_window_id, args.window_id);
+    assert_eq!(win.window_id, args.window_id);
+    assert_eq!(win.merkle_root, args.merkle_root);
+    assert_eq!(win.leaf_count, args.leaf_count);
+    assert_eq!(win.schema_version, args.schema_version);
+    assert_eq!(win.total_amount_ccm, args.total_amount_ccm);
+    assert_eq!(win.published_by, env.admin_pubkey());
+    assert_eq!(win.published_at_slot, 123);
+    assert_eq!(win.claim_bitmap, vec![0u8; PayoutWindow::bitmap_bytes(args.leaf_count)]);
+}
+
+#[test]
+fn publish_listen_payout_root_unauthorized_publisher_reverts() {
+    let mut env = setup_rails();
+    let outsider = Keypair::new();
+    env.svm.airdrop(&outsider.pubkey(), 100_000_000_000).unwrap();
+
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root(&outsider, payout_args(PAYOUT_WINDOW_ID)),
+        ListenPayoutError::UnauthorizedPublisher,
+    );
+}
+
+#[test]
+fn publish_listen_payout_root_duplicate_window_reverts_before_republish() {
+    let mut env = setup_rails();
+    let args = payout_args(PAYOUT_WINDOW_ID);
+
+    env.publish_listen_payout_root(args.clone());
+    assert!(env.try_publish_listen_payout_root_as_admin(args).is_err());
+}
+
+#[test]
+fn publish_listen_payout_root_requires_monotonic_window_id() {
+    let mut env = setup_rails();
+    env.seed_payout_configs(
+        vec![env.admin_pubkey()],
+        PAYOUT_WINDOW_ID,
+        false,
+        PAYOUT_CAP_CCM,
+    );
+
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root_as_admin(payout_args(PAYOUT_WINDOW_ID)),
+        ListenPayoutError::WindowIdNotMonotonic,
+    );
+}
+
+#[test]
+fn publish_listen_payout_root_rejects_wrong_schema_version() {
+    let mut env = setup_rails();
+    let mut args = payout_args(PAYOUT_WINDOW_ID);
+    args.schema_version = LISTEN_PAYOUT_LEAF_SCHEMA_V1 + 1;
+
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root_as_admin(args),
+        ListenPayoutError::SchemaVersionMismatch,
+    );
+}
+
+#[test]
+fn publish_listen_payout_root_rejects_zero_leaf_count() {
+    let mut env = setup_rails();
+    let mut args = payout_args(PAYOUT_WINDOW_ID);
+    args.leaf_count = 0;
+
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root_as_admin(args),
+        ListenPayoutError::ZeroLeafCount,
+    );
+}
+
+#[test]
+fn publish_listen_payout_root_rejects_excessive_leaf_count() {
+    let mut env = setup_rails();
+    let mut args = payout_args(PAYOUT_WINDOW_ID);
+    args.leaf_count = MAX_LEAVES_PER_WINDOW + 1;
+
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root_as_admin(args),
+        ListenPayoutError::LeafCountExceedsMax,
+    );
+}
+
+#[test]
+fn publish_listen_payout_root_rejects_extreme_leaf_count_before_huge_alloc() {
+    let mut env = setup_rails();
+    let mut args = payout_args(PAYOUT_WINDOW_ID);
+    args.leaf_count = u32::MAX;
+
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root_as_admin(args),
+        ListenPayoutError::LeafCountExceedsMax,
+    );
+}
+
+#[test]
+fn publish_listen_payout_root_rejects_zero_merkle_root() {
+    let mut env = setup_rails();
+    let mut args = payout_args(PAYOUT_WINDOW_ID);
+    args.merkle_root = [0u8; 32];
+
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root_as_admin(args),
+        ListenPayoutError::ZeroMerkleRoot,
+    );
+}
+
+#[test]
+fn publish_listen_payout_root_enforces_per_window_cap() {
+    let mut env = setup_rails();
+    let mut args = payout_args(PAYOUT_WINDOW_ID);
+    args.total_amount_ccm = PAYOUT_CAP_CCM + 1;
+
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root_as_admin(args),
+        ListenPayoutError::ExceedsPerWindowCap,
+    );
+}
+
+#[test]
+fn publish_listen_payout_root_rejects_when_paused() {
+    let mut env = setup_rails();
+    env.seed_payout_configs(vec![env.admin_pubkey()], 0, true, PAYOUT_CAP_CCM);
+
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root_as_admin(payout_args(PAYOUT_WINDOW_ID)),
+        ListenPayoutError::Paused,
+    );
+}
+
+#[test]
+fn publish_listen_payout_root_sizes_inline_bitmap_and_account() {
+    let mut env = setup_rails();
+    let mut args = payout_args(PAYOUT_WINDOW_ID);
+    args.leaf_count = 9;
+    let window = derive_payout_window(args.window_id).0;
+
+    env.publish_listen_payout_root(args.clone());
+
+    let win: PayoutWindow = read_anchor_account(&env.svm, &window);
+    let raw = env
+        .svm
+        .get_account(&address_from_legacy(&window))
+        .expect("missing payout window account");
+    assert_eq!(win.claim_bitmap, vec![0u8; 2]);
+    assert_eq!(raw.data.len(), 8 + PayoutWindow::space(args.leaf_count));
+}
+
+#[test]
+fn publish_listen_payout_root_emits_expected_event_fields() {
+    let mut env = setup_rails();
+    let args = payout_args(PAYOUT_WINDOW_ID);
+    env.svm.warp_to_slot(456);
+    env.svm.expire_blockhash();
+
+    let meta = env.publish_listen_payout_root(args.clone());
+    let event: PayoutWindowPublished = decode_anchor_event(&meta.logs);
+
+    assert_eq!(event.window_id, args.window_id);
+    assert_eq!(event.merkle_root, args.merkle_root);
+    assert_eq!(event.leaf_count, args.leaf_count);
+    assert_eq!(event.schema_version, args.schema_version);
+    assert_eq!(event.total_amount_ccm, args.total_amount_ccm);
+    assert_eq!(event.published_by, env.admin_pubkey());
+    assert_eq!(event.published_at_slot, 456);
 }
 
 #[test]

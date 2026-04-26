@@ -15,6 +15,114 @@ pub const REWARD_VAULT_SEED: &[u8] = b"reward_vault";
 pub const COMP_VAULT_SEED: &[u8] = b"comp_vault";
 pub const COMP_CLAIMED_SEED: &[u8] = b"comp_claimed";
 pub const COMPENSATION_LEAF_DOMAIN: &[u8] = b"wzrd-rails-comp";
+pub const LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED: &[u8] = b"listen_payout_authority_config";
+pub const LISTEN_PAYOUT_CAP_CONFIG_SEED: &[u8] = b"listen_payout_cap_config";
+pub const LISTEN_PAYOUT_WINDOW_SEED: &[u8] = b"listen_payout_window";
+pub const MAX_LEAVES_PER_WINDOW: u32 = 32_768;
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct PublishListenPayoutRootArgs {
+    pub window_id: u64,
+    pub merkle_root: [u8; 32],
+    pub leaf_count: u32,
+    pub schema_version: u8,
+    pub total_amount_ccm: u64,
+}
+
+/// Allow-list + monotonic window state for Listen payout-root publishers.
+///
+/// PDA: `[LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED]`
+#[account]
+#[derive(Debug)]
+pub struct PayoutAuthorityConfig {
+    pub bump: u8,
+    pub publishers: Vec<Pubkey>,
+    pub last_published_window_id: u64,
+    pub admin: Pubkey,
+    pub paused: bool,
+    pub _reserved: [u8; 32],
+}
+
+impl PayoutAuthorityConfig {
+    pub const MAX_PUBLISHERS: usize = 8;
+
+    /// Account body size excluding the 8-byte Anchor discriminator.
+    pub fn space() -> usize {
+        1 + 4 + (32 * Self::MAX_PUBLISHERS) + 8 + 32 + 1 + 32
+    }
+
+    pub fn publisher_allowed(&self, publisher: &Pubkey) -> bool {
+        self.publishers.iter().any(|p| p == publisher)
+    }
+}
+
+/// Per-window CCM cap for Listen payouts.
+///
+/// PDA: `[LISTEN_PAYOUT_CAP_CONFIG_SEED]`
+#[account]
+#[derive(Debug)]
+pub struct PayoutCapConfig {
+    pub bump: u8,
+    pub per_window_cap_ccm: u64,
+    pub admin: Pubkey,
+    pub _reserved: [u8; 32],
+}
+
+impl PayoutCapConfig {
+    /// Account body size excluding the 8-byte Anchor discriminator.
+    pub fn space() -> usize {
+        1 + 8 + 32 + 32
+    }
+}
+
+/// One merkle commitment and inline claim bitmap per Listen payout window.
+///
+/// PDA: `[LISTEN_PAYOUT_WINDOW_SEED, window_id.to_le_bytes()]`
+#[account]
+#[derive(Debug)]
+pub struct PayoutWindow {
+    pub bump: u8,
+    pub window_id: u64,
+    pub merkle_root: [u8; 32],
+    pub leaf_count: u32,
+    pub schema_version: u8,
+    pub total_amount_ccm: u64,
+    pub published_by: Pubkey,
+    pub published_at_slot: u64,
+    pub claim_bitmap: Vec<u8>,
+}
+
+impl PayoutWindow {
+    pub fn bitmap_bytes(leaf_count: u32) -> usize {
+        (leaf_count as usize).div_ceil(8)
+    }
+
+    /// Account body size excluding the 8-byte Anchor discriminator.
+    pub fn space(leaf_count: u32) -> usize {
+        1 + 8 + 32 + 4 + 1 + 8 + 32 + 8 + 4 + Self::bitmap_bytes(leaf_count)
+    }
+
+    /// Account body size for Anchor `init` before handler validation runs.
+    ///
+    /// `leaf_count` is instruction data controlled by the caller. Clamp the
+    /// allocation bound here so an invalid extreme value cannot force Anchor's
+    /// account creation path to request an enormous account before the handler
+    /// returns `LeafCountExceedsMax`.
+    pub fn init_space(leaf_count: u32) -> usize {
+        Self::space(leaf_count.min(MAX_LEAVES_PER_WINDOW))
+    }
+}
+
+#[event]
+pub struct PayoutWindowPublished {
+    pub window_id: u64,
+    pub merkle_root: [u8; 32],
+    pub leaf_count: u32,
+    pub schema_version: u8,
+    pub total_amount_ccm: u64,
+    pub published_by: Pubkey,
+    pub published_at_slot: u64,
+}
 
 /// Safety bound for `reward_rate_per_slot`.
 ///
@@ -384,6 +492,38 @@ mod tests {
         assert_eq!(REWARD_VAULT_SEED, b"reward_vault");
         assert_eq!(COMP_VAULT_SEED, b"comp_vault");
         assert_eq!(COMP_CLAIMED_SEED, b"comp_claimed");
+        assert_eq!(
+            LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED,
+            b"listen_payout_authority_config"
+        );
+        assert_eq!(LISTEN_PAYOUT_CAP_CONFIG_SEED, b"listen_payout_cap_config");
+        assert_eq!(LISTEN_PAYOUT_WINDOW_SEED, b"listen_payout_window");
+    }
+
+    #[test]
+    fn listen_payout_window_space_rounds_bitmap_to_bytes() {
+        assert_eq!(MAX_LEAVES_PER_WINDOW, 32_768);
+        assert_eq!(PayoutWindow::bitmap_bytes(1), 1);
+        assert_eq!(PayoutWindow::bitmap_bytes(8), 1);
+        assert_eq!(PayoutWindow::bitmap_bytes(9), 2);
+        assert_eq!(PayoutWindow::bitmap_bytes(MAX_LEAVES_PER_WINDOW), 4_096);
+        assert_eq!(PayoutWindow::space(20), 101);
+    }
+
+    #[test]
+    fn listen_payout_config_spaces_match_manual_calc() {
+        assert_eq!(PayoutAuthorityConfig::space(), 334);
+        assert_eq!(PayoutCapConfig::space(), 73);
+        assert_eq!(PayoutWindow::space(MAX_LEAVES_PER_WINDOW), 4_194);
+    }
+
+    #[test]
+    fn listen_payout_window_init_space_clamps_untrusted_leaf_count() {
+        assert_eq!(PayoutWindow::init_space(20), PayoutWindow::space(20));
+        assert_eq!(
+            PayoutWindow::init_space(u32::MAX),
+            PayoutWindow::space(MAX_LEAVES_PER_WINDOW)
+        );
     }
 
     #[test]
