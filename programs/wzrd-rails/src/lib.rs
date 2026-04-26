@@ -832,6 +832,7 @@ pub mod wzrd_rails {
         win.leaf_count = args.leaf_count;
         win.schema_version = args.schema_version;
         win.total_amount_ccm = args.total_amount_ccm;
+        win.claimed_so_far = 0;
         win.published_by = signer;
         win.published_at_slot = slot;
         win.claim_bitmap = vec![0u8; PayoutWindow::bitmap_bytes(args.leaf_count)];
@@ -911,6 +912,21 @@ pub mod wzrd_rails {
             ListenPayoutError::InvalidMerkleProof
         );
         require!(leaf.amount_ccm > 0, ListenPayoutError::ZeroAmountClaim);
+
+        // Per audit finding H-01: enforce `total_amount_ccm` as a hard cap on
+        // actual on-chain settlement, not just an advisory field. Without this
+        // check, a publisher could declare `total_amount_ccm = 1` and commit a
+        // root with leaves summing to the full vault balance, draining the
+        // vault despite the per-window cap.
+        let new_claimed = win
+            .claimed_so_far
+            .checked_add(leaf.amount_ccm)
+            .ok_or(RailsError::MathOverflow)?;
+        require!(
+            new_claimed <= win.total_amount_ccm,
+            ListenPayoutError::ExceedsWindowTotal
+        );
+        win.claimed_so_far = new_claimed;
 
         win.claim_bitmap[byte_idx] |= bit_mask;
 
