@@ -20,7 +20,7 @@ localtest = []
 
 [dependencies]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
-anchor-spl = { version = "0.32.1", features = ["token_2022"] }
+anchor-spl = { version = "0.32.1", features = ["associated_token", "token_2022"] }
 solana-security-txt = "1.1"
 constant_time_eq = "=0.3.1"  # pin: 0.4.2 requires edition2024, SBF toolchain is 1.84
 blake3 = "=1.5.5"  # pin: 1.6+ pulls constant_time_eq 0.4.x

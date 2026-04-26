@@ -5,6 +5,8 @@
 
 use anchor_lang::prelude::*;
 
+use crate::listen_payout::PayoutLeafV1;
+
 // PDA seed constants. Centralized here so off-chain derivation scripts
 // (keepers, SDK) can import the same values and stay in sync.
 pub const CONFIG_SEED: &[u8] = b"config";
@@ -18,7 +20,10 @@ pub const COMPENSATION_LEAF_DOMAIN: &[u8] = b"wzrd-rails-comp";
 pub const LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED: &[u8] = b"listen_payout_authority_config";
 pub const LISTEN_PAYOUT_CAP_CONFIG_SEED: &[u8] = b"listen_payout_cap_config";
 pub const LISTEN_PAYOUT_WINDOW_SEED: &[u8] = b"listen_payout_window";
+pub const LISTEN_PAYOUT_VAULT_CONFIG_SEED: &[u8] = b"listen_payout_vault_config";
+pub const LISTEN_PAYOUT_VAULT_AUTHORITY_SEED: &[u8] = b"listen_payout_vault_authority";
 pub const MAX_LEAVES_PER_WINDOW: u32 = 32_768;
+pub const MAX_PROOF_LEN: usize = 16;
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublishListenPayoutRootArgs {
@@ -27,6 +32,12 @@ pub struct PublishListenPayoutRootArgs {
     pub leaf_count: u32,
     pub schema_version: u8,
     pub total_amount_ccm: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ClaimListenPayoutArgs {
+    pub leaf: PayoutLeafV1,
+    pub proof: Vec<[u8; 32]>,
 }
 
 /// Allow-list + monotonic window state for Listen payout-root publishers.
@@ -72,6 +83,26 @@ impl PayoutCapConfig {
     /// Account body size excluding the 8-byte Anchor discriminator.
     pub fn space() -> usize {
         1 + 8 + 32 + 32
+    }
+}
+
+/// Listen payout vault configuration.
+///
+/// PDA: `[LISTEN_PAYOUT_VAULT_CONFIG_SEED]`
+#[account]
+#[derive(Debug)]
+pub struct PayoutVaultConfig {
+    pub bump: u8,
+    pub ccm_mint: Pubkey,
+    pub vault_authority_bump: u8,
+    pub admin: Pubkey,
+    pub _reserved: [u8; 32],
+}
+
+impl PayoutVaultConfig {
+    /// Account body size excluding the 8-byte Anchor discriminator.
+    pub fn space() -> usize {
+        1 + 32 + 1 + 32 + 32
     }
 }
 
@@ -122,6 +153,16 @@ pub struct PayoutWindowPublished {
     pub total_amount_ccm: u64,
     pub published_by: Pubkey,
     pub published_at_slot: u64,
+}
+
+#[event]
+pub struct ListenPayoutClaimed {
+    pub window_id: u64,
+    pub leaf_index: u32,
+    pub wallet: Pubkey,
+    pub amount_ccm: u64,
+    pub session_id: [u8; 16],
+    pub claimed_at_slot: u64,
 }
 
 /// Safety bound for `reward_rate_per_slot`.
@@ -498,6 +539,15 @@ mod tests {
         );
         assert_eq!(LISTEN_PAYOUT_CAP_CONFIG_SEED, b"listen_payout_cap_config");
         assert_eq!(LISTEN_PAYOUT_WINDOW_SEED, b"listen_payout_window");
+        assert_eq!(
+            LISTEN_PAYOUT_VAULT_CONFIG_SEED,
+            b"listen_payout_vault_config"
+        );
+        assert_eq!(
+            LISTEN_PAYOUT_VAULT_AUTHORITY_SEED,
+            b"listen_payout_vault_authority"
+        );
+        assert_eq!(MAX_PROOF_LEN, 16);
     }
 
     #[test]
@@ -514,6 +564,7 @@ mod tests {
     fn listen_payout_config_spaces_match_manual_calc() {
         assert_eq!(PayoutAuthorityConfig::space(), 334);
         assert_eq!(PayoutCapConfig::space(), 73);
+        assert_eq!(PayoutVaultConfig::space(), 98);
         assert_eq!(PayoutWindow::space(MAX_LEAVES_PER_WINDOW), 4_194);
     }
 
@@ -610,7 +661,7 @@ mod tests {
         let mut pool = fresh_pool();
         pool.total_staked = 1_000_000; // 1M base units
         pool.reward_rate_per_slot = 10; // 10 base units per slot
-        // 100 slots elapse
+                                        // 100 slots elapse
         pool.accrue_rewards(1100).unwrap();
         // Expected: 100 * 10 * 1e12 / 1_000_000 = 1_000_000_000
         let expected = 100u128 * 10 * StakePool::REWARD_SCALE / 1_000_000;
