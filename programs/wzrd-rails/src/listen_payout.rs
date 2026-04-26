@@ -194,6 +194,39 @@ mod tests {
         );
     }
 
+    /// Determinism baseline. All-zero leaf produces a stable hash that
+    /// the off-chain Rust mirror in `wzrd-final/crates/types` MUST match
+    /// byte-for-byte. If this hash changes, the canonical byte order or
+    /// domain separator drifted somewhere — fix before shipping.
+    ///
+    /// Mirrors `wzrd_types::listen::tests::vector_all_zero` (PR #215 in
+    /// twzrd-sol/wzrd-final).
+    #[test]
+    fn payout_leaf_v1_vector_all_zero() {
+        let leaf = PayoutLeafV1 {
+            schema_version: 1,
+            window_id: 0,
+            leaf_index: 0,
+            session_id: [0u8; 16],
+            wallet_pubkey: Pubkey::new_from_array([0u8; 32]),
+            amount_ccm: 0,
+            session_merkle_root: [0u8; 32],
+            metadata_hash: [0u8; 32],
+            salt: [0u8; 16],
+        };
+        // GOLDEN HASH — locked 2026-04-26 across both repos.
+        // wzrd-final/crates/types: vector_all_zero golden hash (hex):
+        //   f6465e5c70c29a36b730f784ae207fb381b193c64d437234877e933020515280
+        assert_eq!(
+            leaf.hash(),
+            [
+                0xf6, 0x46, 0x5e, 0x5c, 0x70, 0xc2, 0x9a, 0x36, 0xb7, 0x30, 0xf7, 0x84, 0xae, 0x20,
+                0x7f, 0xb3, 0x81, 0xb1, 0x93, 0xc6, 0x4d, 0x43, 0x72, 0x34, 0x87, 0x7e, 0x93, 0x30,
+                0x20, 0x51, 0x52, 0x80,
+            ]
+        );
+    }
+
     #[test]
     fn payout_leaf_v1_binds_replay_and_metadata_fields() {
         let base = fixture_leaf();
