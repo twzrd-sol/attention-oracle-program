@@ -108,4 +108,10 @@ pub enum ListenPayoutError {
 
     #[msg("Allow-list contains duplicate publishers")]
     DuplicatePublisher = 118,
+
+    #[msg("window_id exceeds MAX_WINDOW_ID ceiling (publisher boundary attack guard)")]
+    WindowIdOutOfRange = 119,
+
+    #[msg("Admin/publisher pubkey must not be Pubkey::default() — lockout prevention")]
+    AdminPubkeyMustBeNonZero = 120,
 }
