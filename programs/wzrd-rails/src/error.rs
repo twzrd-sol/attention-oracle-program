@@ -96,4 +96,16 @@ pub enum ListenPayoutError {
 
     #[msg("Cannot claim a zero-amount leaf")]
     ZeroAmountClaim = 114,
+
+    #[msg("Caller is not the admin of this payout config")]
+    NotAdmin = 115,
+
+    #[msg("Allow-list cannot be empty")]
+    EmptyAllowlist = 116,
+
+    #[msg("Allow-list exceeds MAX_PUBLISHERS")]
+    TooManyPublishers = 117,
+
+    #[msg("Allow-list contains duplicate publishers")]
+    DuplicatePublisher = 118,
 }
