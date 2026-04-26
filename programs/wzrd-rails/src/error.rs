@@ -117,4 +117,10 @@ pub enum ListenPayoutError {
 
     #[msg("vault_config.ccm_mint must equal Config.ccm_mint")]
     MintMismatchWithRails = 121,
+
+    #[msg("per_window_cap_ccm exceeds MAX_PER_WINDOW_CAP_CCM ceiling")]
+    CapExceedsMaxAllowed = 122,
+
+    #[msg("per_window_cap_ccm must be greater than zero")]
+    CapMustBeNonZero = 123,
 }

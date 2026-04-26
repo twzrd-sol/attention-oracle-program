@@ -207,6 +207,25 @@ pub mod wzrd_rails {
         ctx: Context<InitPayoutCapConfig>,
         args: InitPayoutCapConfigArgs,
     ) -> Result<()> {
+        // Per audit finding H-03: bound the cap value at init time, not just
+        // at the setter. Init is reachable once and is the only path that
+        // creates the PDA; this guarantees the cap field is never seeded with
+        // a unbounded-equivalent value.
+        require!(
+            args.per_window_cap_ccm > 0,
+            ListenPayoutError::CapMustBeNonZero
+        );
+        require!(
+            args.per_window_cap_ccm <= MAX_PER_WINDOW_CAP_CCM,
+            ListenPayoutError::CapExceedsMaxAllowed
+        );
+        // Per audit finding L-3/L-7/EZ-7 family: never accept Pubkey::default()
+        // as an admin field at init; lockout is unrecoverable without program
+        // upgrade.
+        require!(
+            args.admin != Pubkey::default(),
+            ListenPayoutError::AdminPubkeyMustBeNonZero
+        );
         let cfg = &mut ctx.accounts.cap_config;
         cfg.bump = ctx.bumps.cap_config;
         cfg.per_window_cap_ccm = args.per_window_cap_ccm;
@@ -220,6 +239,17 @@ pub mod wzrd_rails {
         ctx: Context<SetPerWindowCcmCap>,
         args: SetPerWindowCcmCapArgs,
     ) -> Result<()> {
+        // Per audit finding H-03: bound the cap value at the setter. Without
+        // this check, a compromised or socially-engineered authority-config
+        // admin could set the cap to u64::MAX, neutering the only
+        // programmatic per-window safety bound and enabling the H-1
+        // cap-bypass primitive at chain severity.
+        require!(args.new_cap_ccm > 0, ListenPayoutError::CapMustBeNonZero);
+        require!(
+            args.new_cap_ccm <= MAX_PER_WINDOW_CAP_CCM,
+            ListenPayoutError::CapExceedsMaxAllowed
+        );
+
         let old_cap = ctx.accounts.cap_config.per_window_cap_ccm;
         ctx.accounts.cap_config.per_window_cap_ccm = args.new_cap_ccm;
 
@@ -1113,6 +1143,12 @@ pub struct InitPayoutCapConfig<'info> {
 #[derive(Accounts)]
 pub struct SetPerWindowCcmCap<'info> {
     pub admin: Signer<'info>,
+    /// Both admin slots must match. Per audit finding M-01, the IX previously
+    /// gated only on `authority_config.admin` while mutating `cap_config`,
+    /// leaving `cap_config.admin` as a stored-but-unread field (drift surface
+    /// + forward-compat landmine). The dual check makes both fields live and
+    /// requires operational discipline that authority_config.admin and
+    /// cap_config.admin be set to the same key (typically the same Squads PDA).
     #[account(
         seeds = [LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
         bump = authority_config.bump,
@@ -1123,6 +1159,7 @@ pub struct SetPerWindowCcmCap<'info> {
         mut,
         seeds = [LISTEN_PAYOUT_CAP_CONFIG_SEED],
         bump = cap_config.bump,
+        constraint = cap_config.admin == admin.key() @ ListenPayoutError::NotAdmin,
     )]
     pub cap_config: Account<'info, PayoutCapConfig>,
 }
