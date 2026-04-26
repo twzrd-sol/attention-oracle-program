@@ -49,3 +49,30 @@ pub enum RailsError {
     #[msg("Pool ID must equal total_pools (sequential numbering enforced).")]
     InvalidPoolId = 13,
 }
+
+#[error_code]
+pub enum ListenPayoutError {
+    #[msg("Listen payout publishing and claiming are paused")]
+    Paused = 100,
+
+    #[msg("Authority is not in the publisher allow-list")]
+    UnauthorizedPublisher = 101,
+
+    #[msg("Schema version does not match LISTEN_PAYOUT_LEAF_SCHEMA_V1")]
+    SchemaVersionMismatch = 102,
+
+    #[msg("Window ID must be strictly greater than the last published")]
+    WindowIdNotMonotonic = 103,
+
+    #[msg("Leaf count must be greater than zero")]
+    ZeroLeafCount = 104,
+
+    #[msg("Leaf count exceeds MAX_LEAVES_PER_WINDOW")]
+    LeafCountExceedsMax = 105,
+
+    #[msg("Merkle root must not be all zeros")]
+    ZeroMerkleRoot = 106,
+
+    #[msg("Total amount exceeds the per-window CCM cap")]
+    ExceedsPerWindowCap = 107,
+}
