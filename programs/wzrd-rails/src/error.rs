@@ -108,4 +108,10 @@ pub enum ListenPayoutError {
 
     #[msg("Allow-list contains duplicate publishers")]
     DuplicatePublisher = 118,
+
+    #[msg("per_window_cap_ccm exceeds MAX_PER_WINDOW_CAP_CCM ceiling")]
+    CapExceedsMaxAllowed = 119,
+
+    #[msg("per_window_cap_ccm must be greater than zero")]
+    CapMustBeNonZero = 120,
 }
