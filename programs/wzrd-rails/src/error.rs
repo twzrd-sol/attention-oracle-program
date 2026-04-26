@@ -108,4 +108,7 @@ pub enum ListenPayoutError {
 
     #[msg("Allow-list contains duplicate publishers")]
     DuplicatePublisher = 118,
+
+    #[msg("vault_config.ccm_mint must equal Config.ccm_mint")]
+    MintMismatchWithRails = 119,
 }
