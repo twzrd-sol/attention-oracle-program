@@ -8,7 +8,12 @@
 use anchor_lang::{
     __private::base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _},
     error::ERROR_CODE_OFFSET,
+    prelude::Pubkey,
     AccountDeserialize, AccountSerialize, Event, InstructionData, ToAccountMetas,
+};
+use anchor_spl::associated_token::{
+    get_associated_token_address_with_program_id, spl_associated_token_account,
+    ID as ASSOCIATED_TOKEN_PROGRAM_ID,
 };
 use litesvm::{
     types::{FailedTransactionMetadata, TransactionMetadata},
@@ -17,30 +22,32 @@ use litesvm::{
 use solana_account::Account;
 use solana_address::Address;
 use solana_instruction::error::InstructionError;
+use solana_keccak_hasher as keccak;
 use solana_keypair::Keypair;
 use solana_message::Message;
+use solana_sdk::{
+    instruction::Instruction as LegacyInstruction, program_pack::Pack,
+    pubkey::Pubkey as LegacyPubkey, system_instruction, system_program, sysvar,
+};
 use solana_signer::Signer;
 use solana_transaction::{Transaction, TransactionError};
-use solana_sdk::{
-    instruction::Instruction as LegacyInstruction,
-    program_pack::Pack,
-    pubkey::Pubkey as LegacyPubkey,
-    system_instruction, system_program, sysvar,
-};
+use spl_token_2022::extension::StateWithExtensions;
 use spl_token_2022::state::{Account as TokenAccount, Mint};
 use std::path::{Path, PathBuf};
-use solana_keccak_hasher as keccak;
 use wzrd_rails::{
-    accounts as rail_accounts, instruction as rail_ix,
+    accounts as rail_accounts, instruction as rail_ix, listen_payout_node_hash_v1,
     state::{
-        CompensationClaimed, Config, PayoutAuthorityConfig, PayoutCapConfig, PayoutWindow,
+        ClaimListenPayoutArgs, CompensationClaimed, Config, ListenPayoutClaimed,
+        PayoutAuthorityConfig, PayoutCapConfig, PayoutVaultConfig, PayoutWindow,
         PayoutWindowPublished, PublishListenPayoutRootArgs, StakePool, UserStake,
         COMPENSATION_LEAF_DOMAIN, COMP_CLAIMED_SEED, COMP_VAULT_SEED, CONFIG_SEED,
         LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED, LISTEN_PAYOUT_CAP_CONFIG_SEED,
-        LISTEN_PAYOUT_WINDOW_SEED, MAX_LEAVES_PER_WINDOW, MAX_REWARD_RATE_PER_SLOT, POOL_SEED,
-        REWARD_VAULT_SEED, STAKE_VAULT_SEED, USER_STAKE_SEED,
+        LISTEN_PAYOUT_VAULT_AUTHORITY_SEED, LISTEN_PAYOUT_VAULT_CONFIG_SEED,
+        LISTEN_PAYOUT_WINDOW_SEED, MAX_LEAVES_PER_WINDOW, MAX_PROOF_LEN, MAX_REWARD_RATE_PER_SLOT,
+        POOL_SEED, REWARD_VAULT_SEED, STAKE_VAULT_SEED, USER_STAKE_SEED,
     },
-    ID as WZRD_RAILS_PROGRAM_ID, ListenPayoutError, RailsError, LISTEN_PAYOUT_LEAF_SCHEMA_V1,
+    ListenPayoutError, PayoutLeafV1, RailsError, ID as WZRD_RAILS_PROGRAM_ID,
+    LISTEN_PAYOUT_LEAF_SCHEMA_V1,
 };
 
 const CCM_DECIMALS: u8 = 9;
@@ -56,6 +63,7 @@ const USER_B_STAKE_AMOUNT: u64 = 300;
 const PAYOUT_WINDOW_ID: u64 = 20_260_426;
 const PAYOUT_TOTAL_AMOUNT_CCM: u64 = 42_000_000;
 const PAYOUT_CAP_CCM: u64 = 1_000_000_000_000;
+const LISTEN_PAYOUT_VAULT_FUND_AMOUNT: u64 = 1_000_000_000;
 
 struct UserFixture {
     signer: Keypair,
@@ -81,6 +89,9 @@ struct TestEnv {
     comp_vault: LegacyPubkey,
     payout_authority_config: LegacyPubkey,
     payout_cap_config: LegacyPubkey,
+    payout_vault_config: LegacyPubkey,
+    payout_vault_authority: LegacyPubkey,
+    listen_payout_vault: LegacyPubkey,
     admin_ccm: LegacyPubkey,
     user_a: UserFixture,
 }
@@ -115,7 +126,8 @@ impl TestEnv {
         signer: &Keypair,
         new_rate: u64,
     ) -> Result<(), FailedTransactionMetadata> {
-        let ix = build_set_reward_rate_ix(self.config, self.pool, legacy_from_signer(signer), new_rate);
+        let ix =
+            build_set_reward_rate_ix(self.config, self.pool, legacy_from_signer(signer), new_rate);
         try_send_tx(&mut self.svm, &[signer], &[ix])
     }
 
@@ -123,12 +135,7 @@ impl TestEnv {
         &mut self,
         new_rate: u64,
     ) -> Result<(), FailedTransactionMetadata> {
-        let ix = build_set_reward_rate_ix(
-            self.config,
-            self.pool,
-            self.admin_pubkey(),
-            new_rate,
-        );
+        let ix = build_set_reward_rate_ix(self.config, self.pool, self.admin_pubkey(), new_rate);
         try_send_tx(&mut self.svm, &[&self.admin], &[ix])
     }
 
@@ -338,6 +345,79 @@ impl TestEnv {
         try_send_tx_with_metadata(&mut self.svm, &[&self.admin], &[ix])
     }
 
+    fn claim_listen_payout(
+        &mut self,
+        signer: &Keypair,
+        args: ClaimListenPayoutArgs,
+    ) -> TransactionMetadata {
+        let ix = build_claim_listen_payout_ix(
+            legacy_from_signer(signer),
+            self.payout_authority_config,
+            self.payout_vault_config,
+            self.ccm_mint_pubkey(),
+            self.listen_payout_vault,
+            self.payout_vault_authority,
+            derive_ata(&legacy_from_signer(signer), &self.ccm_mint_pubkey()),
+            args,
+        );
+        send_tx_with_metadata(&mut self.svm, &[signer], &[ix])
+    }
+
+    fn try_claim_listen_payout(
+        &mut self,
+        signer: &Keypair,
+        args: ClaimListenPayoutArgs,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let ix = build_claim_listen_payout_ix(
+            legacy_from_signer(signer),
+            self.payout_authority_config,
+            self.payout_vault_config,
+            self.ccm_mint_pubkey(),
+            self.listen_payout_vault,
+            self.payout_vault_authority,
+            derive_ata(&legacy_from_signer(signer), &self.ccm_mint_pubkey()),
+            args,
+        );
+        try_send_tx_with_metadata(&mut self.svm, &[signer], &[ix])
+    }
+
+    fn claim_listen_payout_user_a(&mut self, args: ClaimListenPayoutArgs) -> TransactionMetadata {
+        let user = &self.user_a;
+        let user_pubkey = user.pubkey();
+        let ccm_mint = self.ccm_mint_pubkey();
+        let ix = build_claim_listen_payout_ix(
+            user_pubkey,
+            self.payout_authority_config,
+            self.payout_vault_config,
+            ccm_mint,
+            self.listen_payout_vault,
+            self.payout_vault_authority,
+            derive_ata(&user_pubkey, &ccm_mint),
+            args,
+        );
+        send_tx_with_metadata(&mut self.svm, &[&user.signer], &[ix])
+    }
+
+    fn try_claim_listen_payout_user_a(
+        &mut self,
+        args: ClaimListenPayoutArgs,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let user = &self.user_a;
+        let user_pubkey = user.pubkey();
+        let ccm_mint = self.ccm_mint_pubkey();
+        let ix = build_claim_listen_payout_ix(
+            user_pubkey,
+            self.payout_authority_config,
+            self.payout_vault_config,
+            ccm_mint,
+            self.listen_payout_vault,
+            self.payout_vault_authority,
+            derive_ata(&user_pubkey, &ccm_mint),
+            args,
+        );
+        try_send_tx_with_metadata(&mut self.svm, &[&user.signer], &[ix])
+    }
+
     fn seed_payout_configs(
         &mut self,
         publishers: Vec<LegacyPubkey>,
@@ -469,6 +549,13 @@ fn load_token_2022_program(svm: &mut LiteSVM) -> Result<(), String> {
         .map_err(|err| format!("{err:?}"))
 }
 
+fn load_associated_token_program(svm: &mut LiteSVM) -> Result<(), String> {
+    let bytes = find_litesvm_elf("spl_associated_token_account")
+        .ok_or("Associated Token Account ELF not found in litesvm cargo registry")?;
+    svm.add_program(address_from_legacy(&ASSOCIATED_TOKEN_PROGRAM_ID), &bytes)
+        .map_err(|err| format!("{err:?}"))
+}
+
 fn send_tx(svm: &mut LiteSVM, signers: &[&Keypair], instructions: &[LegacyInstruction]) {
     let _ = send_tx_with_metadata(svm, signers, instructions);
 }
@@ -478,9 +565,7 @@ fn send_tx_with_metadata(
     signers: &[&Keypair],
     instructions: &[LegacyInstruction],
 ) -> TransactionMetadata {
-    let payer = signers
-        .first()
-        .expect("at least one signer is required");
+    let payer = signers.first().expect("at least one signer is required");
     let instructions: Vec<_> = instructions.iter().map(convert_instruction).collect();
     let message = Message::new(&instructions, Some(&payer.pubkey()));
     let tx = Transaction::new(signers, message, svm.latest_blockhash());
@@ -502,9 +587,7 @@ fn try_send_tx(
     signers: &[&Keypair],
     instructions: &[LegacyInstruction],
 ) -> Result<(), FailedTransactionMetadata> {
-    let payer = signers
-        .first()
-        .expect("at least one signer is required");
+    let payer = signers.first().expect("at least one signer is required");
     let instructions: Vec<_> = instructions.iter().map(convert_instruction).collect();
     let message = Message::new(&instructions, Some(&payer.pubkey()));
     let tx = Transaction::new(signers, message, svm.latest_blockhash());
@@ -517,9 +600,7 @@ fn try_send_tx_with_metadata(
     signers: &[&Keypair],
     instructions: &[LegacyInstruction],
 ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
-    let payer = signers
-        .first()
-        .expect("at least one signer is required");
+    let payer = signers.first().expect("at least one signer is required");
     let instructions: Vec<_> = instructions.iter().map(convert_instruction).collect();
     let message = Message::new(&instructions, Some(&payer.pubkey()));
     let tx = Transaction::new(signers, message, svm.latest_blockhash());
@@ -583,6 +664,28 @@ fn create_token_2022_account(
     send_tx(svm, &[payer, token_account], &[create_ix, init_ix]);
 }
 
+fn derive_ata(owner: &LegacyPubkey, mint: &LegacyPubkey) -> LegacyPubkey {
+    get_associated_token_address_with_program_id(owner, mint, &spl_token_2022::id())
+}
+
+fn create_associated_token_2022_account(
+    svm: &mut LiteSVM,
+    payer: &Keypair,
+    owner: &LegacyPubkey,
+    mint: &LegacyPubkey,
+) -> LegacyPubkey {
+    let payer_pubkey = legacy_from_signer(payer);
+    let ata = derive_ata(owner, mint);
+    let ix = spl_associated_token_account::instruction::create_associated_token_account(
+        &payer_pubkey,
+        owner,
+        mint,
+        &spl_token_2022::id(),
+    );
+    send_tx(svm, &[payer], &[ix]);
+    ata
+}
+
 fn mint_token_2022(
     svm: &mut LiteSVM,
     mint_authority: &Keypair,
@@ -632,10 +735,7 @@ fn derive_user_stake(pool: &LegacyPubkey, user: &LegacyPubkey) -> (LegacyPubkey,
 }
 
 fn derive_comp_claimed(user: &LegacyPubkey) -> (LegacyPubkey, u8) {
-    LegacyPubkey::find_program_address(
-        &[COMP_CLAIMED_SEED, user.as_ref()],
-        &WZRD_RAILS_PROGRAM_ID,
-    )
+    LegacyPubkey::find_program_address(&[COMP_CLAIMED_SEED, user.as_ref()], &WZRD_RAILS_PROGRAM_ID)
 }
 
 fn derive_payout_authority_config() -> (LegacyPubkey, u8) {
@@ -652,6 +752,17 @@ fn derive_payout_cap_config() -> (LegacyPubkey, u8) {
 fn derive_payout_window(window_id: u64) -> (LegacyPubkey, u8) {
     LegacyPubkey::find_program_address(
         &[LISTEN_PAYOUT_WINDOW_SEED, &window_id.to_le_bytes()],
+        &WZRD_RAILS_PROGRAM_ID,
+    )
+}
+
+fn derive_payout_vault_config() -> (LegacyPubkey, u8) {
+    LegacyPubkey::find_program_address(&[LISTEN_PAYOUT_VAULT_CONFIG_SEED], &WZRD_RAILS_PROGRAM_ID)
+}
+
+fn derive_payout_vault_authority() -> (LegacyPubkey, u8) {
+    LegacyPubkey::find_program_address(
+        &[LISTEN_PAYOUT_VAULT_AUTHORITY_SEED],
         &WZRD_RAILS_PROGRAM_ID,
     )
 }
@@ -723,6 +834,28 @@ fn seed_listen_payout_configs(
     );
 }
 
+fn seed_listen_payout_vault_config(
+    svm: &mut LiteSVM,
+    vault_config: &LegacyPubkey,
+    ccm_mint: LegacyPubkey,
+    admin: LegacyPubkey,
+) {
+    let vault_config_bump = derive_payout_vault_config().1;
+    let vault_authority_bump = derive_payout_vault_authority().1;
+    write_anchor_account(
+        svm,
+        vault_config,
+        PayoutVaultConfig::space(),
+        &PayoutVaultConfig {
+            bump: vault_config_bump,
+            ccm_mint,
+            vault_authority_bump,
+            admin,
+            _reserved: [0u8; 32],
+        },
+    );
+}
+
 fn read_anchor_account<T: AccountDeserialize>(svm: &LiteSVM, address: &LegacyPubkey) -> T {
     let account = svm
         .get_account(&address_from_legacy(address))
@@ -735,8 +868,9 @@ fn read_token_balance(svm: &LiteSVM, address: &LegacyPubkey) -> u64 {
     let account = svm
         .get_account(&address_from_legacy(address))
         .unwrap_or_else(|| panic!("missing token account: {address}"));
-    TokenAccount::unpack(&account.data)
+    StateWithExtensions::<TokenAccount>::unpack(&account.data)
         .expect("failed to deserialize token account")
+        .base
         .amount
 }
 
@@ -791,10 +925,7 @@ fn assert_rails_error(result: Result<(), FailedTransactionMetadata>, error: Rail
     let failure = result.expect_err("expected transaction to fail");
     assert_eq!(
         failure.err,
-        TransactionError::InstructionError(
-            0,
-            InstructionError::Custom(rails_error_code(error)),
-        )
+        TransactionError::InstructionError(0, InstructionError::Custom(rails_error_code(error)),)
     );
 }
 
@@ -1039,6 +1170,37 @@ fn build_publish_listen_payout_root_ix(
     }
 }
 
+fn build_claim_listen_payout_ix(
+    claimer: LegacyPubkey,
+    authority_config: LegacyPubkey,
+    vault_config: LegacyPubkey,
+    ccm_mint: LegacyPubkey,
+    listen_payout_vault: LegacyPubkey,
+    vault_authority: LegacyPubkey,
+    claimer_ata: LegacyPubkey,
+    args: ClaimListenPayoutArgs,
+) -> LegacyInstruction {
+    let payout_window = derive_payout_window(args.leaf.window_id).0;
+    LegacyInstruction {
+        program_id: WZRD_RAILS_PROGRAM_ID,
+        accounts: rail_accounts::ClaimListenPayout {
+            claimer,
+            payout_window,
+            authority_config,
+            vault_config,
+            ccm_mint,
+            listen_payout_vault,
+            vault_authority,
+            claimer_ata,
+            token_program: spl_token_2022::id(),
+            associated_token_program: ASSOCIATED_TOKEN_PROGRAM_ID,
+            system_program: system_program::ID,
+        }
+        .to_account_metas(None),
+        data: rail_ix::ClaimListenPayout { args }.data(),
+    }
+}
+
 fn build_direct_token_transfer_ix(
     authority: LegacyPubkey,
     from: LegacyPubkey,
@@ -1150,6 +1312,9 @@ fn setup_rails() -> TestEnv {
     if let Err(err) = load_token_2022_program(&mut svm) {
         panic!("Failed to load Token-2022 program into LiteSVM: {err}");
     }
+    if let Err(err) = load_associated_token_program(&mut svm) {
+        panic!("Failed to load Associated Token program into LiteSVM: {err}");
+    }
 
     let admin = Keypair::new();
     let ccm_mint = Keypair::new();
@@ -1185,6 +1350,21 @@ fn setup_rails() -> TestEnv {
     let (comp_vault, _) = derive_comp_vault(&config);
     let (payout_authority_config, _) = derive_payout_authority_config();
     let (payout_cap_config, _) = derive_payout_cap_config();
+    let (payout_vault_config, _) = derive_payout_vault_config();
+    let (payout_vault_authority, _) = derive_payout_vault_authority();
+    let listen_payout_vault = create_associated_token_2022_account(
+        &mut svm,
+        &admin,
+        &payout_vault_authority,
+        &ccm_mint_pubkey,
+    );
+    mint_token_2022(
+        &mut svm,
+        &admin,
+        &ccm_mint_pubkey,
+        &listen_payout_vault,
+        LISTEN_PAYOUT_VAULT_FUND_AMOUNT,
+    );
 
     let user_a = create_user_fixture(
         &mut svm,
@@ -1239,6 +1419,12 @@ fn setup_rails() -> TestEnv {
         false,
         PAYOUT_CAP_CCM,
     );
+    seed_listen_payout_vault_config(
+        &mut svm,
+        &payout_vault_config,
+        ccm_mint_pubkey,
+        admin_pubkey,
+    );
 
     TestEnv {
         svm,
@@ -1251,6 +1437,9 @@ fn setup_rails() -> TestEnv {
         comp_vault,
         payout_authority_config,
         payout_cap_config,
+        payout_vault_config,
+        payout_vault_authority,
+        listen_payout_vault,
         admin_ccm,
         user_a,
     }
@@ -1266,6 +1455,100 @@ fn payout_args(window_id: u64) -> PublishListenPayoutRootArgs {
     }
 }
 
+#[derive(Clone)]
+struct ListenPayoutTree {
+    leaves: Vec<PayoutLeafV1>,
+    root: [u8; 32],
+    proofs: Vec<Vec<[u8; 32]>>,
+}
+
+fn listen_payout_leaf(wallet: LegacyPubkey, leaf_index: u32, amount_ccm: u64) -> PayoutLeafV1 {
+    PayoutLeafV1::new(
+        PAYOUT_WINDOW_ID,
+        leaf_index,
+        [leaf_index as u8; 16],
+        Pubkey::new_from_array(wallet.to_bytes()),
+        amount_ccm,
+        [0xa0 | (leaf_index as u8); 32],
+        [0xb0 | (leaf_index as u8); 32],
+        [0xc0 | (leaf_index as u8); 16],
+    )
+}
+
+fn build_listen_payout_tree(wallets: &[LegacyPubkey], amounts: &[u64]) -> ListenPayoutTree {
+    assert_eq!(wallets.len(), amounts.len());
+    assert!(wallets.len().is_power_of_two());
+    let leaves: Vec<PayoutLeafV1> = wallets
+        .iter()
+        .zip(amounts.iter())
+        .enumerate()
+        .map(|(idx, (wallet, amount))| listen_payout_leaf(*wallet, idx as u32, *amount))
+        .collect();
+    let mut levels = vec![leaves.iter().map(PayoutLeafV1::hash).collect::<Vec<_>>()];
+    while levels.last().unwrap().len() > 1 {
+        let previous = levels.last().unwrap();
+        let next = previous
+            .chunks(2)
+            .map(|pair| listen_payout_node_hash_v1(&pair[0], &pair[1]))
+            .collect::<Vec<_>>();
+        levels.push(next);
+    }
+
+    let proofs = (0..leaves.len())
+        .map(|leaf_idx| {
+            let mut idx = leaf_idx;
+            let mut proof = Vec::new();
+            for level in levels.iter().take(levels.len() - 1) {
+                let sibling = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+                proof.push(level[sibling]);
+                idx /= 2;
+            }
+            proof
+        })
+        .collect();
+
+    ListenPayoutTree {
+        leaves,
+        root: levels.last().unwrap()[0],
+        proofs,
+    }
+}
+
+fn claim_args(tree: &ListenPayoutTree, leaf_index: usize) -> ClaimListenPayoutArgs {
+    ClaimListenPayoutArgs {
+        leaf: tree.leaves[leaf_index],
+        proof: tree.proofs[leaf_index].clone(),
+    }
+}
+
+fn publish_tree(env: &mut TestEnv, tree: &ListenPayoutTree) {
+    env.publish_listen_payout_root(PublishListenPayoutRootArgs {
+        window_id: PAYOUT_WINDOW_ID,
+        merkle_root: tree.root,
+        leaf_count: tree.leaves.len() as u32,
+        schema_version: LISTEN_PAYOUT_LEAF_SCHEMA_V1,
+        total_amount_ccm: tree.leaves.iter().map(|leaf| leaf.amount_ccm).sum(),
+    });
+}
+
+fn setup_published_claim_tree(
+    env: &mut TestEnv,
+) -> (ListenPayoutTree, UserFixture, UserFixture, UserFixture) {
+    let user_b = env.create_user(1);
+    let user_c = env.create_user(1);
+    let user_d = env.create_user(1);
+    let wallets = [
+        env.user_a.pubkey(),
+        user_b.pubkey(),
+        user_c.pubkey(),
+        user_d.pubkey(),
+    ];
+    let amounts = [11_000_000, 22_000_000, 33_000_000, 44_000_000];
+    let tree = build_listen_payout_tree(&wallets, &amounts);
+    publish_tree(env, &tree);
+    (tree, user_b, user_c, user_d)
+}
+
 #[test]
 fn publish_listen_payout_root_happy_path_creates_window() {
     let mut env = setup_rails();
@@ -1276,8 +1559,7 @@ fn publish_listen_payout_root_happy_path_creates_window() {
 
     env.publish_listen_payout_root(args.clone());
 
-    let cfg: PayoutAuthorityConfig =
-        read_anchor_account(&env.svm, &env.payout_authority_config);
+    let cfg: PayoutAuthorityConfig = read_anchor_account(&env.svm, &env.payout_authority_config);
     let win: PayoutWindow = read_anchor_account(&env.svm, &window);
     assert_eq!(cfg.last_published_window_id, args.window_id);
     assert_eq!(win.window_id, args.window_id);
@@ -1287,14 +1569,19 @@ fn publish_listen_payout_root_happy_path_creates_window() {
     assert_eq!(win.total_amount_ccm, args.total_amount_ccm);
     assert_eq!(win.published_by, env.admin_pubkey());
     assert_eq!(win.published_at_slot, 123);
-    assert_eq!(win.claim_bitmap, vec![0u8; PayoutWindow::bitmap_bytes(args.leaf_count)]);
+    assert_eq!(
+        win.claim_bitmap,
+        vec![0u8; PayoutWindow::bitmap_bytes(args.leaf_count)]
+    );
 }
 
 #[test]
 fn publish_listen_payout_root_unauthorized_publisher_reverts() {
     let mut env = setup_rails();
     let outsider = Keypair::new();
-    env.svm.airdrop(&outsider.pubkey(), 100_000_000_000).unwrap();
+    env.svm
+        .airdrop(&outsider.pubkey(), 100_000_000_000)
+        .unwrap();
 
     assert_listen_payout_error(
         env.try_publish_listen_payout_root(&outsider, payout_args(PAYOUT_WINDOW_ID)),
@@ -1448,6 +1735,182 @@ fn publish_listen_payout_root_emits_expected_event_fields() {
 }
 
 #[test]
+fn claim_listen_payout_happy_path_creates_ata_and_transfers() {
+    let mut env = setup_rails();
+    let (tree, _, _, _) = setup_published_claim_tree(&mut env);
+    let amount = tree.leaves[0].amount_ccm;
+    let claimer_ata = derive_ata(&env.user_a.pubkey(), &env.ccm_mint_pubkey());
+    assert!(env
+        .svm
+        .get_account(&address_from_legacy(&claimer_ata))
+        .is_none());
+    let vault_before = read_token_balance(&env.svm, &env.listen_payout_vault);
+    env.svm.warp_to_slot(789);
+    env.svm.expire_blockhash();
+
+    let meta = env.claim_listen_payout_user_a(claim_args(&tree, 0));
+
+    assert_eq!(read_token_balance(&env.svm, &claimer_ata), amount);
+    assert_eq!(
+        read_token_balance(&env.svm, &env.listen_payout_vault),
+        vault_before - amount
+    );
+    let win: PayoutWindow =
+        read_anchor_account(&env.svm, &derive_payout_window(PAYOUT_WINDOW_ID).0);
+    assert_eq!(win.claim_bitmap[0] & 0b0000_0001, 0b0000_0001);
+
+    let event: ListenPayoutClaimed = decode_anchor_event(&meta.logs);
+    assert_eq!(event.window_id, PAYOUT_WINDOW_ID);
+    assert_eq!(event.leaf_index, 0);
+    assert_eq!(event.wallet, env.user_a.pubkey());
+    assert_eq!(event.amount_ccm, amount);
+    assert_eq!(event.session_id, tree.leaves[0].session_id);
+    assert_eq!(event.claimed_at_slot, 789);
+}
+
+#[test]
+fn claim_listen_payout_rejects_replay() {
+    let mut env = setup_rails();
+    let (tree, _, _, _) = setup_published_claim_tree(&mut env);
+    let args = claim_args(&tree, 0);
+
+    env.claim_listen_payout_user_a(args.clone());
+    env.svm.expire_blockhash();
+
+    assert_listen_payout_error(
+        env.try_claim_listen_payout_user_a(args),
+        ListenPayoutError::AlreadyClaimed,
+    );
+}
+
+#[test]
+fn claim_listen_payout_rejects_wrong_claimer() {
+    let mut env = setup_rails();
+    let (tree, user_b, _, _) = setup_published_claim_tree(&mut env);
+
+    assert_listen_payout_error(
+        env.try_claim_listen_payout(&user_b.signer, claim_args(&tree, 0)),
+        ListenPayoutError::ClaimerWalletMismatch,
+    );
+}
+
+#[test]
+fn claim_listen_payout_rejects_invalid_merkle_proof() {
+    let mut env = setup_rails();
+    let (tree, _, _, _) = setup_published_claim_tree(&mut env);
+    let mut args = claim_args(&tree, 0);
+    args.proof[0][0] ^= 0xff;
+
+    assert_listen_payout_error(
+        env.try_claim_listen_payout_user_a(args),
+        ListenPayoutError::InvalidMerkleProof,
+    );
+}
+
+#[test]
+fn claim_listen_payout_rejects_when_paused() {
+    let mut env = setup_rails();
+    let (tree, _, _, _) = setup_published_claim_tree(&mut env);
+    env.seed_payout_configs(
+        vec![env.admin_pubkey()],
+        PAYOUT_WINDOW_ID,
+        true,
+        PAYOUT_CAP_CCM,
+    );
+
+    assert_listen_payout_error(
+        env.try_claim_listen_payout_user_a(claim_args(&tree, 0)),
+        ListenPayoutError::Paused,
+    );
+}
+
+#[test]
+fn claim_listen_payout_rejects_schema_mismatch() {
+    let mut env = setup_rails();
+    let (tree, _, _, _) = setup_published_claim_tree(&mut env);
+    let mut args = claim_args(&tree, 0);
+    args.leaf.schema_version = LISTEN_PAYOUT_LEAF_SCHEMA_V1 + 1;
+
+    assert_listen_payout_error(
+        env.try_claim_listen_payout_user_a(args),
+        ListenPayoutError::SchemaVersionMismatch,
+    );
+}
+
+#[test]
+fn claim_listen_payout_rejects_leaf_index_out_of_bounds() {
+    let mut env = setup_rails();
+    let (tree, _, _, _) = setup_published_claim_tree(&mut env);
+    let mut args = claim_args(&tree, 0);
+    args.leaf.leaf_index = tree.leaves.len() as u32;
+
+    assert_listen_payout_error(
+        env.try_claim_listen_payout_user_a(args),
+        ListenPayoutError::LeafIndexOutOfBounds,
+    );
+}
+
+#[test]
+fn claim_listen_payout_rejects_proof_too_long() {
+    let mut env = setup_rails();
+    let (tree, _, _, _) = setup_published_claim_tree(&mut env);
+    let mut args = claim_args(&tree, 0);
+    args.proof = vec![[0x99; 32]; MAX_PROOF_LEN + 1];
+
+    assert_listen_payout_error(
+        env.try_claim_listen_payout_user_a(args),
+        ListenPayoutError::ProofTooLong,
+    );
+}
+
+#[test]
+fn claim_listen_payout_rejects_zero_amount() {
+    let mut env = setup_rails();
+    let user_b = env.create_user(1);
+    let wallets = [env.user_a.pubkey(), user_b.pubkey()];
+    let amounts = [0, 10_000_000];
+    let tree = build_listen_payout_tree(&wallets, &amounts);
+    publish_tree(&mut env, &tree);
+
+    assert_listen_payout_error(
+        env.try_claim_listen_payout_user_a(claim_args(&tree, 0)),
+        ListenPayoutError::ZeroAmountClaim,
+    );
+}
+
+#[test]
+fn claim_listen_payout_vault_underfunded_reverts_without_bitmap() {
+    let mut env = setup_rails();
+    let user_b = env.create_user(1);
+    let wallets = [env.user_a.pubkey(), user_b.pubkey()];
+    let amounts = [LISTEN_PAYOUT_VAULT_FUND_AMOUNT + 1, 1];
+    let tree = build_listen_payout_tree(&wallets, &amounts);
+    publish_tree(&mut env, &tree);
+
+    assert!(env
+        .try_claim_listen_payout_user_a(claim_args(&tree, 0))
+        .is_err());
+
+    let win: PayoutWindow =
+        read_anchor_account(&env.svm, &derive_payout_window(PAYOUT_WINDOW_ID).0);
+    assert_eq!(win.claim_bitmap[0] & 0b0000_0001, 0);
+}
+
+#[test]
+fn claim_listen_payout_two_leaves_set_independent_bitmap_bits() {
+    let mut env = setup_rails();
+    let (tree, user_b, user_c, _) = setup_published_claim_tree(&mut env);
+
+    env.claim_listen_payout(&user_b.signer, claim_args(&tree, 1));
+    env.claim_listen_payout(&user_c.signer, claim_args(&tree, 2));
+
+    let win: PayoutWindow =
+        read_anchor_account(&env.svm, &derive_payout_window(PAYOUT_WINDOW_ID).0);
+    assert_eq!(win.claim_bitmap[0] & 0b0000_0110, 0b0000_0110);
+    assert_eq!(win.claim_bitmap[0] & 0b0000_0001, 0);
+}
+
+#[test]
 fn happy_path_core_loop_runs_end_to_end() {
     let mut env = setup_rails();
 
@@ -1484,8 +1947,7 @@ fn happy_path_core_loop_runs_end_to_end() {
     env.stake_user_a(GOLDEN_PATH_STAKE_AMOUNT);
 
     let pool_after_stake: StakePool = read_anchor_account(&env.svm, &env.pool);
-    let user_stake_after_stake: UserStake =
-        read_anchor_account(&env.svm, &env.user_a.user_stake);
+    let user_stake_after_stake: UserStake = read_anchor_account(&env.svm, &env.user_a.user_stake);
     assert_eq!(pool_after_stake.total_staked, GOLDEN_PATH_STAKE_AMOUNT);
     assert_eq!(
         read_token_balance(&env.svm, &env.stake_vault),
@@ -1538,8 +2000,7 @@ fn happy_path_core_loop_runs_end_to_end() {
     env.unstake_user_a();
 
     let pool_after_unstake: StakePool = read_anchor_account(&env.svm, &env.pool);
-    let user_stake_after_unstake: UserStake =
-        read_anchor_account(&env.svm, &env.user_a.user_stake);
+    let user_stake_after_unstake: UserStake = read_anchor_account(&env.svm, &env.user_a.user_stake);
     assert_eq!(pool_after_unstake.total_staked, 0);
     assert_eq!(pool_after_unstake.last_update_slot, claim_slot);
     assert_eq!(read_token_balance(&env.svm, &env.stake_vault), 0);
@@ -1569,7 +2030,10 @@ fn test_unstake_before_lock_reverts() {
     let user_stake_after_failed_unstake: UserStake =
         read_anchor_account(&env.svm, &env.user_a.user_stake);
     assert_eq!(pool_after_failed_unstake.total_staked, SMALL_STAKE_AMOUNT);
-    assert_eq!(read_token_balance(&env.svm, &env.stake_vault), SMALL_STAKE_AMOUNT);
+    assert_eq!(
+        read_token_balance(&env.svm, &env.stake_vault),
+        SMALL_STAKE_AMOUNT
+    );
     assert_eq!(
         read_token_balance(&env.svm, &env.user_a.ccm),
         USER_START_BALANCE - SMALL_STAKE_AMOUNT
@@ -1624,7 +2088,9 @@ fn test_claim_with_underfunded_vault_partial_pays() {
 fn test_set_reward_rate_admin_only() {
     let mut env = setup_rails();
     let outsider = Keypair::new();
-    env.svm.airdrop(&outsider.pubkey(), 100_000_000_000).unwrap();
+    env.svm
+        .airdrop(&outsider.pubkey(), 100_000_000_000)
+        .unwrap();
 
     assert_rails_error(
         env.try_set_reward_rate_as(&outsider, DEFAULT_REWARD_RATE_PER_SLOT * 2),
@@ -1713,7 +2179,10 @@ fn test_post_unstake_claim_drains_pending_rewards() {
     let user_after_unstake: UserStake = read_anchor_account(&env.svm, &env.user_a.user_stake);
     assert_eq!(pool_after_unstake.total_staked, 0);
     assert_eq!(read_token_balance(&env.svm, &env.stake_vault), 0);
-    assert_eq!(read_token_balance(&env.svm, &env.user_a.ccm), USER_START_BALANCE);
+    assert_eq!(
+        read_token_balance(&env.svm, &env.user_a.ccm),
+        USER_START_BALANCE
+    );
     assert_eq!(user_after_unstake.amount, 0);
     assert_eq!(user_after_unstake.reward_debt, 0);
     assert_eq!(user_after_unstake.pending_rewards, 1_000_000);
@@ -1748,7 +2217,10 @@ fn test_two_users_proportional_distribution() {
 
     let pool_after_user_b_stake: StakePool = read_anchor_account(&env.svm, &env.pool);
     let user_b_after_stake: UserStake = read_anchor_account(&env.svm, &user_b.user_stake);
-    assert_eq!(pool_after_user_b_stake.total_staked, SMALL_STAKE_AMOUNT + USER_B_STAKE_AMOUNT);
+    assert_eq!(
+        pool_after_user_b_stake.total_staked,
+        SMALL_STAKE_AMOUNT + USER_B_STAKE_AMOUNT
+    );
     assert_eq!(
         pool_after_user_b_stake.acc_reward_per_share,
         expected_acc_reward_per_share(10_000, SMALL_STAKE_AMOUNT)
@@ -1789,8 +2261,10 @@ fn test_claim_compensation_happy_path() {
     let mut env = setup_rails();
     let user_b = env.create_user(USER_START_BALANCE);
     let compensation_amount = 123_456;
-    let (root, user_a_proof, _) =
-        two_leaf_merkle((env.user_a.pubkey(), compensation_amount), (user_b.pubkey(), 777_777));
+    let (root, user_a_proof, _) = two_leaf_merkle(
+        (env.user_a.pubkey(), compensation_amount),
+        (user_b.pubkey(), 777_777),
+    );
 
     env.compensate_external_stakers(root);
     env.fund_comp_vault(500_000);
@@ -1801,7 +2275,10 @@ fn test_claim_compensation_happy_path() {
     assert_eq!(config.comp_merkle_root, root);
     assert_eq!(claimed.user, env.user_a.pubkey());
     assert_eq!(claimed.amount, compensation_amount);
-    assert_eq!(read_token_balance(&env.svm, &env.comp_vault), 500_000 - compensation_amount);
+    assert_eq!(
+        read_token_balance(&env.svm, &env.comp_vault),
+        500_000 - compensation_amount
+    );
     assert_eq!(
         read_token_balance(&env.svm, &env.user_a.ccm),
         USER_START_BALANCE + compensation_amount
@@ -1813,8 +2290,10 @@ fn test_claim_compensation_already_claimed_reverts() {
     let mut env = setup_rails();
     let user_b = env.create_user(USER_START_BALANCE);
     let compensation_amount = 10_000;
-    let (root, user_a_proof, _) =
-        two_leaf_merkle((env.user_a.pubkey(), compensation_amount), (user_b.pubkey(), 20_000));
+    let (root, user_a_proof, _) = two_leaf_merkle(
+        (env.user_a.pubkey(), compensation_amount),
+        (user_b.pubkey(), 20_000),
+    );
 
     env.compensate_external_stakers(root);
     env.fund_comp_vault(50_000);
@@ -1824,7 +2303,10 @@ fn test_claim_compensation_already_claimed_reverts() {
     assert!(env
         .try_claim_compensation_user_a(compensation_amount, user_a_proof)
         .is_err());
-    assert_eq!(read_token_balance(&env.svm, &env.user_a.ccm), balance_before);
+    assert_eq!(
+        read_token_balance(&env.svm, &env.user_a.ccm),
+        balance_before
+    );
 }
 
 #[test]
@@ -1847,10 +2329,8 @@ fn test_claim_compensation_wrong_proof_reverts() {
 fn test_compensation_root_already_set_reverts() {
     let mut env = setup_rails();
     let user_b = env.create_user(USER_START_BALANCE);
-    let (root_one, _, _) =
-        two_leaf_merkle((env.user_a.pubkey(), 1_000), (user_b.pubkey(), 2_000));
-    let (root_two, _, _) =
-        two_leaf_merkle((env.user_a.pubkey(), 3_000), (user_b.pubkey(), 4_000));
+    let (root_one, _, _) = two_leaf_merkle((env.user_a.pubkey(), 1_000), (user_b.pubkey(), 2_000));
+    let (root_two, _, _) = two_leaf_merkle((env.user_a.pubkey(), 3_000), (user_b.pubkey(), 4_000));
 
     env.compensate_external_stakers(root_one);
     assert!(env.try_compensate_external_stakers(root_two).is_err());
@@ -1864,8 +2344,10 @@ fn test_claim_compensation_bad_signer_reverts() {
     let mut env = setup_rails();
     let user_b = env.create_user(USER_START_BALANCE);
     let compensation_amount = 55_555;
-    let (root, user_a_proof, _) =
-        two_leaf_merkle((env.user_a.pubkey(), compensation_amount), (user_b.pubkey(), 66_666));
+    let (root, user_a_proof, _) = two_leaf_merkle(
+        (env.user_a.pubkey(), compensation_amount),
+        (user_b.pubkey(), 66_666),
+    );
 
     env.compensate_external_stakers(root);
     env.fund_comp_vault(100_000);

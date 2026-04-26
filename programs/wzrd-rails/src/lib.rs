@@ -13,6 +13,7 @@
 //!   - one-time external compensation merkle drop
 
 use anchor_lang::prelude::*;
+use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_2022::ID as TOKEN_2022_PROGRAM_ID;
 use anchor_spl::token_interface::{
     self, Mint as MintInterface, TokenAccount, TokenInterface, TransferChecked,
@@ -163,7 +164,10 @@ pub mod wzrd_rails {
             ctx.accounts.config.comp_merkle_root == [0u8; 32],
             RailsError::CompensationAlreadySet
         );
-        require!(merkle_root != [0u8; 32], RailsError::CompensationInvalidProof);
+        require!(
+            merkle_root != [0u8; 32],
+            RailsError::CompensationInvalidProof
+        );
 
         ctx.accounts.config.comp_merkle_root = merkle_root;
         emit!(CompensationRootSet {
@@ -409,15 +413,17 @@ pub mod wzrd_rails {
 
         let user_stake = &mut ctx.accounts.user_stake;
         require!(user_stake.amount > 0, RailsError::NothingStaked);
-        require!(clock.slot >= user_stake.lock_end_slot, RailsError::LockActive);
+        require!(
+            clock.slot >= user_stake.lock_end_slot,
+            RailsError::LockActive
+        );
 
         let pending = user_stake
             .total_claimable(ctx.accounts.pool.acc_reward_per_share)
             .map_err(|_| error!(RailsError::MathOverflow))?;
         let unstake_amount = user_stake.amount;
 
-        let signer_seeds: &[&[&[u8]]] =
-            &[&[POOL_SEED, pool_id_bytes.as_ref(), &[pool_bump]]];
+        let signer_seeds: &[&[&[u8]]] = &[&[POOL_SEED, pool_id_bytes.as_ref(), &[pool_bump]]];
         let transfer_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_2022_program.to_account_info(),
             TransferChecked {
@@ -486,8 +492,7 @@ pub mod wzrd_rails {
         let pay = owed.min(ctx.accounts.reward_vault.amount);
         require!(pay > 0, RailsError::NoRewardsAvailable);
 
-        let signer_seeds: &[&[&[u8]]] =
-            &[&[POOL_SEED, pool_id_bytes.as_ref(), &[pool_bump]]];
+        let signer_seeds: &[&[&[u8]]] = &[&[POOL_SEED, pool_id_bytes.as_ref(), &[pool_bump]]];
         let transfer_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_2022_program.to_account_info(),
             TransferChecked {
@@ -542,7 +547,10 @@ pub mod wzrd_rails {
         proof: Vec<[u8; 32]>,
     ) -> Result<()> {
         require!(amount > 0, RailsError::StakeAmountZero);
-        require!(ctx.accounts.config.comp_root_set(), RailsError::CompensationInvalidProof);
+        require!(
+            ctx.accounts.config.comp_root_set(),
+            RailsError::CompensationInvalidProof
+        );
         require!(
             verify_compensation_proof(
                 &ctx.accounts.user.key(),
@@ -655,6 +663,98 @@ pub mod wzrd_rails {
 
         Ok(())
     }
+
+    /// Claim a Listen payout from a published merkle window.
+    ///
+    /// This verifies the `PayoutLeafV1` merkle proof, flips the inline bitmap bit
+    /// for anti-replay, and transfers pre-funded CCM from the Listen payout vault
+    /// to the claiming wallet's Token-2022 ATA.
+    pub fn claim_listen_payout(
+        ctx: Context<ClaimListenPayout>,
+        args: ClaimListenPayoutArgs,
+    ) -> Result<()> {
+        let auth_cfg = &ctx.accounts.authority_config;
+        let win = &mut ctx.accounts.payout_window;
+        let leaf = &args.leaf;
+
+        require!(!auth_cfg.paused, ListenPayoutError::Paused);
+        require!(
+            leaf.window_id == win.window_id,
+            ListenPayoutError::LeafWindowMismatch
+        );
+        require!(
+            leaf.schema_version == win.schema_version,
+            ListenPayoutError::SchemaVersionMismatch
+        );
+        require!(
+            leaf.schema_version == LISTEN_PAYOUT_LEAF_SCHEMA_V1,
+            ListenPayoutError::SchemaVersionMismatch
+        );
+        require!(
+            ctx.accounts.claimer.key() == leaf.wallet_pubkey,
+            ListenPayoutError::ClaimerWalletMismatch
+        );
+        require!(
+            leaf.leaf_index < win.leaf_count,
+            ListenPayoutError::LeafIndexOutOfBounds
+        );
+
+        let byte_idx = (leaf.leaf_index as usize) / 8;
+        let bit_idx = (leaf.leaf_index as usize) % 8;
+        require!(
+            byte_idx < win.claim_bitmap.len(),
+            ListenPayoutError::LeafIndexOutOfBounds
+        );
+        let bit_mask = 1u8 << bit_idx;
+        require!(
+            win.claim_bitmap[byte_idx] & bit_mask == 0,
+            ListenPayoutError::AlreadyClaimed
+        );
+        require!(
+            args.proof.len() <= MAX_PROOF_LEN,
+            ListenPayoutError::ProofTooLong
+        );
+
+        let mut current = leaf.hash();
+        for sibling in args.proof.iter() {
+            current = listen_payout_node_hash_v1(&current, sibling);
+        }
+        require!(
+            current == win.merkle_root,
+            ListenPayoutError::InvalidMerkleProof
+        );
+        require!(leaf.amount_ccm > 0, ListenPayoutError::ZeroAmountClaim);
+
+        win.claim_bitmap[byte_idx] |= bit_mask;
+
+        let bump = ctx.accounts.vault_config.vault_authority_bump;
+        let signer_seeds: &[&[&[u8]]] = &[&[LISTEN_PAYOUT_VAULT_AUTHORITY_SEED, &[bump]]];
+        token_interface::transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.listen_payout_vault.to_account_info(),
+                    mint: ctx.accounts.ccm_mint.to_account_info(),
+                    to: ctx.accounts.claimer_ata.to_account_info(),
+                    authority: ctx.accounts.vault_authority.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            leaf.amount_ccm,
+            ctx.accounts.ccm_mint.decimals,
+        )?;
+
+        emit!(ListenPayoutClaimed {
+            window_id: leaf.window_id,
+            leaf_index: leaf.leaf_index,
+            wallet: ctx.accounts.claimer.key(),
+            amount_ccm: leaf.amount_ccm,
+            session_id: leaf.session_id,
+            claimed_at_slot: Clock::get()?.slot,
+        });
+
+        Ok(())
+    }
 }
 
 fn compensation_leaf(user: &Pubkey, amount: u64) -> [u8; 32] {
@@ -676,7 +776,12 @@ fn sorted_pair_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
 }
 
 #[inline(never)]
-fn verify_compensation_proof(user: &Pubkey, amount: u64, proof: &[[u8; 32]], root: &[u8; 32]) -> bool {
+fn verify_compensation_proof(
+    user: &Pubkey,
+    amount: u64,
+    proof: &[[u8; 32]],
+    root: &[u8; 32],
+) -> bool {
     let mut computed = compensation_leaf(user, amount);
     for sibling in proof {
         computed = sorted_pair_hash(&computed, sibling);
@@ -1047,5 +1152,58 @@ pub struct PublishListenPayoutRoot<'info> {
         bump,
     )]
     pub payout_window: Account<'info, PayoutWindow>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(args: ClaimListenPayoutArgs)]
+pub struct ClaimListenPayout<'info> {
+    #[account(mut)]
+    pub claimer: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [LISTEN_PAYOUT_WINDOW_SEED, &args.leaf.window_id.to_le_bytes()],
+        bump = payout_window.bump,
+    )]
+    pub payout_window: Account<'info, PayoutWindow>,
+    #[account(
+        seeds = [LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
+        bump = authority_config.bump,
+    )]
+    pub authority_config: Account<'info, PayoutAuthorityConfig>,
+    #[account(
+        seeds = [LISTEN_PAYOUT_VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+    )]
+    pub vault_config: Account<'info, PayoutVaultConfig>,
+    #[account(
+        address = vault_config.ccm_mint,
+        mint::token_program = token_program,
+    )]
+    pub ccm_mint: Box<InterfaceAccount<'info, MintInterface>>,
+    #[account(
+        mut,
+        associated_token::mint = ccm_mint,
+        associated_token::authority = vault_authority,
+        associated_token::token_program = token_program,
+    )]
+    pub listen_payout_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    /// CHECK: PDA-only token authority, validated by seeds and bump.
+    #[account(
+        seeds = [LISTEN_PAYOUT_VAULT_AUTHORITY_SEED],
+        bump = vault_config.vault_authority_bump,
+    )]
+    pub vault_authority: UncheckedAccount<'info>,
+    #[account(
+        init_if_needed,
+        payer = claimer,
+        associated_token::mint = ccm_mint,
+        associated_token::authority = claimer,
+        associated_token::token_program = token_program,
+    )]
+    pub claimer_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(address = TOKEN_2022_PROGRAM_ID @ RailsError::InvalidTokenProgram)]
+    pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }

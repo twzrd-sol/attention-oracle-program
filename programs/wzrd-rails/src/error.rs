@@ -75,4 +75,25 @@ pub enum ListenPayoutError {
 
     #[msg("Total amount exceeds the per-window CCM cap")]
     ExceedsPerWindowCap = 107,
+
+    #[msg("Leaf window_id does not match the payout window account")]
+    LeafWindowMismatch = 108,
+
+    #[msg("Claimer signer does not match leaf.wallet_pubkey")]
+    ClaimerWalletMismatch = 109,
+
+    #[msg("Leaf index is out of bounds for this window")]
+    LeafIndexOutOfBounds = 110,
+
+    #[msg("This leaf has already been claimed")]
+    AlreadyClaimed = 111,
+
+    #[msg("Merkle proof exceeds maximum allowed length")]
+    ProofTooLong = 112,
+
+    #[msg("Merkle proof does not verify against published root")]
+    InvalidMerkleProof = 113,
+
+    #[msg("Cannot claim a zero-amount leaf")]
+    ZeroAmountClaim = 114,
 }
