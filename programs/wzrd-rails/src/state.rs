@@ -239,6 +239,14 @@ pub struct PayoutAdminRotated {
 /// its real budget envelope.
 pub const MAX_REWARD_RATE_PER_SLOT: u64 = 1_000_000;
 
+/// Per audit finding M-7 (window_id boundary brick): cap window_id at a
+/// future-proof but bounded value to prevent a publisher from setting
+/// window_id = u64::MAX which would permanently brick the monotonicity
+/// check (no future u64 can exceed it). 99_999_999 represents the
+/// 8-digit YYYYMMDD ceiling (year 9999 day 12 31), giving 27,000+ years
+/// of operational headroom at one window per day.
+pub const MAX_WINDOW_ID: u64 = 99_999_999;
+
 /// Global configuration for the wzrd-rails program.
 ///
 /// One instance per deployment, created by `initialize_config`. Holds program-wide
