@@ -236,10 +236,20 @@ pub mod wzrd_rails {
     ///
     /// The actual Token-2022 vault is the ATA owned by the derived
     /// vault-authority PDA and is funded by the operator off-chain.
+    ///
+    /// Per audit finding H-02: `args.ccm_mint` MUST equal `Config.ccm_mint`.
+    /// Without this binding, an admin typo at init would permanently mis-bind
+    /// the listen-payout subsystem to the wrong mint with no on-chain recovery.
     pub fn init_payout_vault_config(
         ctx: Context<InitPayoutVaultConfig>,
         args: InitPayoutVaultConfigArgs,
     ) -> Result<()> {
+        require_keys_eq!(
+            args.ccm_mint,
+            ctx.accounts.config.ccm_mint,
+            ListenPayoutError::MintMismatchWithRails
+        );
+        require!(args.admin != Pubkey::default(), ListenPayoutError::NotAdmin);
         let cfg = &mut ctx.accounts.vault_config;
         cfg.bump = ctx.bumps.vault_config;
         cfg.ccm_mint = args.ccm_mint;
