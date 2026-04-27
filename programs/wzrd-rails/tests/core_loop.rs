@@ -45,8 +45,8 @@ use wzrd_rails::{
         COMPENSATION_LEAF_DOMAIN, COMP_CLAIMED_SEED, COMP_VAULT_SEED, CONFIG_SEED,
         LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED, LISTEN_PAYOUT_CAP_CONFIG_SEED,
         LISTEN_PAYOUT_VAULT_AUTHORITY_SEED, LISTEN_PAYOUT_VAULT_CONFIG_SEED,
-        LISTEN_PAYOUT_WINDOW_SEED, MAX_LEAVES_PER_WINDOW, MAX_PROOF_LEN, MAX_REWARD_RATE_PER_SLOT,
-        POOL_SEED, REWARD_VAULT_SEED, STAKE_VAULT_SEED, USER_STAKE_SEED,
+        LISTEN_PAYOUT_WINDOW_SEED, MAX_LEAVES_PER_WINDOW, MAX_PER_WINDOW_CAP_CCM, MAX_PROOF_LEN,
+        MAX_REWARD_RATE_PER_SLOT, POOL_SEED, REWARD_VAULT_SEED, STAKE_VAULT_SEED, USER_STAKE_SEED,
     },
     ListenPayoutError, PayoutAllocationLeafV1, RailsError, ID as WZRD_RAILS_PROGRAM_ID,
     LISTEN_PAYOUT_LEAF_SCHEMA_V1,
@@ -2723,4 +2723,78 @@ fn test_claim_compensation_bad_signer_reverts() {
         ),
         RailsError::Unauthorized,
     );
+}
+
+// Audit-fix coverage: the four new ListenPayoutError variants added by
+// #90/#91/#92 (M-01, H-01, H-02, H-03) had no test coverage at merge time.
+// MintMismatchWithRails (#90) requires a partial-init fixture to exercise
+// init_payout_vault_config in isolation and is left for a follow-up that
+// refactors setup_rails into a stepwise builder.
+
+/// Audit fix #92 (H-03): per_window_cap_ccm must be > 0 at the setter.
+/// Without this, an admin could "covert-pause" payouts by zeroing the cap.
+#[test]
+fn set_per_window_ccm_cap_rejects_zero() {
+    let mut env = setup_rails();
+
+    assert_listen_payout_error(
+        env.try_set_per_window_ccm_cap_as_admin(0),
+        ListenPayoutError::CapMustBeNonZero,
+    );
+}
+
+/// Audit fix #92 (H-03): per_window_cap_ccm must be <= MAX_PER_WINDOW_CAP_CCM
+/// at the setter. Without this bound, a compromised admin could neuter the
+/// per-window safety bound by setting cap to u64::MAX, escalating H-1 to a
+/// chain HIGH cap-bypass.
+#[test]
+fn set_per_window_ccm_cap_rejects_above_max() {
+    let mut env = setup_rails();
+
+    assert_listen_payout_error(
+        env.try_set_per_window_ccm_cap_as_admin(MAX_PER_WINDOW_CAP_CCM + 1),
+        ListenPayoutError::CapExceedsMaxAllowed,
+    );
+}
+
+/// Audit fix #91 (H-01): claim_listen_payout enforces total_amount_ccm as a
+/// hard cap on cumulative settlement via the claimed_so_far accumulator.
+/// Without this, a publisher could declare total_amount_ccm = 1, commit a
+/// root with leaves summing to the full vault balance, and drain the vault
+/// one claim at a time.
+#[test]
+fn claim_listen_payout_rejects_when_cumulative_exceeds_total_amount_ccm() {
+    let mut env = setup_rails();
+    let user_b = env.create_user(1);
+    let wallets = [env.user_a.pubkey(), user_b.pubkey()];
+    let amounts: [u64; 2] = [10_000_000, 15_000_000];
+    let tree = build_listen_payout_tree(&wallets, &amounts);
+
+    // Publish with declared_total intentionally less than the leaf sum.
+    // publish_listen_payout_root does not validate sum against total - the
+    // bound is enforced incrementally at claim time via claimed_so_far.
+    let leaf_sum: u64 = amounts.iter().sum();
+    let declared_total: u64 = leaf_sum - 5_000_000; // 20M, less than sum=25M
+    env.publish_listen_payout_root(PublishListenPayoutRootArgs {
+        window_id: PAYOUT_WINDOW_ID,
+        merkle_root: tree.root,
+        leaf_count: tree.leaves.len() as u32,
+        schema_version: LISTEN_PAYOUT_LEAF_SCHEMA_V1,
+        total_amount_ccm: declared_total,
+    });
+
+    // First claim succeeds: claimed_so_far becomes 10M, <= declared_total=20M.
+    env.claim_listen_payout_user_a(claim_args(&tree, 0));
+
+    // Second claim would push claimed_so_far to 25M > declared_total=20M.
+    assert_listen_payout_error(
+        env.try_claim_listen_payout(&user_b.signer, claim_args(&tree, 1)),
+        ListenPayoutError::ExceedsWindowTotal,
+    );
+
+    // Verify claimed_so_far is exactly the first claim's amount; the rejected
+    // second claim must not have updated the accumulator.
+    let win: PayoutWindow =
+        read_anchor_account(&env.svm, &derive_payout_window(PAYOUT_WINDOW_ID).0);
+    assert_eq!(win.claimed_so_far, amounts[0]);
 }
