@@ -114,4 +114,7 @@ pub enum ListenPayoutError {
 
     #[msg("Admin/publisher pubkey must not be Pubkey::default() — lockout prevention")]
     AdminPubkeyMustBeNonZero = 120,
+
+    #[msg("vault_config.ccm_mint must equal Config.ccm_mint")]
+    MintMismatchWithRails = 121,
 }
