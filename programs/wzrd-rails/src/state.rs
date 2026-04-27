@@ -157,7 +157,14 @@ pub struct PayoutWindow {
     pub merkle_root: [u8; 32],
     pub leaf_count: u32,
     pub schema_version: u8,
+    /// Publisher-declared total CCM intended for this window.
+    /// Bounded above by `PayoutCapConfig.per_window_cap_ccm` at publish time.
     pub total_amount_ccm: u64,
+    /// Running sum of `leaf.amount_ccm` claimed so far. Per audit finding H-01,
+    /// `claim_listen_payout` enforces `claimed_so_far + leaf.amount_ccm <=
+    /// total_amount_ccm` to make the cap a hard bound on actual on-chain
+    /// settlement, not just an advisory metadata field.
+    pub claimed_so_far: u64,
     pub published_by: Pubkey,
     pub published_at_slot: u64,
     pub claim_bitmap: Vec<u8>,
@@ -170,7 +177,11 @@ impl PayoutWindow {
 
     /// Account body size excluding the 8-byte Anchor discriminator.
     pub fn space(leaf_count: u32) -> usize {
-        1 + 8 + 32 + 4 + 1 + 8 + 32 + 8 + 4 + Self::bitmap_bytes(leaf_count)
+        // bump(1) + window_id(8) + merkle_root(32) + leaf_count(4)
+        // + schema_version(1) + total_amount_ccm(8) + claimed_so_far(8)
+        // + published_by(32) + published_at_slot(8) + bitmap_vec_len(4)
+        // + bitmap bytes
+        1 + 8 + 32 + 4 + 1 + 8 + 8 + 32 + 8 + 4 + Self::bitmap_bytes(leaf_count)
     }
 
     /// Account body size for Anchor `init` before handler validation runs.
