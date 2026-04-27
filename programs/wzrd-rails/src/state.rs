@@ -247,6 +247,13 @@ pub const MAX_REWARD_RATE_PER_SLOT: u64 = 1_000_000;
 /// of operational headroom at one window per day.
 pub const MAX_WINDOW_ID: u64 = 99_999_999;
 
+/// Per audit finding H-03: the per-window CCM cap MUST itself be bounded
+/// to prevent admin from setting it to u64::MAX (which would neuter the
+/// only programmatic per-window safety bound). 100M CCM at 9 decimals is
+/// a deliberately loose ceiling — well above any reasonable single-window
+/// emission, far below the kind of values that suggest "the cap is broken."
+pub const MAX_PER_WINDOW_CAP_CCM: u64 = 100_000_000_000_000_000;
+
 /// Global configuration for the wzrd-rails program.
 ///
 /// One instance per deployment, created by `initialize_config`. Holds program-wide
