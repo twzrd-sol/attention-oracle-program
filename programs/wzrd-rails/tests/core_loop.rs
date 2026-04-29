@@ -1460,7 +1460,7 @@ fn create_user_fixture(
     }
 }
 
-fn setup_rails() -> TestEnv {
+fn setup_rails_pre_payout_inits() -> TestEnv {
     let mut svm = LiteSVM::new();
 
     if let Err(err) = load_wzrd_rails_program(&mut svm) {
@@ -1568,41 +1568,6 @@ fn setup_rails() -> TestEnv {
         )],
     );
 
-    send_tx(
-        &mut svm,
-        &[&admin],
-        &[
-            build_init_payout_authority_config_ix(
-                config,
-                payout_authority_config,
-                admin_pubkey,
-                InitPayoutAuthorityConfigArgs {
-                    admin: Pubkey::new_from_array(admin_pubkey.to_bytes()),
-                    initial_publisher: Pubkey::new_from_array(admin_pubkey.to_bytes()),
-                },
-            ),
-            build_init_payout_cap_config_ix(
-                config,
-                payout_cap_config,
-                admin_pubkey,
-                InitPayoutCapConfigArgs {
-                    admin: Pubkey::new_from_array(admin_pubkey.to_bytes()),
-                    per_window_cap_ccm: PAYOUT_CAP_CCM,
-                },
-            ),
-            build_init_payout_vault_config_ix(
-                config,
-                payout_vault_config,
-                payout_vault_authority,
-                admin_pubkey,
-                InitPayoutVaultConfigArgs {
-                    admin: Pubkey::new_from_array(admin_pubkey.to_bytes()),
-                    ccm_mint: Pubkey::new_from_array(ccm_mint_pubkey.to_bytes()),
-                },
-            ),
-        ],
-    );
-
     TestEnv {
         svm,
         admin,
@@ -1620,6 +1585,55 @@ fn setup_rails() -> TestEnv {
         admin_ccm,
         user_a,
     }
+}
+
+/// Performs the three payout-config inits in one transaction. This is the
+/// production wiring step. Tests that need to exercise an init failure call
+/// `setup_rails_pre_payout_inits()` directly and use the `try_init_*` helpers
+/// to drive a single init with controlled args.
+fn init_all_payout_configs(env: &mut TestEnv) {
+    let admin_pubkey = env.admin_pubkey();
+    let ccm_mint_pubkey = env.ccm_mint_pubkey();
+    send_tx(
+        &mut env.svm,
+        &[&env.admin],
+        &[
+            build_init_payout_authority_config_ix(
+                env.config,
+                env.payout_authority_config,
+                admin_pubkey,
+                InitPayoutAuthorityConfigArgs {
+                    admin: Pubkey::new_from_array(admin_pubkey.to_bytes()),
+                    initial_publisher: Pubkey::new_from_array(admin_pubkey.to_bytes()),
+                },
+            ),
+            build_init_payout_cap_config_ix(
+                env.config,
+                env.payout_cap_config,
+                admin_pubkey,
+                InitPayoutCapConfigArgs {
+                    admin: Pubkey::new_from_array(admin_pubkey.to_bytes()),
+                    per_window_cap_ccm: PAYOUT_CAP_CCM,
+                },
+            ),
+            build_init_payout_vault_config_ix(
+                env.config,
+                env.payout_vault_config,
+                env.payout_vault_authority,
+                admin_pubkey,
+                InitPayoutVaultConfigArgs {
+                    admin: Pubkey::new_from_array(admin_pubkey.to_bytes()),
+                    ccm_mint: Pubkey::new_from_array(ccm_mint_pubkey.to_bytes()),
+                },
+            ),
+        ],
+    );
+}
+
+fn setup_rails() -> TestEnv {
+    let mut env = setup_rails_pre_payout_inits();
+    init_all_payout_configs(&mut env);
+    env
 }
 
 fn payout_args(window_id: u64) -> PublishListenPayoutRootArgs {
@@ -2725,11 +2739,138 @@ fn test_claim_compensation_bad_signer_reverts() {
     );
 }
 
-// Audit-fix coverage: the four new ListenPayoutError variants added by
-// #90/#91/#92 (M-01, H-01, H-02, H-03) had no test coverage at merge time.
-// MintMismatchWithRails (#90) requires a partial-init fixture to exercise
-// init_payout_vault_config in isolation and is left for a follow-up that
-// refactors setup_rails into a stepwise builder.
+// Helpers for init-time error coverage. These mirror
+// `try_init_payout_authority_config_as_admin` but expose the cap_config and
+// vault_config init paths with controlled args so tests can drive specific
+// error variants. The signer is always the global admin; using an outsider
+// would fail at the access check before reaching the validations under test.
+impl TestEnv {
+    fn try_init_payout_cap_config_as_admin(
+        &mut self,
+        admin: LegacyPubkey,
+        per_window_cap_ccm: u64,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let ix = build_init_payout_cap_config_ix(
+            self.config,
+            self.payout_cap_config,
+            self.admin_pubkey(),
+            InitPayoutCapConfigArgs {
+                admin: Pubkey::new_from_array(admin.to_bytes()),
+                per_window_cap_ccm,
+            },
+        );
+        try_send_tx_with_metadata(&mut self.svm, &[&self.admin], &[ix])
+    }
+
+    fn try_init_payout_vault_config_as_admin(
+        &mut self,
+        admin: LegacyPubkey,
+        ccm_mint: LegacyPubkey,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let ix = build_init_payout_vault_config_ix(
+            self.config,
+            self.payout_vault_config,
+            self.payout_vault_authority,
+            self.admin_pubkey(),
+            InitPayoutVaultConfigArgs {
+                admin: Pubkey::new_from_array(admin.to_bytes()),
+                ccm_mint: Pubkey::new_from_array(ccm_mint.to_bytes()),
+            },
+        );
+        try_send_tx_with_metadata(&mut self.svm, &[&self.admin], &[ix])
+    }
+}
+
+// Audit-fix coverage for init-time error paths. The four new variants
+// AdminPubkeyMustBeNonZero (used at all three inits per #90/#92) plus
+// CapMustBeNonZero, CapExceedsMaxAllowed (#92) and MintMismatchWithRails
+// (#90) had no LiteSVM tests at audit-fix merge time.
+
+/// Audit fix #90 (L-3 family): init_payout_authority_config rejects zero
+/// pubkey at init time. Lockout is unrecoverable without program upgrade.
+#[test]
+fn init_payout_authority_config_rejects_default_admin() {
+    let mut env = setup_rails_pre_payout_inits();
+    let admin_pk = env.admin_pubkey();
+
+    assert_listen_payout_error(
+        env.try_init_payout_authority_config_as_admin(LegacyPubkey::default(), admin_pk),
+        ListenPayoutError::AdminPubkeyMustBeNonZero,
+    );
+}
+
+/// Audit fix #92 (L-3/L-7/EZ-7 family): init_payout_cap_config rejects zero
+/// pubkey at init time.
+#[test]
+fn init_payout_cap_config_rejects_default_admin() {
+    let mut env = setup_rails_pre_payout_inits();
+
+    assert_listen_payout_error(
+        env.try_init_payout_cap_config_as_admin(LegacyPubkey::default(), PAYOUT_CAP_CCM),
+        ListenPayoutError::AdminPubkeyMustBeNonZero,
+    );
+}
+
+/// Audit fix #92 (H-03): init_payout_cap_config rejects zero cap at init.
+/// Sister test to set_per_window_ccm_cap_rejects_zero - the bound must be
+/// enforced at init too, since init seeds the PDA and is unrecoverable.
+#[test]
+fn init_payout_cap_config_rejects_zero_cap() {
+    let mut env = setup_rails_pre_payout_inits();
+    let admin_pk = env.admin_pubkey();
+
+    assert_listen_payout_error(
+        env.try_init_payout_cap_config_as_admin(admin_pk, 0),
+        ListenPayoutError::CapMustBeNonZero,
+    );
+}
+
+/// Audit fix #92 (H-03): init_payout_cap_config rejects cap above max.
+/// Sister test to set_per_window_ccm_cap_rejects_above_max.
+#[test]
+fn init_payout_cap_config_rejects_above_max() {
+    let mut env = setup_rails_pre_payout_inits();
+    let admin_pk = env.admin_pubkey();
+
+    assert_listen_payout_error(
+        env.try_init_payout_cap_config_as_admin(admin_pk, MAX_PER_WINDOW_CAP_CCM + 1),
+        ListenPayoutError::CapExceedsMaxAllowed,
+    );
+}
+
+/// Audit fix #90 (L-3 family): init_payout_vault_config rejects zero pubkey
+/// at init time.
+#[test]
+fn init_payout_vault_config_rejects_default_admin() {
+    let mut env = setup_rails_pre_payout_inits();
+    let ccm_mint_pk = env.ccm_mint_pubkey();
+
+    assert_listen_payout_error(
+        env.try_init_payout_vault_config_as_admin(LegacyPubkey::default(), ccm_mint_pk),
+        ListenPayoutError::AdminPubkeyMustBeNonZero,
+    );
+}
+
+/// Audit fix #90 (H-02): init_payout_vault_config rejects mints that do not
+/// match Config.ccm_mint. Without this binding, an admin typo at init would
+/// permanently mis-bind the listen-payout subsystem to the wrong mint with
+/// no on-chain recovery - the operator would fund the canonical CCM ATA
+/// while on-chain claims drained a different (probably empty) ATA.
+#[test]
+fn init_payout_vault_config_rejects_mint_mismatch() {
+    let mut env = setup_rails_pre_payout_inits();
+    let admin_pk = env.admin_pubkey();
+
+    // Create a separate mint distinct from Config.ccm_mint.
+    let wrong_mint = Keypair::new();
+    create_plain_token_2022_mint(&mut env.svm, &env.admin, &wrong_mint, &admin_pk);
+    let wrong_mint_pk = legacy_from_signer(&wrong_mint);
+
+    assert_listen_payout_error(
+        env.try_init_payout_vault_config_as_admin(admin_pk, wrong_mint_pk),
+        ListenPayoutError::MintMismatchWithRails,
+    );
+}
 
 /// Audit fix #92 (H-03): per_window_cap_ccm must be > 0 at the setter.
 /// Without this, an admin could "covert-pause" payouts by zeroing the cap.
