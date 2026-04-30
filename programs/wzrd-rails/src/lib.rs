@@ -561,6 +561,24 @@ pub mod wzrd_rails {
         Ok(())
     }
 
+    /// Permissionless crank — advance the reward accumulator for a pool.
+    /// Anyone can call this. No privileged signer required.
+    /// Useful for keepers that want to ensure the accumulator stays fresh
+    /// even in low-activity pools.
+    pub fn update_pool(ctx: Context<UpdatePool>, _pool_id: u32) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        let clock = Clock::get()?;
+        pool.accrue_rewards(clock.slot)
+            .map_err(|_| error!(RailsError::MathOverflow))?;
+        emit!(PoolUpdated {
+            pool_id: pool.pool_id,
+            acc_reward_per_share: pool.acc_reward_per_share,
+            total_staked: pool.total_staked,
+            slot: clock.slot,
+        });
+        Ok(())
+    }
+
     /// Fully unstake a user's principal once the lock window has expired.
     ///
     /// Day 1 policy is intentionally simple:
@@ -1360,6 +1378,22 @@ pub struct FundRewardPool<'info> {
     pub reward_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(address = TOKEN_2022_PROGRAM_ID @ RailsError::InvalidTokenProgram)]
     pub token_2022_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+#[instruction(_pool_id: u32)]
+pub struct UpdatePool<'info> {
+    #[account(
+        mut,
+        seeds = [POOL_SEED, &_pool_id.to_le_bytes()],
+        bump = pool.bump,
+    )]
+    pub pool: Account<'info, StakePool>,
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, Config>,
 }
 
 #[derive(Accounts)]

@@ -590,6 +590,14 @@ pub struct Claimed {
     pub slot: u64,
 }
 
+#[event]
+pub struct PoolUpdated {
+    pub pool_id: u32,
+    pub acc_reward_per_share: u128,
+    pub total_staked: u64,
+    pub slot: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
