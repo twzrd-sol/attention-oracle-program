@@ -63,6 +63,28 @@ jobs:
           fi
           echo "✅ Guard passed: scope is clean"
 
+      - name: Typecheck changed TypeScript scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA='${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA='${{ github.sha }}'
+          MB=$(git merge-base "$HEAD_SHA" "$BASE_SHA" 2>/dev/null || echo "")
+          if [ -n "$MB" ]; then
+            CHANGED_TS=$(git diff --name-only "$MB"..."$HEAD_SHA" | grep -E '^scripts/.*\.ts$' || true)
+          else
+            CHANGED_TS=$(git diff --name-only "${HEAD_SHA}^"..."$HEAD_SHA" | grep -E '^scripts/.*\.ts$' || true)
+          fi
+          if [ -z "$CHANGED_TS" ]; then
+            echo "No TypeScript scripts changed"
+            exit 0
+          fi
+          echo "$CHANGED_TS"
+          npm install --no-save --package-lock=false --ignore-scripts \
+            typescript @types/node @solana/web3.js
+          npx tsc --noEmit --target ES2022 --module Node16 --moduleResolution Node16 \
+            --types node --skipLibCheck $CHANGED_TS
+
   guard_manual:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
