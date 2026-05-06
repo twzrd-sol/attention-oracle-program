@@ -9,7 +9,9 @@ AO v2 is immutable. Every principle applies with extra force:
 3. **Surgical changes.** For ANY code that survives in-repo for reference (smoke tests, scripts, forensic tools): edit narrowly. Drive-by cleanup in unrelated files pollutes the audit trail.
 4. **Goal-driven execution.** Each IX has a verifiable success criterion: does it dispatch correctly on-chain, does its state struct round-trip, does the litesvm test encoding the success criterion pass? Loop until all three.
 
-See `~/.claude/projects/-home-twzrd-attention-oracle-program/memory/project_solana_economy_plan.md` for the v3 economic build plan that this repo supports.
+If a local project-memory plan exists for the v3 economy, treat it as operator
+context only. Public repo truth must still come from tracked files plus live
+RPC/on-chain proof.
 
 ## Overview
 
@@ -19,7 +21,13 @@ Solana programs powering the WZRD protocol's on-chain layer.
 
 **CRITICAL: ALL phase2 features are UNROUTED in the deployed immutable binary** (verified Apr 18, 2026 via on-chain IX probe). Binary strings are present but the instruction dispatcher omits them, so every feature-gated IX (strategy, channel_staking, prediction_markets, price_feed) returns error 101 (`InstructionFallbackNotFound`) on-chain. 92 orphan accounts on-chain (31 ChannelStakePool + 49 MarketState + 10 StrategyVault + 2 PriceFeedState) are rent-locked — no IX can read/write/close them.
 
-**Exact deployed source is UNRESOLVED as of Apr 19, 2026.** Both candidate trees FAIL verifiable-build reproduction of on-chain hash `b5330fcc...`: (1) this repo's `origin/main` (commit `7f45bf8`) rebuilds to `15367a5...`; (2) `~/wzrd-final/programs/attention-oracle/` rebuilds to `dbdf5c...`. An earlier Apr 19 hypothesis that wzrd-final was the deployed source was REFUTED by the verifiable build test. Forensic search for the actual commit snapshot is pending. What remains confirmed: framework = Pinocchio 0.9 for this repo's source tree (per `programs/attention-oracle/Cargo.toml`), immutable since Apr 5, phase2 unrouted (on-chain-verified).
+**Exact deployed source is UNRESOLVED.** The current public source tree in
+`programs/attention-oracle/` is Anchor 0.32.1 (`Cargo.toml` package
+`attention-oracle-token-2022`, lib `token_2022`). It does not reproduce the live
+mainnet executable hash `b5330fcc...`: the latest documented clean verifiable
+build of the public source produced `15367a5...`. Treat the public source as
+reference/audit material for the immutable program, not as verified deployed
+source, until a build hash comparison passes.
 
 Phase 3 economic work happens in `programs/wzrd-rails/` (upgradeable Anchor 0.32.1), not via AO v2 extensions.
 
@@ -30,21 +38,30 @@ What DOES work in the deployed binary (verified present):
 - Fee harvest: `harvest_fees`, `withdraw_fees_from_mint`
 - Admin: `realloc_legacy_protocol`, `admin_fix_ccm_authority`
 
-See `UPGRADE_AUTHORITY.md` for the Feb 5 transfer record. `DEPLOYMENTS.md` still reflects the pre-Feb 5 Squads V4 PDA state — update pending. The on-chain truth supersedes both.
+If local-only docs such as `UPGRADE_AUTHORITY.md`, `DEPLOYMENTS.md`, or
+`VERIFY.md` appear in a dirty checkout, treat them as historical/evidence files
+until reconciled with `README.md` and live RPC proof. The on-chain truth
+supersedes all local docs.
 
-## Doc drift warnings (Apr 20 2026)
+## Doc Drift Warnings
 
-- `VERIFY.md` line 13 shows the **Feb 2026** deployed slot (`398836086`) and executable hash (`9b911dcc...`). The live program was upgraded to Pinocchio on **Mar 14 2026** (slot `411276636`, hash `b5330fcc...`) and then made **immutable on Apr 5 2026**. `VERIFY.md` needs a refresh once the deployed-source forensic lands.
-- `docs/SECURITY_AUDIT.md` last edited **2026-02-09** (commit `9592e1b`) — pre-dates the authority-null, the Pinocchio port, and wzrd-rails. Treat as historical.
-- `DEPLOYMENTS.md` reflects pre-Feb 5 Squads V4 PDA state.
-- The on-chain state supersedes all three.
+- `CLAUDE.md` is the agent-facing truth file, but still separate source truth
+  from deployed-binary truth. Do not collapse those evidence streams.
+- Current tracked source is Anchor 0.32.1; older Pinocchio/source-replacement
+  notes are historical unless a fresh hash reproduction proves otherwise.
+- Local dirty checkout docs may pre-date the authority-null, the public-source
+  replacement, or `wzrd-rails`. Check whether they are actually tracked on
+  current `main` before citing them.
+- The on-chain state supersedes repo docs for authority, executable hash, and
+  live account state.
 
 ## Programs
 
 | Program | ID | Framework | Purpose |
 |---------|----|-----------|---------|
-| **Attention Oracle (AO) v2** | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | **Pinocchio 0.9** (source in repo) / on-chain binary framework unresolved | **IMMUTABLE**. Core attention loop only — deposit, settle, global V4 claims, treasury routing, fee harvest. Phase2 IXs unrouted (strings present in binary, dispatcher omits — channel_staking, markets, strategy, price_feed all return error 101). On-chain hash `b5330f...`. **Deployed source snapshot NOT yet located**: neither this repo's origin/main (rebuilds to `15367a`) nor `~/wzrd-final/programs/attention-oracle/` (rebuilds to `dbdf5c`) matches on-chain. Forensic search pending. |
-| **Channel Vault (CLOSED)** | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | Anchor 0.32.1 (historical) | **Closed/zombie on-chain** — no longer upgradeable, IXs unreachable. Historical: vLOFI staking vault (deposits, withdrawals, compound into AO channel_staking, ExchangeRateOracle). |
+| **Attention Oracle / token_2022** | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | Current public source: Anchor 0.32.1; deployed source unresolved | **IMMUTABLE**. Core attention loop only — deposit, settle, global V4 claims, treasury routing, fee harvest. Phase2 IXs are not usable on the live immutable binary; prior probes returned error 101 (`InstructionFallbackNotFound`). On-chain hash `b5330f...`. The public source hash mismatch remains unresolved. |
+| **wzrd-rails** | `BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9` | Anchor 0.32.1 | **Upgradeable** CCM productivity rails. New staking, reward, payout, and agentic-economy work belongs here unless explicitly directed otherwise. |
+| **Channel Vault (CLOSED)** | `5WH4UiSZ7fbPQbLrRCJyWxnTAoNyTZ3ZjcdgTuinCXmQ` | Historical Anchor source, not tracked on current main | **Closed/zombie on-chain** — no longer upgradeable, IXs unreachable. Retain only as historical context unless a new program ID is introduced. |
 
 ## Key Accounts
 
@@ -63,12 +80,12 @@ See `UPGRADE_AUTHORITY.md` for the Feb 5 transfer record. `DEPLOYMENTS.md` still
 
 ```
 programs/
-  ├── attention-oracle/          # AO v2 source (**Pinocchio 0.9** per Cargo.toml, default=[]). Post-Apr-5 refactor shape (consolidated error.rs, custom keccak.rs, signal/velocity_feed). **Does NOT match on-chain binary** (rebuilds to `15367a`, live is `b5330f`). Deployed source snapshot NOT yet located; `~/wzrd-final/programs/attention-oracle/` also fails verification (rebuilds to `dbdf5c`). Forensic search pending.
+  ├── attention-oracle/          # Anchor 0.32.1 public source for token_2022. It is useful for reference, tests, and audits, but it is NOT verified as the live immutable binary source until a verifiable build hash matches `b5330f...`.
   │   └── src/
-  │       ├── lib.rs             # Entry point, 27-arm discriminator router
+  │       ├── lib.rs             # Anchor entry point and instruction router
   │       ├── state.rs           # Account structs, PDA seeds, discriminators
-  │       ├── error.rs           # 84 error variants
-  │       ├── keccak.rs          # Custom Keccak-256 (no external dep)
+  │       ├── errors.rs          # Program errors
+  │       ├── merkle_proof.rs    # Merkle helpers
   │       ├── klend.rs           # Kamino K-Lend CPI helpers
   │       └── instructions/
   │           ├── vault.rs       # Market vault operations (8 IX)
@@ -80,16 +97,18 @@ programs/
   │           ├── strategy.rs    # Strategy vault CPI (5 IX)
   │           └── price_feed.rs  # Price feed oracle (3 IX)
   │
-  └── channel-vault/             # Anchor source — on-chain program is CLOSED (zombie). Retained for reference.
+  └── wzrd-rails/                # Anchor 0.32.1 upgradeable CCM productivity rails. This is the active surface for agentic-economy work.
       └── src/
-          ├── lib.rs             # Vault logic, staking, compound
-          └── instructions/      # deposit, redeem, compound (CPIs into AO)
+          ├── lib.rs             # Staking, reward, payout, admin handlers
+          ├── state.rs           # PDA seeds, account layouts, events
+          ├── listen_payout.rs   # Listen payout leaf/hash helpers
+          └── error.rs           # Program errors
 ```
 
 ## Tech Stack
 
-- **AO v2**: **Pinocchio 0.9** (source in repo per Cargo.toml); on-chain binary immutable, hash `b5330f...`. **Exact deployed source snapshot UNRESOLVED**: this repo's `programs/attention-oracle/` rebuilds to `15367a5...`, and `~/wzrd-final/programs/attention-oracle/` rebuilds to `dbdf5c...` — neither matches. Forensic search pending.
-- **Channel Vault**: Anchor 0.32.1, `anchor build --verifiable`, 818KB binary. **On-chain program is CLOSED** — source retained for reference only.
+- **AO v2 / token_2022**: current public source is Anchor 0.32.1; on-chain binary is immutable, hash `b5330f...`. **Exact deployed source snapshot UNRESOLVED**: the latest documented public-source verifiable build produced `15367a5...`, which does not match live. Keep source/reference truth and deployed-binary truth separate.
+- **Channel Vault**: on-chain program is CLOSED; source is not part of current tracked main.
 - **wzrd-rails** (new, upgradeable): Anchor 0.32.1, `programs/wzrd-rails/`, where all new staking/claiming/rewards work happens. Program ID `BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9`.
 - **Token standard**: Token-2022 (NOT legacy SPL)
 - **Deploy**: AO v2 is IMMUTABLE — no further deploys possible. Channel Vault is CLOSED on-chain; Squads V4 multisig remains relevant only for a potential future redeployment to a new program ID. wzrd-rails stays upgradeable until the 6-criteria gate in the plan is met.
@@ -97,13 +116,13 @@ programs/
 ## Build & Test
 
 ```bash
-# AO v2 (Pinocchio — cargo build-sbf, NOT anchor build; source here does NOT match on-chain, so verification requires forensic source match)
-cargo build-sbf -p attention-oracle
-cargo test -p attention-oracle --features localtest
+# AO v2 / token_2022 public source (Anchor; source here does NOT match live on-chain hash yet)
+anchor build --verifiable --program-name token_2022
+cargo test -p attention-oracle-token-2022 --features localtest --tests
 
-# Channel Vault (Anchor — CLOSED on-chain; historical only, no deploy path)
-anchor build --verifiable --program-name channel_vault
-cargo test -p channel-vault --lib
+# wzrd-rails active economic surface
+anchor build --verifiable --program-name wzrd_rails
+cargo test -p wzrd-rails --features localtest --test core_loop
 ```
 
 ## AO v2 Feature Flags
@@ -121,7 +140,8 @@ cargo test -p channel-vault --lib
 **CRITICAL**: Never deploy from host build. Always use deterministic builds.
 
 - **AO v2**: IMMUTABLE — cannot be redeployed. Any bug in the phase2 code paths (`channel_staking`, `prediction_markets`, `strategy`, `price_feed`) is permanent even though they are unreachable via the dispatcher — the bytes cannot be removed. Workaround is an off-chain keeper or a NEW program.
-- **Channel Vault**: CLOSED on-chain (zombie). Build command kept for historical reference; no active upgrade path exists on the original program ID.
+- **Channel Vault**: CLOSED on-chain (zombie). The original program ID has no
+  active upgrade path; source is not tracked on current main.
 
 ## SBF Constraints
 
@@ -129,8 +149,13 @@ cargo test -p channel-vault --lib
 - Pattern: extract heavy logic to `#[inline(never)]` functions
 - Minimize Pubkey arguments (32 bytes each on caller stack)
 - Use `crate::id()` inside callees instead of passing program_id
-- Manual byte-packing for CPI instruction data (no Borsh) — AO v2 only
+- Keep stack-heavy logic extracted into small helpers and prove any account
+  layout or PDA derivation with focused tests.
 
 ## Gitignore Policy
 
-This is a public repo. Markdown files are blocked by default (`.gitignore` + pre-commit hook). Only allowlisted docs (SECURITY.md, VERIFY.md, README.md, CLAUDE.md, etc.) may be committed.
+This is a public repo. The tracked hygiene guard blocks `.env`-style files,
+obvious key material paths, hardcoded secret material, project custody paths,
+and non-local IP literals in docs/config files. Keep signer paths, local machine
+paths, and run-specific evidence out of public docs unless deliberately
+redacted.
