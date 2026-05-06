@@ -34,7 +34,7 @@ import * as readline from "node:readline/promises";
 
 const RAILS_PROGRAM = new PublicKey("BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9");
 const EXPECTED_CCM_MINT = new PublicKey("Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM");
-const TOKEN_2022_PROGRAM = new PublicKey("TokenzQdBNbLqP5VEhTtPfKPrh6UL1ZYd7ECBUmUE3A");
+const TOKEN_2022_PROGRAM = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 const ASSOCIATED_TOKEN_PROGRAM = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 
 const CONFIG_SEED = Buffer.from("config");
