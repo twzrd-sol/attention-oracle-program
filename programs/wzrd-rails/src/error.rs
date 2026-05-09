@@ -48,6 +48,18 @@ pub enum RailsError {
 
     #[msg("Pool ID must equal total_pools (sequential numbering enforced).")]
     InvalidPoolId = 13,
+
+    #[msg("Verified moment must reference the immutable OG TWZRD/GnG Attention Oracle program.")]
+    InvalidVerifiedMomentProgram = 14,
+
+    #[msg("Verified moment asset_id must not be Pubkey::default().")]
+    VerifiedMomentAssetMustBeNonZero = 15,
+
+    #[msg("Verified moment recipient_wallet must not be Pubkey::default().")]
+    VerifiedMomentRecipientMustBeNonZero = 16,
+
+    #[msg("Verified moment hashes must not be all zero bytes.")]
+    VerifiedMomentHashMustBeNonZero = 17,
 }
 
 #[error_code]
