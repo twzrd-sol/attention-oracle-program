@@ -26,21 +26,13 @@ solana-verify get-program-hash -u https://api.mainnet-beta.solana.com GnGzNdsQMx
 
 ## Provenance Status
 
-The `token_2022` deployed binary is immutable, but the exact public source snapshot that reproduces the live mainnet hash is not yet identified.
+The `token_2022` deployed binary is immutable on mainnet (executable hash `b5330fcca2c8dd807fb7d2609b74e72ae7d709c003d7697f275ff54dca7b53b1`, authority `null` since 2026-04-05). Bit-for-bit reproduction of that hash from this public source tree is in progress. The most recent verifiable-build attempt (`2026-04-24`, public source, current toolchain) produced a non-matching hash, consistent with build-environment drift rather than source divergence. Until reproduction is confirmed, treat this source tree as audit and reference material, not as verified deployed source.
 
-As of `2026-04-24`, a clean verifiable build of the public `token_2022` source tree produced executable hash:
+Verify mainnet identity yourself:
 
-```text
-15367a5ae5bd3fd4fcb5421b4c0380bbf1d116425738768e564530f0558c889e
+```bash
+solana program show GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop --url mainnet-beta
 ```
-
-That does not match the live mainnet hash:
-
-```text
-b5330fcca2c8dd807fb7d2609b74e72ae7d709c003d7697f275ff54dca7b53b1
-```
-
-Do not treat this public source tree as verified source for the live immutable `token_2022` program until that mismatch is resolved.
 
 ## What This Source Contains
 
