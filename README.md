@@ -44,31 +44,9 @@ Do not treat this public source tree as verified source for the live immutable `
 
 ## What This Source Contains
 
-The `programs/attention-oracle` crate is built with Anchor `0.32.1` and exposes the `token_2022` library name.
+The `programs/attention-oracle` crate is built with Anchor `0.32.1` and exposes the `token_2022` library name. Active source-level features are the core attention loop (vault deposit, settle, claim), Merkle-based cumulative claims, treasury routing, and Token-2022 transfer-fee harvesting.
 
-Source-level features include:
-
-- Merkle-based cumulative reward claims
-- Publisher and protocol state controls
-- Token-2022 transfer-fee harvesting
-- Market-vault deposit and settlement flows
-- Optional `phase2` modules for channel staking, prediction markets, strategy vaults, and price feeds
-
-The workspace also contains `programs/wzrd-rails`, an Anchor `0.32.1` program for CCM productivity rails.
-
-## Token Mints
-
-| Token | Mint | Standard |
-|-------|------|----------|
-| CCM | `Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM` | Token-2022, 9 decimals, 50 bps transfer fee |
-| vLOFI | `E9Kt33axpCy3ve2PCY9BSrbPhcR9wdDsWQECAahzw2dS` | Standard SPL Token, 9 decimals |
-
-Verify with:
-
-```bash
-spl-token display Dxk8mAb3C7AM8JN6tAJfVuSja5yidhZM5sEKW3SRX2BM --url mainnet-beta
-spl-token display E9Kt33axpCy3ve2PCY9BSrbPhcR9wdDsWQECAahzw2dS --url mainnet-beta
-```
+The workspace also contains `programs/wzrd-rails`, an Anchor `0.32.1` upgradeable program for protocol productivity rails.
 
 ## Build
 
