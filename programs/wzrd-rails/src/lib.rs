@@ -328,6 +328,73 @@ pub mod wzrd_rails {
         Ok(())
     }
 
+    /// Register a protocol moment as a durable TWZRD Rails PDA.
+    ///
+    /// This is the Layer 4 rail for commemoratives and other "verified
+    /// moments." It does not mint or transfer an NFT. It records the Core asset,
+    /// recipient, metadata/image/snapshot hashes, and the immutable OG
+    /// TWZRD/GnG Attention Oracle program (`GnGz...`) in an upgradeable,
+    /// public program that already carries WZRD-listen payout infrastructure.
+    pub fn register_verified_moment(
+        ctx: Context<RegisterVerifiedMoment>,
+        args: RegisterVerifiedMomentArgs,
+    ) -> Result<()> {
+        require!(
+            args.asset_id != Pubkey::default(),
+            RailsError::VerifiedMomentAssetMustBeNonZero
+        );
+        require!(
+            args.recipient_wallet != Pubkey::default(),
+            RailsError::VerifiedMomentRecipientMustBeNonZero
+        );
+        require_keys_eq!(
+            args.og_gng_program,
+            OG_GNG_ATTENTION_ORACLE_PROGRAM,
+            RailsError::InvalidVerifiedMomentProgram
+        );
+        require!(
+            args.drop_hash != [0u8; 32]
+                && args.metadata_uri_hash != [0u8; 32]
+                && args.image_hash != [0u8; 32]
+                && args.snapshot_hash != [0u8; 32],
+            RailsError::VerifiedMomentHashMustBeNonZero
+        );
+
+        let clock = Clock::get()?;
+        let moment = &mut ctx.accounts.verified_moment;
+        moment.bump = ctx.bumps.verified_moment;
+        moment.version = VerifiedMoment::VERSION;
+        moment.claim_id = args.claim_id;
+        moment.asset_id = args.asset_id;
+        moment.recipient_wallet = args.recipient_wallet;
+        moment.drop_hash = args.drop_hash;
+        moment.metadata_uri_hash = args.metadata_uri_hash;
+        moment.image_hash = args.image_hash;
+        moment.snapshot_hash = args.snapshot_hash;
+        moment.og_gng_program = args.og_gng_program;
+        moment.collection = args.collection;
+        moment.authority = ctx.accounts.authority.key();
+        moment.created_slot = clock.slot;
+        moment.created_unix_ts = clock.unix_timestamp;
+
+        emit!(VerifiedMomentRegistered {
+            verified_moment: ctx.accounts.verified_moment.key(),
+            claim_id: args.claim_id,
+            asset_id: args.asset_id,
+            recipient_wallet: args.recipient_wallet,
+            drop_hash: args.drop_hash,
+            metadata_uri_hash: args.metadata_uri_hash,
+            image_hash: args.image_hash,
+            snapshot_hash: args.snapshot_hash,
+            og_gng_program: args.og_gng_program,
+            collection: args.collection,
+            registered_by: ctx.accounts.authority.key(),
+            slot: clock.slot,
+        });
+
+        Ok(())
+    }
+
     /// Set the one-time compensation merkle root and eagerly create the
     /// config-level compensation vault.
     ///
@@ -1248,6 +1315,28 @@ pub struct SetPayoutAdmin<'info> {
         constraint = authority_config.admin == admin.key() @ ListenPayoutError::NotAdmin,
     )]
     pub authority_config: Account<'info, PayoutAuthorityConfig>,
+}
+
+#[derive(Accounts)]
+#[instruction(args: RegisterVerifiedMomentArgs)]
+pub struct RegisterVerifiedMoment<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.admin == authority.key() @ RailsError::Unauthorized,
+    )]
+    pub config: Account<'info, Config>,
+    #[account(
+        init,
+        payer = authority,
+        space = VerifiedMoment::LEN,
+        seeds = [VERIFIED_MOMENT_SEED, &args.claim_id],
+        bump,
+    )]
+    pub verified_moment: Account<'info, VerifiedMoment>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]

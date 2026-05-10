@@ -22,6 +22,9 @@ pub const LISTEN_PAYOUT_CAP_CONFIG_SEED: &[u8] = b"listen_payout_cap_config";
 pub const LISTEN_PAYOUT_WINDOW_SEED: &[u8] = b"listen_payout_window";
 pub const LISTEN_PAYOUT_VAULT_CONFIG_SEED: &[u8] = b"listen_payout_vault_config";
 pub const LISTEN_PAYOUT_VAULT_AUTHORITY_SEED: &[u8] = b"listen_payout_vault_authority";
+pub const VERIFIED_MOMENT_SEED: &[u8] = b"verified_moment";
+pub const OG_GNG_ATTENTION_ORACLE_PROGRAM: Pubkey =
+    pubkey!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 pub const MAX_LEAVES_PER_WINDOW: u32 = 32_768;
 pub const MAX_PROOF_LEN: usize = 16;
 
@@ -77,6 +80,28 @@ pub struct InitPayoutVaultConfigArgs {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SetPayoutAdminArgs {
     pub new_admin: Pubkey,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RegisterVerifiedMomentArgs {
+    /// Raw UUID bytes for the off-chain claim row.
+    pub claim_id: [u8; 16],
+    /// Metaplex Core asset account for the commemorative.
+    pub asset_id: Pubkey,
+    /// Wallet that received the asset.
+    pub recipient_wallet: Pubkey,
+    /// sha256/drop slug bytes, usually sha256("cut-the-cake").
+    pub drop_hash: [u8; 32],
+    /// sha256(metadata URI) bytes.
+    pub metadata_uri_hash: [u8; 32],
+    /// sha256(image bytes) bytes.
+    pub image_hash: [u8; 32],
+    /// sha256(canonical DFlow snapshot payload) bytes.
+    pub snapshot_hash: [u8; 32],
+    /// Immutable OG TWZRD/GnG Attention Oracle program.
+    pub og_gng_program: Pubkey,
+    /// Metaplex Core collection, or Pubkey::default() for standalone rehearsal artifacts.
+    pub collection: Pubkey,
 }
 
 /// Allow-list + monotonic window state for Listen payout-root publishers.
@@ -204,6 +229,54 @@ pub struct PayoutWindowPublished {
     pub total_amount_ccm: u64,
     pub published_by: Pubkey,
     pub published_at_slot: u64,
+}
+
+/// Durable registration tying a protocol moment to a Metaplex Core asset.
+///
+/// This lives in `wzrd_rails`, not the immutable OG `GnGz...` program. The
+/// account explicitly stores `og_gng_program` so the permanent ledger record
+/// credits the original TWZRD/GnG Attention Oracle while using the upgradeable
+/// Rails program for new attestation surfaces.
+///
+/// PDA: `[VERIFIED_MOMENT_SEED, claim_id]`
+#[account]
+#[derive(Debug)]
+pub struct VerifiedMoment {
+    pub bump: u8,
+    pub version: u8,
+    pub claim_id: [u8; 16],
+    pub asset_id: Pubkey,
+    pub recipient_wallet: Pubkey,
+    pub drop_hash: [u8; 32],
+    pub metadata_uri_hash: [u8; 32],
+    pub image_hash: [u8; 32],
+    pub snapshot_hash: [u8; 32],
+    pub og_gng_program: Pubkey,
+    pub collection: Pubkey,
+    pub authority: Pubkey,
+    pub created_slot: u64,
+    pub created_unix_ts: i64,
+}
+
+impl VerifiedMoment {
+    pub const VERSION: u8 = 1;
+    pub const LEN: usize = 8 + 1 + 1 + 16 + (32 * 9) + 8 + 8;
+}
+
+#[event]
+pub struct VerifiedMomentRegistered {
+    pub verified_moment: Pubkey,
+    pub claim_id: [u8; 16],
+    pub asset_id: Pubkey,
+    pub recipient_wallet: Pubkey,
+    pub drop_hash: [u8; 32],
+    pub metadata_uri_hash: [u8; 32],
+    pub image_hash: [u8; 32],
+    pub snapshot_hash: [u8; 32],
+    pub og_gng_program: Pubkey,
+    pub collection: Pubkey,
+    pub registered_by: Pubkey,
+    pub slot: u64,
 }
 
 #[event]
@@ -648,7 +721,23 @@ mod tests {
             LISTEN_PAYOUT_VAULT_AUTHORITY_SEED,
             b"listen_payout_vault_authority"
         );
+        assert_eq!(VERIFIED_MOMENT_SEED, b"verified_moment");
         assert_eq!(MAX_PROOF_LEN, 16);
+    }
+
+    #[test]
+    fn verified_moment_space_matches_manual_calc() {
+        // 8 disc + bump + version + claim UUID + 9 fixed 32-byte fields + slot + unix timestamp.
+        assert_eq!(VerifiedMoment::VERSION, 1);
+        assert_eq!(VerifiedMoment::LEN, 330);
+    }
+
+    #[test]
+    fn og_gng_attention_oracle_program_is_stable() {
+        assert_eq!(
+            OG_GNG_ATTENTION_ORACLE_PROGRAM.to_string(),
+            "GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop"
+        );
     }
 
     #[test]
