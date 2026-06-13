@@ -13,7 +13,7 @@ allowlist.
   immutable AO program returns `InstructionFallbackNotFound` / `Custom(101)` for
   the channel staking instruction family.
 - Swarm REDUCE is disabled in production by config and by the fail-closed
-  strategy gate merged in `wzrd-final` PR #335.
+  strategy gate merged upstream (PR #335).
 - The intended productive sink is now `wzrd-rails`, gated to a one-agent canary:
   `WZRD_USE_RAILS=true` and `WZRD_RAILS_AGENT_ALLOWLIST=58`.
 - Do not set `WZRD_USE_RAILS=true` without the allowlist in the same deploy.

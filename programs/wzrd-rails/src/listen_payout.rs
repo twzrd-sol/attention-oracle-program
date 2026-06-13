@@ -225,12 +225,12 @@ mod tests {
     }
 
     /// Determinism baseline. All-zero leaf produces a stable hash that
-    /// the off-chain Rust mirror in `wzrd-final/crates/types` MUST match
+    /// the off-chain Rust mirror in the shared types crate MUST match
     /// byte-for-byte. If this hash changes, the canonical byte order or
     /// domain separator drifted somewhere — fix before shipping.
     ///
-    /// Mirrors `wzrd_types::listen::tests::vector_all_zero` (PR #215 in
-    /// twzrd-sol/wzrd-final).
+    /// Mirrors `wzrd_types::listen::tests::vector_all_zero` in the off-chain
+    /// types crate.
     #[test]
     fn payout_leaf_v1_vector_all_zero() {
         let leaf = PayoutAllocationLeafV1 {
@@ -246,7 +246,7 @@ mod tests {
             salt: [0u8; 16],
         };
         // GOLDEN HASH — locked 2026-04-26 allocation-leaf supersession across both repos.
-        // wzrd-final/crates/types: vector_all_zero golden hash (hex):
+        // off-chain types crate, vector_all_zero golden hash (hex):
         //   b59898f0d710f4a0460bd21102e42d40470289c63a3f9230bc9938ab62e6d5f5
         assert_eq!(
             leaf.hash(),
