@@ -72,11 +72,11 @@ declare_id!("GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop");
 #[cfg(not(feature = "no-entrypoint"))]
 security_txt! {
     name: "Liquid Attention Protocol",
-    project_url: "https://github.com/twzrd-sol/wzrd-final",
+    project_url: "https://twzrd.xyz",
     contacts: "email:security@twzrd.xyz",
-    policy: "https://github.com/twzrd-sol/wzrd-final/blob/main/SECURITY.md",
+    policy: "https://github.com/twzrd-sol/attention-oracle-program/blob/main/SECURITY.md",
     preferred_languages: "en",
-    source_code: "https://github.com/twzrd-sol/wzrd-final"
+    source_code: "https://github.com/twzrd-sol/attention-oracle-program"
 }
 
 #[program]
