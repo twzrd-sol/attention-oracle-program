@@ -159,6 +159,116 @@ pub mod wzrd_rails {
         Ok(())
     }
 
+    /// Per audit finding M-03: migrate a legacy 61-byte `StakePool` to the
+    /// 77-byte layout that carries the new `reward_remainder` field.
+    ///
+    /// ## Why this IX exists and why it loads the pool RAW
+    ///
+    /// Adding `reward_remainder` grew `StakePool::LEN` 61 → 77. The live pool 0
+    /// account is 61 bytes. Once this binary is deployed, EVERY other IX that
+    /// loads `Account<'info, StakePool>` (stake, unstake, claim, update_pool,
+    /// set_reward_rate, fund_reward_pool) will FAIL to deserialize the old
+    /// 61-byte account against the 77-byte struct — Anchor runs
+    /// `StakePool::try_deserialize` (full borsh read of the 69-byte body) during
+    /// account validation, BEFORE any constraint (including `realloc`) runs.
+    /// Verified against anchor-syn 0.32.1 codegen: typed-account deserialization
+    /// happens in `try_accounts`, the `realloc` constraint in the later
+    /// constraint phase — so a typed `realloc` account would deserialize the
+    /// undersized data and revert before resizing. This IX therefore takes the
+    /// pool as a RAW `UncheckedAccount`, validates it manually, and resizes it.
+    ///
+    /// ## Admin-gated, idempotent, layout-strict
+    ///
+    /// - Authority: the global Config admin must sign (`has_one = admin`).
+    /// - Idempotent: a pool already at 77 bytes returns Ok with no mutation,
+    ///   so the migration can be retried safely.
+    /// - Strict: any size other than 61 (legacy) or 77 (already-migrated) is
+    ///   rejected with `StakePoolUnexpectedSize` — we never grow an account of
+    ///   an unexpected shape.
+    /// - Zero-init: the 16 new tail bytes are zeroed, so `reward_remainder`
+    ///   starts at 0, the correct genesis value.
+    ///
+    /// ## Operational note (NOT enforced on-chain)
+    ///
+    /// After deploying this binary, the admin MUST run this IX against pool 0
+    /// FIRST, before any stake/unstake/claim/update_pool — those revert until
+    /// the pool is migrated. Staking is briefly unavailable in that window; this
+    /// is expected and documented in the deploy runbook.
+    pub fn realloc_stake_pool(ctx: Context<ReallocStakePool>, pool_id: u32) -> Result<()> {
+        let pool_ai = ctx.accounts.pool.to_account_info();
+
+        // (a) Owner must be this program. UncheckedAccount carries no owner
+        // check, so we assert it explicitly before trusting the discriminator.
+        require_keys_eq!(*pool_ai.owner, crate::ID, RailsError::Unauthorized);
+
+        // (c) PDA identity: the supplied account MUST be the canonical pool PDA
+        // for `pool_id`. This binds the migration to the real pool and prevents
+        // resizing an attacker-supplied program-owned account.
+        let (expected_pool, _bump) =
+            Pubkey::find_program_address(&[POOL_SEED, &pool_id.to_le_bytes()], &crate::ID);
+        require_keys_eq!(pool_ai.key(), expected_pool, RailsError::InvalidPoolId);
+
+        let current_len = pool_ai.data_len();
+
+        // (b) Discriminator must be StakePool's. Reading the first 8 bytes is
+        // safe for any account >= 8 bytes; both legacy (61) and new (77) qualify.
+        {
+            let data = pool_ai.try_borrow_data()?;
+            require!(
+                data.len() >= 8 && data[..8] == *StakePool::DISCRIMINATOR,
+                RailsError::StakePoolUnexpectedSize
+            );
+        }
+
+        // (d) Idempotent: already migrated → no-op success.
+        if current_len == StakePool::LEN {
+            return Ok(());
+        }
+
+        // (e) Strict: only the legacy 61-byte layout may be grown. Anything else
+        // is an unexpected shape we refuse to touch.
+        require!(
+            current_len == StakePool::LEGACY_LEN,
+            RailsError::StakePoolUnexpectedSize
+        );
+
+        // (f) Top up rent for the larger account so it stays rent-exempt, paying
+        // the lamport delta from the admin signer.
+        let rent = Rent::get()?;
+        let new_minimum = rent.minimum_balance(StakePool::LEN);
+        let current_lamports = pool_ai.lamports();
+        if new_minimum > current_lamports {
+            let delta = new_minimum
+                .checked_sub(current_lamports)
+                .ok_or(RailsError::MathOverflow)?;
+            anchor_lang::system_program::transfer(
+                CpiContext::new(
+                    ctx.accounts.system_program.to_account_info(),
+                    anchor_lang::system_program::Transfer {
+                        from: ctx.accounts.admin.to_account_info(),
+                        to: pool_ai.clone(),
+                    },
+                ),
+                delta,
+            )?;
+        }
+
+        // (g) Resize and zero-init the 16 new tail bytes. `realloc(_, true)`
+        // memsets [old_len..new_len] = 0, so `reward_remainder` reads as 0.
+        pool_ai.realloc(StakePool::LEN, true)?;
+
+        let slot = Clock::get()?.slot;
+        emit!(PoolReallocated {
+            pool: pool_ai.key(),
+            pool_id,
+            old_size: current_len as u64,
+            new_size: StakePool::LEN as u64,
+            admin: ctx.accounts.admin.key(),
+            slot,
+        });
+        Ok(())
+    }
+
     /// Initialize Listen payout publisher/admin config.
     ///
     /// Global config admin must sign to prevent PDA squatting. The payout
@@ -1470,6 +1580,36 @@ pub struct SetRewardRate<'info> {
     )]
     pub pool: Account<'info, StakePool>,
     pub admin: Signer<'info>,
+}
+
+/// Per audit finding M-03: context for the `realloc_stake_pool` migration.
+///
+/// The pool is deliberately a RAW `UncheckedAccount`, NOT `Account<StakePool>`.
+/// A typed account would force Anchor to deserialize the on-chain bytes against
+/// the NEW 77-byte struct during `try_accounts`, which fails on the live
+/// 61-byte account BEFORE any resize can happen. All pool validation (owner,
+/// discriminator, PDA identity, current size) is performed manually in the
+/// handler. Admin authority is proven through the typed `Config` (`has_one =
+/// admin`); the System Program is required for the rent top-up CPI.
+#[derive(Accounts)]
+#[instruction(pool_id: u32)]
+pub struct ReallocStakePool<'info> {
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        has_one = admin @ RailsError::Unauthorized,
+    )]
+    pub config: Account<'info, Config>,
+    /// CHECK: Raw pool account. Validated in the handler — owner == program ID,
+    /// 8-byte StakePool discriminator, canonical `[POOL_SEED, pool_id]` PDA, and
+    /// current size (legacy 61 → resize to 77; already-77 → idempotent no-op).
+    /// Intentionally untyped so the old 61-byte layout is not deserialized
+    /// against the new 77-byte struct before it is resized.
+    #[account(mut)]
+    pub pool: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
