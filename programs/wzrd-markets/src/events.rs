@@ -48,9 +48,44 @@ pub struct PoolInitialized {
     pub slot: u64,
 }
 
-// TODO(Phase 1): MarketTokensInitialized { market, yes_mint, no_mint, mint_auth }
-// TODO(Phase 1): CompleteSetMinted { market, user, collateral_in, shares_out }
-// TODO(Phase 1): CompleteSetRedeemed { market, user, shares_in, collateral_out }
+/// Emitted by `initialize_market_tokens` (Phase 1). The per-market YES/NO
+/// Token-2022 mints + the USDC collateral vault + the mint-authority PDA that
+/// signs the complete-set rail's mint/burn.
+#[event]
+pub struct TokensInitialized {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub yes_mint: Pubkey,
+    pub no_mint: Pubkey,
+    pub vault: Pubkey,
+    pub mint_authority: Pubkey,
+    pub slot: u64,
+}
+
+/// Emitted by `mint_complete_set` (Phase 1). `deposit_amount` is what the caller
+/// asked to deposit; `net_amount` is the audit-MR-1 before/after-sampled USDC the
+/// vault actually received (== `deposit_amount` for fee-exempt USDC, kept
+/// distinct as defense-in-depth). Exactly `net_amount` YES AND NO were minted.
+#[event]
+pub struct CompleteSetMinted {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub depositor: Pubkey,
+    pub deposit_amount: u64,
+    pub net_amount: u64,
+}
+
+/// Emitted by `redeem_complete_set` (Phase 1). `amount` YES AND NO were burned
+/// from the redeemer and `amount` USDC returned from the vault — the inverse of
+/// the fixed-par mint, preserving `vault == yes_supply == no_supply`.
+#[event]
+pub struct CompleteSetRedeemed {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub redeemer: Pubkey,
+    pub amount: u64,
+}
+
 // TODO(Phase 2): LiquidityAdded { pool, provider, yes_in, no_in, lp_minted }
 // TODO(Phase 2): LiquidityRemoved { pool, provider, lp_burned, yes_out, no_out }
 // TODO(Phase 2): Swapped { pool, trader, side, amount_in, amount_out, new_yes_reserve, new_no_reserve }

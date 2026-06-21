@@ -26,4 +26,32 @@ pub enum MarketsError {
 
     #[msg("Operation violates the bounding-phase (cold-start) constraints.")]
     BoundingPhaseViolation = 5,
+
+    // ─── Phase 1: market lifecycle + complete-set rail ───────────────────────
+    #[msg("Amount must be greater than zero.")]
+    ZeroAmount = 6,
+
+    #[msg("Market tokens (YES/NO mints + vault) have already been initialized.")]
+    MarketAlreadyHasTokens = 7,
+
+    #[msg("Market tokens have not been initialized yet; call initialize_market_tokens first.")]
+    TokensNotInitialized = 8,
+
+    #[msg("Market is resolved; complete-set mint/redeem is pre-resolution only.")]
+    MarketResolved = 9,
+
+    #[msg("Redeemer holds fewer outcome tokens than the requested redeem amount.")]
+    InsufficientOutcomeBalance = 10,
+
+    #[msg("market_id is not the next sequential id expected by config.")]
+    InvalidMarketId = 11,
+
+    #[msg("resolve_deadline_slot must be strictly greater than the current slot.")]
+    DeadlineInPast = 12,
+
+    #[msg("resolution_root must be non-zero (a published attention root is required).")]
+    ZeroResolutionRoot = 13,
+
+    #[msg("metric is not a defined MarketMetric discriminant.")]
+    InvalidMetric = 14,
 }

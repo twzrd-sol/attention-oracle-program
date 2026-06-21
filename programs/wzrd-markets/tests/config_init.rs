@@ -164,7 +164,11 @@ fn initialize_markets_config_works() {
         parsed.publisher_allowlist.is_empty(),
         "publisher allow-list starts empty"
     );
-    assert_eq!(parsed._reserved, [0u8; 64], "reserved zero-initialized");
+    assert_eq!(
+        parsed.next_market_id, 0,
+        "next_market_id starts at 0 (Phase 1 counter)"
+    );
+    assert_eq!(parsed._reserved, [0u8; 56], "reserved zero-initialized");
 }
 
 #[test]
