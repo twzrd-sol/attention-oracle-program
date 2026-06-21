@@ -468,11 +468,33 @@ pub struct StakePool {
     pub lock_duration_slots: u64,
     /// PDA bump.
     pub bump: u8,
+    /// Per audit finding M-03: truncation remainder carried between accruals.
+    /// `accrue_rewards` divides `(slots * rate * REWARD_SCALE + reward_remainder)`
+    /// by `total_staked`; the division remainder is stored here and folded into
+    /// the next accrual's numerator. Without this carry, at large `total_staked`
+    /// the per-slot increment floors to 0 and emission is permanently burned
+    /// while `last_update_slot` still advances (stranding matching CCM in the
+    /// reward vault). Genesis value is 0; the realloc migration zero-inits it
+    /// for pools created before this field existed (the live 61-byte pool 0).
+    pub reward_remainder: u128,
 }
 
 impl StakePool {
-    /// Account size: 8 + 4 + 8 + 16 + 8 + 8 + 8 + 1 = 61 bytes.
-    pub const LEN: usize = 8 + 4 + 8 + 16 + 8 + 8 + 8 + 1;
+    /// Account size: 8 disc + 4 pool_id + 8 total_staked + 16 acc + 8 rate
+    /// + 8 last_slot + 8 lock + 1 bump + 16 reward_remainder = 77 bytes.
+    ///
+    /// Per audit finding M-03 this grew from 61 → 77 bytes (the `reward_remainder`
+    /// field). The live pool 0 account is 61 bytes and MUST be migrated via
+    /// `realloc_stake_pool` before any stake/unstake/claim/update IX (all of
+    /// which load `Account<StakePool>` and will fail to deserialize the old
+    /// 61-byte account against the 77-byte struct until it is resized).
+    pub const LEN: usize = 8 + 4 + 8 + 16 + 8 + 8 + 8 + 1 + 16;
+
+    /// Account size of the pre-M-03 (legacy) StakePool: 61 bytes. The realloc
+    /// migration only accepts an account of exactly this size (a stricter
+    /// guard than "len < LEN") so an unexpected layout is rejected rather than
+    /// silently grown.
+    pub const LEGACY_LEN: usize = 8 + 4 + 8 + 16 + 8 + 8 + 8 + 1;
 
     /// Fixed-point scale for `acc_reward_per_share`. 1e12 is enough precision
     /// for total_staked up to 2^52 units without truncation bias.
@@ -484,14 +506,28 @@ impl StakePool {
 
     /// Apply slot-delta-since-last-update to the reward accumulator.
     ///
-    /// MasterChef math:
-    ///   new_per_share = acc_reward_per_share
-    ///     + (slots_elapsed * reward_rate_per_slot * REWARD_SCALE) / total_staked
+    /// MasterChef math, with truncation carry (audit M-03):
+    ///   numerator   = slots_elapsed * reward_rate_per_slot * REWARD_SCALE
+    ///                 + reward_remainder      (dust carried from prior accruals)
+    ///   increment   = numerator / total_staked
+    ///   reward_remainder = numerator % total_staked   (carried forward)
+    ///   acc_reward_per_share += increment
     ///
     /// Idempotent if called twice in the same slot (slots_elapsed = 0 → no-op).
     /// If total_staked = 0 or reward_rate = 0, the accumulator is unchanged but
     /// last_update_slot still advances so future slot deltas measure from NOW,
-    /// not from the original init slot.
+    /// not from the original init slot. That early-return path performs NO
+    /// division and so MUST NOT touch `reward_remainder` — there is no dust to
+    /// carry, and the existing remainder (from a prior funded window) is
+    /// preserved untouched for the next real accrual.
+    ///
+    /// Why the carry matters: at the live pool's `total_staked`
+    /// (3.1e15 base units) and `reward_rate_per_slot = 1000`, a single-slot
+    /// numerator `1 * 1000 * 1e12 = 1e15` is LESS than `total_staked`, so the
+    /// old `floor` increment was 0 and the entire per-slot emission was burned
+    /// while `last_update_slot` advanced. Carrying the remainder accumulates
+    /// the sub-unit emission across slots until it crosses `total_staked` and
+    /// credits stakers, making emission conservative (nothing is lost).
     ///
     /// Every IX that reads or writes stake state MUST call this first. Caller
     /// is responsible for passing the current clock slot.
@@ -504,11 +540,14 @@ impl StakePool {
         let new_rewards = (slots_elapsed as u128)
             .checked_mul(self.reward_rate_per_slot as u128)
             .ok_or(AccrueError::Overflow)?;
-        let increment = new_rewards
+        let numerator = new_rewards
             .checked_mul(Self::REWARD_SCALE)
             .ok_or(AccrueError::Overflow)?
-            .checked_div(self.total_staked as u128)
-            .ok_or(AccrueError::Overflow)?; // unreachable; total_staked > 0 above
+            .checked_add(self.reward_remainder)
+            .ok_or(AccrueError::Overflow)?;
+        let total = self.total_staked as u128; // > 0 (guarded above)
+        let increment = numerator.checked_div(total).ok_or(AccrueError::Overflow)?;
+        self.reward_remainder = numerator.checked_rem(total).ok_or(AccrueError::Overflow)?;
         self.acc_reward_per_share = self
             .acc_reward_per_share
             .checked_add(increment)
@@ -526,6 +565,19 @@ pub struct PoolInitialized {
     pub stake_vault: Pubkey,
     pub reward_vault: Pubkey,
     pub lock_duration_slots: u64,
+    pub slot: u64,
+}
+
+/// Per audit finding M-03: emitted when `realloc_stake_pool` grows a legacy
+/// 61-byte StakePool to the 77-byte (post-`reward_remainder`) layout. A
+/// re-run against an already-77-byte pool is idempotent and emits nothing.
+#[event]
+pub struct PoolReallocated {
+    pub pool: Pubkey,
+    pub pool_id: u32,
+    pub old_size: u64,
+    pub new_size: u64,
+    pub admin: Pubkey,
     pub slot: u64,
 }
 
@@ -794,8 +846,13 @@ mod tests {
 
     #[test]
     fn stake_pool_size_matches_manual_calc() {
-        // 8 disc + 4 pool_id + 8 total_staked + 16 acc + 8 rate + 8 last_slot + 8 lock + 1 bump
-        assert_eq!(StakePool::LEN, 61);
+        // 8 disc + 4 pool_id + 8 total_staked + 16 acc + 8 rate + 8 last_slot
+        // + 8 lock + 1 bump + 16 reward_remainder = 77 bytes (audit M-03).
+        assert_eq!(StakePool::LEN, 77);
+        // The pre-M-03 legacy layout (the live pool 0) is 61 bytes; the realloc
+        // migration grows it by exactly 16 bytes.
+        assert_eq!(StakePool::LEGACY_LEN, 61);
+        assert_eq!(StakePool::LEN - StakePool::LEGACY_LEN, 16);
     }
 
     #[test]
@@ -820,6 +877,7 @@ mod tests {
             last_update_slot: 1000,
             lock_duration_slots: StakePool::DEFAULT_LOCK_SLOTS,
             bump: 0,
+            reward_remainder: 0,
         }
     }
 
@@ -879,6 +937,112 @@ mod tests {
         pool.accrue_rewards(2000).unwrap();
         assert_eq!(pool.acc_reward_per_share, first);
         assert_eq!(pool.last_update_slot, first_slot);
+    }
+
+    // ── Audit M-03: truncation remainder carry ──────────────────────────────
+
+    #[test]
+    fn accrue_burns_nothing_at_live_pool_scale() {
+        // Regression for the exact live-pool bug: total_staked huge, rate=1000.
+        // A single-slot numerator (1 * 1000 * 1e12 = 1e15) is far below
+        // total_staked, so the OLD floor increment was 0 (emission burned). The
+        // fix must carry the full numerator into reward_remainder and add 0 to
+        // acc_reward_per_share this slot — losing nothing.
+        let mut pool = fresh_pool();
+        pool.total_staked = 3_116_139_772_974_855; // live pool 0 base units
+        pool.reward_rate_per_slot = 1000;
+        pool.accrue_rewards(pool.last_update_slot + 1).unwrap();
+
+        let numerator = 1u128 * 1000 * StakePool::REWARD_SCALE; // 1e15
+        assert!(
+            numerator < pool.total_staked as u128,
+            "precondition: floors to 0"
+        );
+        assert_eq!(
+            pool.acc_reward_per_share, 0,
+            "increment floors to 0 this slot"
+        );
+        assert_eq!(
+            pool.reward_remainder, numerator,
+            "the entire sub-unit emission is carried, not burned"
+        );
+    }
+
+    #[test]
+    fn accrue_carries_remainder_and_eventually_distributes() {
+        // total_staked chosen so the numerator does NOT divide evenly.
+        // slots=1, rate=3, scale=1e12 → numerator=3e12. total_staked=7.
+        // increment = 3e12 / 7 = 428_571_428_571 ; remainder = 3e12 % 7 = 3.
+        let mut pool = fresh_pool();
+        pool.total_staked = 7;
+        pool.reward_rate_per_slot = 3;
+
+        pool.accrue_rewards(pool.last_update_slot + 1).unwrap();
+        let n1 = 3u128 * StakePool::REWARD_SCALE;
+        assert_eq!(pool.acc_reward_per_share, n1 / 7);
+        assert_eq!(pool.reward_remainder, n1 % 7); // == 3
+
+        // Next slot folds the carried remainder into the numerator.
+        let acc_before = pool.acc_reward_per_share;
+        let rem_before = pool.reward_remainder;
+        pool.accrue_rewards(pool.last_update_slot + 1).unwrap();
+        let numerator2 = 3u128 * StakePool::REWARD_SCALE + rem_before;
+        assert_eq!(pool.acc_reward_per_share, acc_before + numerator2 / 7);
+        assert_eq!(pool.reward_remainder, numerator2 % 7);
+    }
+
+    #[test]
+    fn accrue_carry_conserves_emission_vs_floor() {
+        // Over many slots the carry must distribute exactly floor(total_emission
+        // * SCALE / total_staked) of accumulator units — i.e. emission is
+        // conservative: cumulative credited never exceeds true entitlement and
+        // the shortfall is bounded by < 1 acc-unit (held in reward_remainder).
+        let mut pool = fresh_pool();
+        pool.total_staked = 1_000_003; // prime-ish, forces nonzero remainders
+        pool.reward_rate_per_slot = 7;
+
+        let slots = 1000u64;
+        for _ in 0..slots {
+            let next = pool.last_update_slot + 1;
+            pool.accrue_rewards(next).unwrap();
+        }
+        let total_emission = slots as u128 * 7;
+        let true_units = total_emission * StakePool::REWARD_SCALE / pool.total_staked as u128;
+        // Credited + carried/total == true (within the integer-division identity).
+        let carried_units = pool.reward_remainder / pool.total_staked as u128; // 0
+        assert_eq!(carried_units, 0, "remainder is always < total_staked");
+        assert_eq!(
+            pool.acc_reward_per_share, true_units,
+            "summed per-slot carry equals the single-shot floor division"
+        );
+        // And the leftover dust is strictly less than one acc-unit (total_staked).
+        assert!((pool.reward_remainder) < pool.total_staked as u128);
+    }
+
+    #[test]
+    fn accrue_early_return_paths_never_touch_remainder() {
+        // total_staked==0 / rate==0 / slots==0 must advance last_update_slot
+        // ONLY — the carried remainder (e.g. from a prior funded window that
+        // later emptied) must be preserved untouched.
+        for (total_staked, rate) in [(0u64, 10u64), (100_000u64, 0u64)] {
+            let mut pool = fresh_pool();
+            pool.total_staked = total_staked;
+            pool.reward_rate_per_slot = rate;
+            pool.reward_remainder = 12_345; // seeded leftover dust
+            pool.accrue_rewards(pool.last_update_slot + 50).unwrap();
+            assert_eq!(pool.acc_reward_per_share, 0);
+            assert_eq!(
+                pool.reward_remainder, 12_345,
+                "early-return path must not consume or zero the carry"
+            );
+        }
+        // slots_elapsed == 0 path.
+        let mut pool = fresh_pool();
+        pool.total_staked = 500_000;
+        pool.reward_rate_per_slot = 25;
+        pool.reward_remainder = 999;
+        pool.accrue_rewards(pool.last_update_slot).unwrap();
+        assert_eq!(pool.reward_remainder, 999);
     }
 
     #[test]
