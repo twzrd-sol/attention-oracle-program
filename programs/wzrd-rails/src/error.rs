@@ -60,6 +60,9 @@ pub enum RailsError {
 
     #[msg("Verified moment hashes must not be all zero bytes.")]
     VerifiedMomentHashMustBeNonZero = 17,
+
+    #[msg("Lock duration exceeds the configured maximum (would brick unstake).")]
+    LockDurationTooLong = 18,
 }
 
 #[error_code]
