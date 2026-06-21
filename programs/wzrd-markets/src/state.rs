@@ -31,6 +31,34 @@ pub const ATTENTION_ROOT_SEED: &[u8] = b"attention_root";
 /// Matches wzrd-rails' `PayoutAuthorityConfig::MAX_PUBLISHERS`.
 pub const MAX_PUBLISHERS: usize = 8;
 
+/// Which attention metric a market resolves against. Stored as a `u8` on the
+/// `Market` account; Phase 1 only persists the value (the resolution logic that
+/// interprets it lands in Phase 3). Kept as plain consts (not a Rust enum) so an
+/// out-of-range value round-trips through Borsh without an aborting deserialize —
+/// `create_market` validates the range explicitly.
+#[non_exhaustive]
+pub struct MarketMetric;
+
+impl MarketMetric {
+    /// Average concurrent viewers over the resolution window.
+    pub const AVG_VIEWERS: u8 = 0;
+    /// Peak concurrent viewers over the resolution window.
+    pub const PEAK_VIEWERS: u8 = 1;
+    /// Total hours watched over the resolution window.
+    pub const HOURS_WATCHED: u8 = 2;
+    /// Composite engagement score over the resolution window.
+    pub const ENGAGEMENT_SCORE: u8 = 3;
+
+    /// Highest defined metric discriminant (inclusive). `create_market` rejects
+    /// `metric > MAX`.
+    pub const MAX: u8 = Self::ENGAGEMENT_SCORE;
+
+    /// True if `metric` is a defined `MarketMetric` discriminant.
+    pub fn is_valid(metric: u8) -> bool {
+        metric <= Self::MAX
+    }
+}
+
 /// Global program configuration. One instance per deployment, created by
 /// `initialize_markets_config` (Phase 0).
 ///
@@ -60,15 +88,25 @@ pub struct MarketsConfig {
     /// Capacity is fixed at `MAX_PUBLISHERS`; `LEN` reserves space for the full
     /// vector so the account never needs to grow when publishers are added.
     pub publisher_allowlist: Vec<Pubkey>,
+    /// Monotonic market-id counter (Phase 1). `create_market` requires the
+    /// caller-supplied `market_id == next_market_id`, then increments this, so
+    /// market ids are gap-free and the `[MARKET_SEED, market_id]` PDA can never
+    /// collide. CARVED from the original 64-byte `_reserved` (now 56) so the
+    /// account LEN is unchanged — no realloc on the existing Phase-0 config.
+    pub next_market_id: u64,
     /// Forward-compat reserve. Future config fields are carved from here.
-    pub _reserved: [u8; 64],
+    /// Was `[u8; 64]` in Phase 0; 8 bytes carved for `next_market_id` above.
+    pub _reserved: [u8; 56],
 }
 
 impl MarketsConfig {
     /// Account size including the 8-byte Anchor discriminator.
     /// 8 disc + 1 bump + 32 admin + 32 usdc_mint + 32 resolver_multisig
-    ///   + (4 vec_len + 32*MAX_PUBLISHERS) publisher_allowlist + 64 reserved.
-    pub const LEN: usize = 8 + 1 + 32 + 32 + 32 + (4 + 32 * MAX_PUBLISHERS) + 64;
+    ///   + (4 vec_len + 32*MAX_PUBLISHERS) publisher_allowlist + 8 next_market_id
+    ///   + 56 reserved.
+    /// (The 8-byte `next_market_id` is carved from the original 64-byte reserve,
+    /// which is now 56 — the total LEN is identical to Phase 0, so no realloc.)
+    pub const LEN: usize = 8 + 1 + 32 + 32 + 32 + (4 + 32 * MAX_PUBLISHERS) + 8 + 56;
 
     pub fn publisher_allowed(&self, publisher: &Pubkey) -> bool {
         self.publisher_allowlist.iter().any(|p| p == publisher)
@@ -233,9 +271,24 @@ mod tests {
 
     #[test]
     fn markets_config_len_matches_manual_calc() {
-        // 8 + 1 + 32 + 32 + 32 + (4 + 256) + 64 = 429
+        // 8 + 1 + 32 + 32 + 32 + (4 + 256) + 8 + 56 = 429
+        // The Phase-1 `next_market_id` (8 bytes) is carved from the Phase-0
+        // 64-byte reserve (now 56), so the total LEN is unchanged — no realloc.
         assert_eq!(MarketsConfig::LEN, 429);
         assert_eq!(MAX_PUBLISHERS, 8);
+    }
+
+    #[test]
+    fn market_metric_discriminants_are_stable() {
+        // Load-bearing across program + SDK + resolver (Phase 3 interprets these).
+        assert_eq!(MarketMetric::AVG_VIEWERS, 0);
+        assert_eq!(MarketMetric::PEAK_VIEWERS, 1);
+        assert_eq!(MarketMetric::HOURS_WATCHED, 2);
+        assert_eq!(MarketMetric::ENGAGEMENT_SCORE, 3);
+        assert_eq!(MarketMetric::MAX, 3);
+        assert!(MarketMetric::is_valid(0));
+        assert!(MarketMetric::is_valid(3));
+        assert!(!MarketMetric::is_valid(4));
     }
 
     #[test]
