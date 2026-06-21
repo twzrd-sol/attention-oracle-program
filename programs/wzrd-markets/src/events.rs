@@ -86,9 +86,57 @@ pub struct CompleteSetRedeemed {
     pub amount: u64,
 }
 
-// TODO(Phase 2): LiquidityAdded { pool, provider, yes_in, no_in, lp_minted }
-// TODO(Phase 2): LiquidityRemoved { pool, provider, lp_burned, yes_out, no_out }
-// TODO(Phase 2): Swapped { pool, trader, side, amount_in, amount_out, new_yes_reserve, new_no_reserve }
+/// Emitted by `add_liquidity` (Phase 2). `yes_in`/`no_in` are the REAL amounts
+/// transferred into the pool (bounded by the scarcer side at the current ratio);
+/// `lp_minted` is the proportional LP share. `bounding_phase_active` reports the
+/// post-add cold-start state (it flips false once both real reserves >= V).
+#[event]
+pub struct LiquidityAdded {
+    pub pool: Pubkey,
+    pub provider: Pubkey,
+    pub yes_in: u64,
+    pub no_in: u64,
+    pub lp_minted: u64,
+    pub yes_reserve: u64,
+    pub no_reserve: u64,
+    pub lp_supply: u64,
+    pub bounding_phase_active: bool,
+}
+
+/// Emitted by `remove_liquidity` (Phase 2). `lp_burned` LP tokens were burned for
+/// `yes_out`/`no_out` outcome tokens, floor-rounded so the pool never overpays
+/// (LP keeps <= pro-rata; dust stays in the pool).
+#[event]
+pub struct LiquidityRemoved {
+    pub pool: Pubkey,
+    pub provider: Pubkey,
+    pub lp_burned: u64,
+    pub yes_out: u64,
+    pub no_out: u64,
+    pub yes_reserve: u64,
+    pub no_reserve: u64,
+    pub lp_supply: u64,
+}
+
+/// Emitted by `swap` (Phase 2). `direction` is `0 = YesToNo`, `1 = NoToYes`.
+/// `implied_no_price_bps` is the post-swap implied probability of NO scaled to
+/// basis points. In the CPMM-prediction model an outcome's price is the OPPOSITE
+/// reserve over the total (buying an outcome depletes its reserve → scarcer →
+/// pricier), so price(NO) = `yes_reserve * 10_000 / (yes_reserve + no_reserve)`
+/// over the REAL reserves (price moves; the virtual floor only shifts the swap
+/// calculation, never the real reserves the price is read from).
+#[event]
+pub struct Swapped {
+    pub pool: Pubkey,
+    pub trader: Pubkey,
+    pub direction: u8,
+    pub amount_in: u64,
+    pub amount_out: u64,
+    pub yes_reserve: u64,
+    pub no_reserve: u64,
+    pub implied_no_price_bps: u64,
+}
+
 // TODO(Phase 3): AttentionRootPublished { seq, root, published_by, slot }
 // TODO(Phase 3): MarketResolved { market, outcome, resolved_slot }
 // TODO(Phase 3): MarketSettled { market, user, shares_burned, collateral_paid }

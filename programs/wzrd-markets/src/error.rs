@@ -54,4 +54,32 @@ pub enum MarketsError {
 
     #[msg("metric is not a defined MarketMetric discriminant.")]
     InvalidMetric = 14,
+
+    // ─── Phase 2: CPMM pool + liquidity + swap ───────────────────────────────
+    #[msg("Pool already exists for this market.")]
+    PoolAlreadyExists = 15,
+
+    #[msg("Pool has not been initialized yet; call initialize_pool first.")]
+    PoolNotInitialized = 16,
+
+    #[msg(
+        "Pool holds fewer output tokens than the swap would pay out (the \
+           virtual-liquidity floor shifts price, never payout solvency)."
+    )]
+    InsufficientPoolLiquidity = 17,
+
+    #[msg(
+        "Deposited YES/NO amounts do not match the current pool ratio within \
+           the supplied bounds."
+    )]
+    RatioMismatch = 18,
+
+    #[msg(
+        "Liquidity / LP amount resolves to zero — refusing a no-op that would \
+           mint or burn nothing."
+    )]
+    ZeroLiquidity = 19,
+
+    #[msg("Market is resolved; trading is halted (swap/add are pre-resolution only).")]
+    MarketTradingHalted = 20,
 }

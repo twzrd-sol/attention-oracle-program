@@ -31,6 +31,47 @@ pub use error::*;
 pub use events::*;
 pub use state::*;
 
+use curve::{ConstantProductCurve, RoundDirection};
+
+/// Phase 2 swap direction discriminants (passed as a `u8` on the `swap` IX so an
+/// out-of-range value round-trips through Borsh without an aborting deserialize —
+/// `swap` validates the range explicitly, mirroring `MarketMetric`).
+#[non_exhaustive]
+pub struct SwapDirection;
+
+impl SwapDirection {
+    /// YES in, NO out.
+    pub const YES_TO_NO: u8 = 0;
+    /// NO in, YES out.
+    pub const NO_TO_YES: u8 = 1;
+}
+
+/// Declare the pool-PDA signer seeds as locals in the calling scope so they
+/// outlive the `CpiContext::new_with_signer` borrow.
+///
+/// Expands to:
+/// ```ignore
+/// let $market_bytes = pool.market.to_bytes();
+/// let $bump = [pool.bump];
+/// let $pool_seeds: &[&[u8]] = &[POOL_SEED, &$market_bytes, &$bump];
+/// let $signer: &[&[&[u8]]] = &[$pool_seeds];
+/// ```
+///
+/// The seeds are `[POOL_SEED, market.key(), &[pool.bump]]` — BYTE-IDENTICAL to
+/// the `seeds = [POOL_SEED, market.key().as_ref()]` the pool PDA was `init`-ed
+/// with (scope §8 non-negotiable), and the bump is read from the stored
+/// `pool.bump`. A `macro_rules!` that DECLARES locals (rather than returning
+/// owned data) is the only borrow-checker-clean way to keep the `&[&[u8]]`
+/// slices valid across the CPI without heap allocation.
+macro_rules! pool_signer_seeds {
+    ($pool:expr, $market_bytes:ident, $bump:ident, $pool_seeds:ident, $signer:ident) => {
+        let $market_bytes = $pool.market.to_bytes();
+        let $bump = [$pool.bump];
+        let $pool_seeds: &[&[u8]] = &[POOL_SEED, $market_bytes.as_ref(), &$bump];
+        let $signer: &[&[&[u8]]] = &[$pool_seeds];
+    };
+}
+
 // TODO: real program id before deploy. Placeholder keypair generated 2026-06-21
 // solely so Phase 0 compiles + deploys to a local validator; it is NOT the
 // production program id and MUST be replaced (with a vanity/published keypair)
@@ -421,21 +462,639 @@ pub mod wzrd_markets {
         Ok(())
     }
 
-    // ─── Phase 2-3 roadmap (NOT YET IMPLEMENTED) ─────────────────────────────
-    //
-    // Phase 2 — the CPMM (moving-odds engine), uses `curve::ConstantProductCurve`:
-    //   - initialize_pool(ctx, seed_args)      // create YES/NO constant-product pool + LP mint; seed bounding-phase virtual liquidity
-    //   - add_liquidity(ctx, args)             // LP provides both outcome sides; lp_tokens_to_trading_tokens accounting
-    //   - remove_liquidity(ctx, args)
-    //   - swap(ctx, args)                      // buy/sell YES or NO with min_amount_out slippage guard (swap_base_input/output_without_fees)
-    //   ACCEPTANCE GATE (Phase 2): the mint/swap arbitrage loop keeps sum(YES,NO) coherent vs collateral.
-    //
+    /// Phase 2 — create the constant-product YES/NO pool for a market.
+    ///
+    /// Creates the Pool PDA `[POOL_SEED, market.key()]`, the LP mint
+    /// `[LP_MINT_SEED, market.key()]` (Token-2022, pool PDA = mint authority), and
+    /// the pool's YES + NO token accounts (owned by the pool PDA, for the market's
+    /// recorded yes_mint / no_mint). Seeds the cold-start bounding-phase virtual
+    /// liquidity `V` so the first trades price against a sane ~0.5 baseline
+    /// instead of dividing by zero.
+    ///
+    /// `virtual_liquidity` (V) is VIRTUAL — the pool never holds V of any token.
+    /// It is added to the curve INPUTS only (scope §2 / §4). The pool's real
+    /// token-account balances are the hard ceiling on every transfer-out; V shifts
+    /// the price, never the payout solvency.
+    ///
+    /// Preconditions:
+    ///   - Market exists and `tokens_initialized` (TokensNotInitialized otherwise).
+    ///   - Pool PDA does not already exist (the `init` constraint enforces;
+    ///     re-init surfaces as the account-already-in-use abort. PoolAlreadyExists
+    ///     is retained for explicitness / future non-`init` paths).
+    ///
+    /// Postconditions:
+    ///   - Pool { bounding_phase_active = true, virtual_liquidity = V,
+    ///     yes_reserve = 0, no_reserve = 0, lp_supply = 0, lp_mint, bump }.
+    pub fn initialize_pool(ctx: Context<InitializePool>, virtual_liquidity: u64) -> Result<()> {
+        let slot = Clock::get()?.slot;
+        require!(
+            ctx.accounts.market.tokens_initialized,
+            MarketsError::TokensNotInitialized
+        );
+
+        let market_key = ctx.accounts.market.key();
+        let pool_key = ctx.accounts.pool.key();
+        let lp_mint = ctx.accounts.lp_mint.key();
+
+        let pool = &mut ctx.accounts.pool;
+        pool.bump = ctx.bumps.pool;
+        pool.market = market_key;
+        pool.yes_reserve = 0;
+        pool.no_reserve = 0;
+        pool.lp_mint = lp_mint;
+        pool.lp_supply = 0;
+        pool.bounding_phase_active = true;
+        pool.virtual_liquidity = virtual_liquidity;
+        pool._reserved = [0u8; 32];
+
+        emit!(PoolInitialized {
+            market: market_key,
+            pool: pool_key,
+            lp_mint,
+            yes_reserve: 0,
+            no_reserve: 0,
+            virtual_liquidity,
+            slot,
+        });
+        Ok(())
+    }
+
+    /// Phase 2 — provide YES + NO liquidity, receive LP tokens.
+    ///
+    /// First LP sets the ratio (deposits exactly `max_yes` + `max_no`, mints
+    /// `sqrt(max_yes * max_no)` LP — the geometric-mean initial supply, matching
+    /// Uniswap-style first-mint). Subsequent LPs must match the current
+    /// `yes_reserve : no_reserve` ratio: the handler computes the required NO for
+    /// the supplied YES (and vice versa), takes the feasible side, transfers in
+    /// the matched amounts, and mints LP proportional to the share added
+    /// (`lp_minted = lp_supply * yes_in / yes_reserve`).
+    ///
+    /// `min_lp` is the slippage / ratio guard (RatioMismatch / ZeroLiquidity if
+    /// the matched deposit mints fewer LP than `min_lp` or rounds to zero).
+    ///
+    /// Bounding-phase transition: once this add brings BOTH real reserves
+    /// `>= virtual_liquidity`, `bounding_phase_active` flips to false (real
+    /// liquidity now dominates the virtual floor; scope §2 threshold).
+    ///
+    /// Trading is halted post-resolution (MarketTradingHalted).
+    pub fn add_liquidity(
+        ctx: Context<AddLiquidity>,
+        max_yes: u64,
+        max_no: u64,
+        min_lp: u64,
+    ) -> Result<()> {
+        require!(
+            !ctx.accounts.market.resolved,
+            MarketsError::MarketTradingHalted
+        );
+        require!(max_yes > 0 && max_no > 0, MarketsError::ZeroAmount);
+
+        let yes_reserve = ctx.accounts.pool.yes_reserve;
+        let no_reserve = ctx.accounts.pool.no_reserve;
+        let lp_supply = ctx.accounts.pool.lp_supply;
+
+        // Compute the matched (yes_in, no_in) deposit and the LP to mint.
+        let (yes_in, no_in, lp_to_mint) =
+            compute_add_liquidity(max_yes, max_no, yes_reserve, no_reserve, lp_supply)?;
+
+        require!(lp_to_mint > 0, MarketsError::ZeroLiquidity);
+        require!(lp_to_mint >= min_lp, MarketsError::RatioMismatch);
+
+        // ── Transfer YES + NO from the provider into the pool's reserves ──
+        // (provider signs for their own source ATAs).
+        token_interface::transfer_checked(
+            CpiContext::new(
+                ctx.accounts.outcome_token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.provider_yes.to_account_info(),
+                    mint: ctx.accounts.yes_mint.to_account_info(),
+                    to: ctx.accounts.pool_yes.to_account_info(),
+                    authority: ctx.accounts.provider.to_account_info(),
+                },
+            ),
+            yes_in,
+            ctx.accounts.yes_mint.decimals,
+        )?;
+        token_interface::transfer_checked(
+            CpiContext::new(
+                ctx.accounts.outcome_token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.provider_no.to_account_info(),
+                    mint: ctx.accounts.no_mint.to_account_info(),
+                    to: ctx.accounts.pool_no.to_account_info(),
+                    authority: ctx.accounts.provider.to_account_info(),
+                },
+            ),
+            no_in,
+            ctx.accounts.no_mint.decimals,
+        )?;
+
+        // ── Mint LP to the provider; the pool PDA is the LP mint authority ──
+        pool_signer_seeds!(
+            ctx.accounts.pool,
+            pool_market_bytes,
+            pool_bump,
+            pool_seeds,
+            pool_signer
+        );
+        token_interface::mint_to(
+            CpiContext::new_with_signer(
+                ctx.accounts.lp_token_program.to_account_info(),
+                MintTo {
+                    mint: ctx.accounts.lp_mint.to_account_info(),
+                    to: ctx.accounts.provider_lp.to_account_info(),
+                    authority: ctx.accounts.pool.to_account_info(),
+                },
+                pool_signer,
+            ),
+            lp_to_mint,
+        )?;
+
+        // ── Update reserves + supply from the REAL deposit ──
+        let pool = &mut ctx.accounts.pool;
+        pool.yes_reserve = yes_reserve
+            .checked_add(yes_in)
+            .ok_or(MarketsError::MathOverflow)?;
+        pool.no_reserve = no_reserve
+            .checked_add(no_in)
+            .ok_or(MarketsError::MathOverflow)?;
+        pool.lp_supply = lp_supply
+            .checked_add(lp_to_mint)
+            .ok_or(MarketsError::MathOverflow)?;
+
+        // Bounding-phase transition: real liquidity now dominates the virtual
+        // floor once BOTH real reserves >= V. The floor is no longer needed.
+        if pool.bounding_phase_active
+            && pool.yes_reserve >= pool.virtual_liquidity
+            && pool.no_reserve >= pool.virtual_liquidity
+        {
+            pool.bounding_phase_active = false;
+        }
+
+        emit!(LiquidityAdded {
+            pool: pool.key(),
+            provider: ctx.accounts.provider.key(),
+            yes_in,
+            no_in,
+            lp_minted: lp_to_mint,
+            yes_reserve: pool.yes_reserve,
+            no_reserve: pool.no_reserve,
+            lp_supply: pool.lp_supply,
+            bounding_phase_active: pool.bounding_phase_active,
+        });
+        Ok(())
+    }
+
+    /// Phase 2 — burn LP tokens, withdraw YES + NO pro-rata.
+    ///
+    /// Uses `lp_tokens_to_trading_tokens(lp_amount, lp_supply, yes_reserve,
+    /// no_reserve, Floor)` — FLOOR rounding so the LP receives `<=` their exact
+    /// pro-rata share and the pool keeps the dust (never overpays; this is what
+    /// keeps `k` from decreasing on withdraw). Burns the LP (the holder is the
+    /// authority on their own LP account), transfers YES + NO out (the pool PDA
+    /// signs), and updates reserves / supply.
+    ///
+    /// `min_yes` / `min_no` are the slippage guards (RatioMismatch if either
+    /// floored output falls below its bound).
+    ///
+    /// Remove is allowed post-resolution so LPs can always exit (scope §6 — only
+    /// swap/add halt at resolution; withdrawals do not trap liquidity).
+    pub fn remove_liquidity(
+        ctx: Context<RemoveLiquidity>,
+        lp_amount: u64,
+        min_yes: u64,
+        min_no: u64,
+    ) -> Result<()> {
+        require!(lp_amount > 0, MarketsError::ZeroAmount);
+
+        let yes_reserve = ctx.accounts.pool.yes_reserve;
+        let no_reserve = ctx.accounts.pool.no_reserve;
+        let lp_supply = ctx.accounts.pool.lp_supply;
+
+        require!(lp_supply > 0, MarketsError::ZeroLiquidity);
+        require!(
+            lp_amount <= lp_supply,
+            MarketsError::InsufficientPoolLiquidity
+        );
+
+        // FLOOR rounding: LP gets <= pro-rata, pool keeps dust (curve invariant).
+        let (yes_out, no_out) =
+            compute_remove_liquidity(lp_amount, lp_supply, yes_reserve, no_reserve)?;
+
+        require!(yes_out > 0 || no_out > 0, MarketsError::ZeroLiquidity);
+        require!(
+            yes_out >= min_yes && no_out >= min_no,
+            MarketsError::RatioMismatch
+        );
+
+        // ── Burn the LP from the holder (they sign for their own LP account) ──
+        token_interface::burn(
+            CpiContext::new(
+                ctx.accounts.lp_token_program.to_account_info(),
+                Burn {
+                    mint: ctx.accounts.lp_mint.to_account_info(),
+                    from: ctx.accounts.provider_lp.to_account_info(),
+                    authority: ctx.accounts.provider.to_account_info(),
+                },
+            ),
+            lp_amount,
+        )?;
+
+        // ── Transfer YES + NO out of the pool; the pool PDA signs ──
+        pool_signer_seeds!(
+            ctx.accounts.pool,
+            pool_market_bytes,
+            pool_bump,
+            pool_seeds,
+            pool_signer
+        );
+        if yes_out > 0 {
+            token_interface::transfer_checked(
+                CpiContext::new_with_signer(
+                    ctx.accounts.outcome_token_program.to_account_info(),
+                    TransferChecked {
+                        from: ctx.accounts.pool_yes.to_account_info(),
+                        mint: ctx.accounts.yes_mint.to_account_info(),
+                        to: ctx.accounts.provider_yes.to_account_info(),
+                        authority: ctx.accounts.pool.to_account_info(),
+                    },
+                    pool_signer,
+                ),
+                yes_out,
+                ctx.accounts.yes_mint.decimals,
+            )?;
+        }
+        if no_out > 0 {
+            token_interface::transfer_checked(
+                CpiContext::new_with_signer(
+                    ctx.accounts.outcome_token_program.to_account_info(),
+                    TransferChecked {
+                        from: ctx.accounts.pool_no.to_account_info(),
+                        mint: ctx.accounts.no_mint.to_account_info(),
+                        to: ctx.accounts.provider_no.to_account_info(),
+                        authority: ctx.accounts.pool.to_account_info(),
+                    },
+                    pool_signer,
+                ),
+                no_out,
+                ctx.accounts.no_mint.decimals,
+            )?;
+        }
+
+        // ── Update reserves + supply ──
+        let pool = &mut ctx.accounts.pool;
+        pool.yes_reserve = yes_reserve
+            .checked_sub(yes_out)
+            .ok_or(MarketsError::MathOverflow)?;
+        pool.no_reserve = no_reserve
+            .checked_sub(no_out)
+            .ok_or(MarketsError::MathOverflow)?;
+        pool.lp_supply = lp_supply
+            .checked_sub(lp_amount)
+            .ok_or(MarketsError::MathOverflow)?;
+
+        emit!(LiquidityRemoved {
+            pool: pool.key(),
+            provider: ctx.accounts.provider.key(),
+            lp_burned: lp_amount,
+            yes_out,
+            no_out,
+            yes_reserve: pool.yes_reserve,
+            no_reserve: pool.no_reserve,
+            lp_supply: pool.lp_supply,
+        });
+        Ok(())
+    }
+
+    /// Phase 2 — the moving-odds primitive: swap YES <-> NO against the curve.
+    ///
+    /// `direction`: `0 = YesToNo` (YES in, NO out), `1 = NoToYes` (NO in, YES out).
+    ///
+    /// `amount_out = swap_base_input_without_fees(amount_in, effective_input,
+    /// effective_output)` where `effective_* = real_reserve (+ V if
+    /// bounding_phase_active)`. The virtual floor V shifts the PRICE (so the first
+    /// trade on a thin pool prices near 0.5 instead of dividing by zero) — it does
+    /// NOT add payable tokens.
+    ///
+    /// THE PHANTOM-PAYOUT GUARD: `amount_out` is checked against the pool's REAL
+    /// output token-account balance and the swap REVERTS (InsufficientPoolLiquidity)
+    /// if it would pay more than the pool holds. This is the hard solvency ceiling
+    /// the virtual floor can never breach (scope §4 / §8, test #4).
+    ///
+    /// Slippage: `amount_out >= min_amount_out` (SlippageExceeded otherwise).
+    /// Fee = 0 for v1. Trading halts post-resolution (MarketTradingHalted).
+    pub fn swap(
+        ctx: Context<Swap>,
+        amount_in: u64,
+        min_amount_out: u64,
+        direction: u8,
+    ) -> Result<()> {
+        require!(
+            !ctx.accounts.market.resolved,
+            MarketsError::MarketTradingHalted
+        );
+        require!(amount_in > 0, MarketsError::ZeroAmount);
+        require!(
+            direction == SwapDirection::YES_TO_NO || direction == SwapDirection::NO_TO_YES,
+            MarketsError::InvalidMarketState
+        );
+
+        let bounding = ctx.accounts.pool.bounding_phase_active;
+        let virtual_liquidity = ctx.accounts.pool.virtual_liquidity;
+        let yes_reserve = ctx.accounts.pool.yes_reserve;
+        let no_reserve = ctx.accounts.pool.no_reserve;
+
+        // Effective reserves include the virtual floor ONLY while bounding.
+        let v: u128 = if bounding {
+            virtual_liquidity as u128
+        } else {
+            0
+        };
+        let (eff_in, eff_out, real_out) = match direction {
+            SwapDirection::YES_TO_NO => (
+                (yes_reserve as u128) + v,
+                (no_reserve as u128) + v,
+                no_reserve,
+            ),
+            // NO_TO_YES
+            _ => (
+                (no_reserve as u128) + v,
+                (yes_reserve as u128) + v,
+                yes_reserve,
+            ),
+        };
+
+        // Curve math (hardened to Option — None maps to MathOverflow).
+        let amount_out_u128 =
+            ConstantProductCurve::swap_base_input_without_fees(amount_in as u128, eff_in, eff_out)
+                .ok_or(MarketsError::MathOverflow)?;
+        let amount_out: u64 =
+            u64::try_from(amount_out_u128).map_err(|_| MarketsError::MathOverflow)?;
+
+        // Slippage guard.
+        require!(amount_out >= min_amount_out, MarketsError::SlippageExceeded);
+
+        // ── THE PHANTOM-PAYOUT GUARD ──
+        // The pool can only pay what it actually holds. The virtual floor shifted
+        // the price calculation above, but real_out (the real output reserve) is
+        // the hard ceiling. If the calculated payout exceeds it, REVERT — never
+        // pay phantom tokens. This is what makes the arb loop coherent.
+        require!(
+            amount_out <= real_out,
+            MarketsError::InsufficientPoolLiquidity
+        );
+
+        // ── Pull amount_in INTO the input reserve (trader signs) ──
+        // ── Push amount_out OUT of the output reserve (pool PDA signs) ──
+        pool_signer_seeds!(
+            ctx.accounts.pool,
+            pool_market_bytes,
+            pool_bump,
+            pool_seeds,
+            pool_signer
+        );
+        match direction {
+            SwapDirection::YES_TO_NO => {
+                // YES in
+                token_interface::transfer_checked(
+                    CpiContext::new(
+                        ctx.accounts.outcome_token_program.to_account_info(),
+                        TransferChecked {
+                            from: ctx.accounts.trader_yes.to_account_info(),
+                            mint: ctx.accounts.yes_mint.to_account_info(),
+                            to: ctx.accounts.pool_yes.to_account_info(),
+                            authority: ctx.accounts.trader.to_account_info(),
+                        },
+                    ),
+                    amount_in,
+                    ctx.accounts.yes_mint.decimals,
+                )?;
+                // NO out
+                token_interface::transfer_checked(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.outcome_token_program.to_account_info(),
+                        TransferChecked {
+                            from: ctx.accounts.pool_no.to_account_info(),
+                            mint: ctx.accounts.no_mint.to_account_info(),
+                            to: ctx.accounts.trader_no.to_account_info(),
+                            authority: ctx.accounts.pool.to_account_info(),
+                        },
+                        pool_signer,
+                    ),
+                    amount_out,
+                    ctx.accounts.no_mint.decimals,
+                )?;
+            }
+            _ => {
+                // NO_TO_YES: NO in
+                token_interface::transfer_checked(
+                    CpiContext::new(
+                        ctx.accounts.outcome_token_program.to_account_info(),
+                        TransferChecked {
+                            from: ctx.accounts.trader_no.to_account_info(),
+                            mint: ctx.accounts.no_mint.to_account_info(),
+                            to: ctx.accounts.pool_no.to_account_info(),
+                            authority: ctx.accounts.trader.to_account_info(),
+                        },
+                    ),
+                    amount_in,
+                    ctx.accounts.no_mint.decimals,
+                )?;
+                // YES out
+                token_interface::transfer_checked(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.outcome_token_program.to_account_info(),
+                        TransferChecked {
+                            from: ctx.accounts.pool_yes.to_account_info(),
+                            mint: ctx.accounts.yes_mint.to_account_info(),
+                            to: ctx.accounts.trader_yes.to_account_info(),
+                            authority: ctx.accounts.pool.to_account_info(),
+                        },
+                        pool_signer,
+                    ),
+                    amount_out,
+                    ctx.accounts.yes_mint.decimals,
+                )?;
+            }
+        }
+
+        // ── Update the REAL reserves (input += amount_in, output -= amount_out) ──
+        let pool = &mut ctx.accounts.pool;
+        match direction {
+            SwapDirection::YES_TO_NO => {
+                pool.yes_reserve = yes_reserve
+                    .checked_add(amount_in)
+                    .ok_or(MarketsError::MathOverflow)?;
+                pool.no_reserve = no_reserve
+                    .checked_sub(amount_out)
+                    .ok_or(MarketsError::MathOverflow)?;
+            }
+            _ => {
+                pool.no_reserve = no_reserve
+                    .checked_add(amount_in)
+                    .ok_or(MarketsError::MathOverflow)?;
+                pool.yes_reserve = yes_reserve
+                    .checked_sub(amount_out)
+                    .ok_or(MarketsError::MathOverflow)?;
+            }
+        }
+
+        // Implied price of NO (bps) over the REAL reserves: in the CPMM-prediction
+        // model an outcome's price is the OPPOSITE reserve over the total.
+        let implied_no_price_bps = implied_no_price_bps(pool.yes_reserve, pool.no_reserve);
+
+        emit!(Swapped {
+            pool: pool.key(),
+            trader: ctx.accounts.trader.key(),
+            direction,
+            amount_in,
+            amount_out,
+            yes_reserve: pool.yes_reserve,
+            no_reserve: pool.no_reserve,
+            implied_no_price_bps,
+        });
+        Ok(())
+    }
+
     // Phase 3 — resolution + settlement (in-house publisher, audit H-01/H-02/M-04/M-05):
     //   - publish_attention_root(ctx, args)    // in-house allow-listed publisher (advances AttentionRootConfig.last_published_seq); reuse rails listen-payout pattern
     //   - resolve_market(ctx, proof)           // verify proof vs the CREATE-TIME-snapshotted root; + dispute window before final
     //   - settle(ctx)                          // burn winning outcome token 1:1 for USDC; preserve solvency invariant
     //   - resolve_override(ctx, outcome)       // multisig-gated fallback for disputed/missing data
     //   - sweep_residual(ctx) / close_market(ctx)  // admin-gated, supply==0 guards
+}
+
+// ─── Phase 2 pure helpers ─────────────────────────────────────────────────────
+//
+// Extracted to `#[inline(never)]` free functions so their working set stays OFF
+// the IX-handler stack frames (SBF 4096-byte-per-frame limit; CLAUDE.md SBF
+// constraint). All math is checked — no panics, no prod unwraps.
+
+/// Integer square root via Newton's method (used for the first-LP geometric-mean
+/// initial supply `sqrt(yes * no)`, the Uniswap-style bootstrap mint).
+///
+/// Exact floor sqrt for all `u128`. Converges in O(log bits) iterations.
+#[inline(never)]
+fn integer_sqrt(n: u128) -> u128 {
+    if n < 2 {
+        return n;
+    }
+    // Initial guess: 2^(ceil(bits/2)). `n.ilog2()` is the index of the MSB.
+    let mut x = 1u128 << (n.ilog2() / 2 + 1);
+    loop {
+        // x_next = (x + n / x) / 2; monotonically non-increasing to floor(sqrt).
+        let x_next = (x + n / x) / 2;
+        if x_next >= x {
+            return x;
+        }
+        x = x_next;
+    }
+}
+
+/// Compute the matched `(yes_in, no_in, lp_to_mint)` for an `add_liquidity`.
+///
+/// - **First LP** (`lp_supply == 0`): deposit exactly `(max_yes, max_no)` and mint
+///   `sqrt(max_yes * max_no)` LP (geometric-mean initial supply). The first LP
+///   freely sets the ratio.
+/// - **Subsequent LP**: match the current `yes_reserve : no_reserve` ratio.
+///   Compute the NO required for `max_yes` (`required_no = max_yes * no_reserve /
+///   yes_reserve`); if that fits within `max_no`, deposit `(max_yes,
+///   required_no)`. Otherwise the NO side is scarcer — compute the YES required
+///   for `max_no` and deposit `(required_yes, max_no)`. LP minted is proportional
+///   to the share added: `lp_to_mint = lp_supply * yes_in / yes_reserve`.
+///
+/// Returns `MathOverflow` on any checked-arithmetic failure.
+#[inline(never)]
+fn compute_add_liquidity(
+    max_yes: u64,
+    max_no: u64,
+    yes_reserve: u64,
+    no_reserve: u64,
+    lp_supply: u64,
+) -> Result<(u64, u64, u64)> {
+    // First LP: free ratio, geometric-mean initial supply.
+    if lp_supply == 0 || yes_reserve == 0 || no_reserve == 0 {
+        let product = (max_yes as u128)
+            .checked_mul(max_no as u128)
+            .ok_or(MarketsError::MathOverflow)?;
+        let lp = integer_sqrt(product);
+        let lp_u64 = u64::try_from(lp).map_err(|_| MarketsError::MathOverflow)?;
+        return Ok((max_yes, max_no, lp_u64));
+    }
+
+    // Subsequent LP: match the current ratio, bounded by the scarcer side.
+    let yes_reserve_u = yes_reserve as u128;
+    let no_reserve_u = no_reserve as u128;
+
+    // NO required to pair with all of max_yes at the current ratio.
+    let required_no = (max_yes as u128)
+        .checked_mul(no_reserve_u)
+        .ok_or(MarketsError::MathOverflow)?
+        / yes_reserve_u;
+
+    let (yes_in_u, no_in_u) = if required_no <= max_no as u128 {
+        // YES side is the binding constraint; take all of max_yes.
+        (max_yes as u128, required_no)
+    } else {
+        // NO side is scarcer; take all of max_no and the YES it pairs with.
+        let required_yes = (max_no as u128)
+            .checked_mul(yes_reserve_u)
+            .ok_or(MarketsError::MathOverflow)?
+            / no_reserve_u;
+        (required_yes, max_no as u128)
+    };
+
+    // LP proportional to the YES share added: lp_supply * yes_in / yes_reserve.
+    // (Using the YES side; the NO side is matched to the same ratio.)
+    let lp_to_mint_u = (lp_supply as u128)
+        .checked_mul(yes_in_u)
+        .ok_or(MarketsError::MathOverflow)?
+        / yes_reserve_u;
+
+    let yes_in = u64::try_from(yes_in_u).map_err(|_| MarketsError::MathOverflow)?;
+    let no_in = u64::try_from(no_in_u).map_err(|_| MarketsError::MathOverflow)?;
+    let lp_to_mint = u64::try_from(lp_to_mint_u).map_err(|_| MarketsError::MathOverflow)?;
+    Ok((yes_in, no_in, lp_to_mint))
+}
+
+/// Compute the `(yes_out, no_out)` returned for burning `lp_amount` LP, via the
+/// vendored `lp_tokens_to_trading_tokens(..., Floor)` — FLOOR rounding so the LP
+/// receives `<=` their pro-rata share and the pool keeps the dust (this is what
+/// keeps `k` from decreasing on withdraw; scope §3 / §8).
+#[inline(never)]
+fn compute_remove_liquidity(
+    lp_amount: u64,
+    lp_supply: u64,
+    yes_reserve: u64,
+    no_reserve: u64,
+) -> Result<(u64, u64)> {
+    let result = ConstantProductCurve::lp_tokens_to_trading_tokens(
+        lp_amount as u128,
+        lp_supply as u128,
+        yes_reserve as u128,
+        no_reserve as u128,
+        RoundDirection::Floor,
+    )
+    .ok_or(MarketsError::MathOverflow)?;
+    let yes_out = u64::try_from(result.token_0_amount).map_err(|_| MarketsError::MathOverflow)?;
+    let no_out = u64::try_from(result.token_1_amount).map_err(|_| MarketsError::MathOverflow)?;
+    Ok((yes_out, no_out))
+}
+
+/// Implied price of NO in basis points over the REAL reserves. In the
+/// CPMM-prediction model an outcome's price is the OPPOSITE reserve over the
+/// total (buying an outcome depletes its reserve → scarcer → pricier), so
+/// price(NO) = `yes_reserve * 10_000 / (yes_reserve + no_reserve)`. Returns 0
+/// when the pool is empty (no defined price). Saturating/checked so it can never
+/// panic in the emit path.
+#[inline(never)]
+fn implied_no_price_bps(yes_reserve: u64, no_reserve: u64) -> u64 {
+    let total = (yes_reserve as u128) + (no_reserve as u128);
+    if total == 0 {
+        return 0;
+    }
+    let bps = (yes_reserve as u128) * 10_000u128 / total;
+    u64::try_from(bps).unwrap_or(10_000)
 }
 
 /// Accounts for `initialize_markets_config` (Phase 0).
@@ -769,4 +1428,383 @@ pub struct RedeemCompleteSet<'info> {
     pub outcome_token_program: Program<'info, Token2022>,
     /// Token program backing USDC.
     pub usdc_token_program: Interface<'info, TokenInterface>,
+}
+
+/// Accounts for `initialize_pool` (Phase 2).
+///
+/// Creates the Pool PDA `[POOL_SEED, market.key()]`, the LP mint
+/// `[LP_MINT_SEED, market.key()]` (Token-2022, pool PDA = mint authority), and the
+/// pool's YES + NO reserve token accounts (Associated Token Accounts owned by the
+/// pool PDA, for the market's recorded yes_mint / no_mint). The pool PDA is its
+/// own LP-mint authority and reserve-account owner, and signs every Phase-2
+/// transfer-out / LP mint with the BYTE-IDENTICAL `[POOL_SEED, market.key()]`
+/// seeds (the stored `pool.bump`).
+#[derive(Accounts)]
+pub struct InitializePool<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        seeds = [MARKET_SEED, &market.market_id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+
+    /// The constant-product pool over this market's YES/NO outcome tokens.
+    /// `init` enforces single-creation (a second `initialize_pool` aborts with
+    /// account-already-in-use).
+    #[account(
+        init,
+        payer = payer,
+        space = Pool::LEN,
+        seeds = [POOL_SEED, market.key().as_ref()],
+        bump,
+    )]
+    pub pool: Account<'info, Pool>,
+
+    /// YES outcome mint (pinned to the market's recorded yes_mint).
+    #[account(
+        address = market.yes_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// NO outcome mint (pinned to the market's recorded no_mint).
+    #[account(
+        address = market.no_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// LP mint — Token-2022, 6 decimals (matches the outcome mints), pool PDA is
+    /// the mint authority (it signs `mint_to` in `add_liquidity`).
+    #[account(
+        init,
+        payer = payer,
+        seeds = [LP_MINT_SEED, market.key().as_ref()],
+        bump,
+        mint::decimals = 6,
+        mint::authority = pool,
+        mint::token_program = lp_token_program,
+    )]
+    pub lp_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// Pool's YES reserve account (ATA owned by the pool PDA).
+    #[account(
+        init,
+        payer = payer,
+        associated_token::mint = yes_mint,
+        associated_token::authority = pool,
+        associated_token::token_program = outcome_token_program,
+    )]
+    pub pool_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Pool's NO reserve account (ATA owned by the pool PDA).
+    #[account(
+        init,
+        payer = payer,
+        associated_token::mint = no_mint,
+        associated_token::authority = pool,
+        associated_token::token_program = outcome_token_program,
+    )]
+    pub pool_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Token-2022 program (outcome mints).
+    #[account(address = TOKEN_2022_PROGRAM_ID @ MarketsError::InvalidMarketState)]
+    pub outcome_token_program: Program<'info, Token2022>,
+    /// Token-2022 program (LP mint is also Token-2022).
+    #[account(address = TOKEN_2022_PROGRAM_ID @ MarketsError::InvalidMarketState)]
+    pub lp_token_program: Program<'info, Token2022>,
+    pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+/// Accounts for `add_liquidity` (Phase 2).
+///
+/// The provider deposits YES + NO from their own accounts (they sign the two
+/// transfers-in) and receives LP minted by the pool PDA. The pool's reserve ATAs
+/// + LP mint are pinned to the pool's recorded `lp_mint` / the market's mints.
+#[derive(Accounts)]
+pub struct AddLiquidity<'info> {
+    #[account(mut)]
+    pub provider: Signer<'info>,
+
+    #[account(
+        seeds = [MARKET_SEED, &market.market_id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+
+    #[account(
+        mut,
+        seeds = [POOL_SEED, market.key().as_ref()],
+        bump = pool.bump,
+        has_one = market @ MarketsError::InvalidMarketState,
+        has_one = lp_mint @ MarketsError::InvalidMarketState,
+    )]
+    pub pool: Account<'info, Pool>,
+
+    /// YES outcome mint (pinned to the market's recorded yes_mint).
+    #[account(
+        mut,
+        address = market.yes_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// NO outcome mint (pinned to the market's recorded no_mint).
+    #[account(
+        mut,
+        address = market.no_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// LP mint (pinned to the pool's recorded lp_mint; pool PDA is its authority).
+    #[account(
+        mut,
+        address = pool.lp_mint @ MarketsError::InvalidMarketState,
+        seeds = [LP_MINT_SEED, market.key().as_ref()],
+        bump,
+        mint::token_program = lp_token_program,
+    )]
+    pub lp_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// Pool's YES reserve (ATA owned by the pool PDA).
+    #[account(
+        mut,
+        associated_token::mint = yes_mint,
+        associated_token::authority = pool,
+        associated_token::token_program = outcome_token_program,
+    )]
+    pub pool_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Pool's NO reserve (ATA owned by the pool PDA).
+    #[account(
+        mut,
+        associated_token::mint = no_mint,
+        associated_token::authority = pool,
+        associated_token::token_program = outcome_token_program,
+    )]
+    pub pool_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Provider's YES source account.
+    #[account(
+        mut,
+        token::mint = yes_mint,
+        token::authority = provider,
+        token::token_program = outcome_token_program,
+    )]
+    pub provider_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Provider's NO source account.
+    #[account(
+        mut,
+        token::mint = no_mint,
+        token::authority = provider,
+        token::token_program = outcome_token_program,
+    )]
+    pub provider_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Provider's LP destination account.
+    #[account(
+        mut,
+        token::mint = lp_mint,
+        token::authority = provider,
+        token::token_program = lp_token_program,
+    )]
+    pub provider_lp: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Token-2022 program (outcome mints).
+    #[account(address = TOKEN_2022_PROGRAM_ID @ MarketsError::InvalidMarketState)]
+    pub outcome_token_program: Program<'info, Token2022>,
+    /// Token-2022 program (LP mint).
+    #[account(address = TOKEN_2022_PROGRAM_ID @ MarketsError::InvalidMarketState)]
+    pub lp_token_program: Program<'info, Token2022>,
+}
+
+/// Accounts for `remove_liquidity` (Phase 2).
+///
+/// The provider burns LP from their own account (they sign the burn) and the
+/// pool PDA signs the YES + NO transfers-out. Remove is allowed post-resolution
+/// so LPs can always exit.
+#[derive(Accounts)]
+pub struct RemoveLiquidity<'info> {
+    #[account(mut)]
+    pub provider: Signer<'info>,
+
+    #[account(
+        seeds = [MARKET_SEED, &market.market_id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+
+    #[account(
+        mut,
+        seeds = [POOL_SEED, market.key().as_ref()],
+        bump = pool.bump,
+        has_one = market @ MarketsError::InvalidMarketState,
+        has_one = lp_mint @ MarketsError::InvalidMarketState,
+    )]
+    pub pool: Account<'info, Pool>,
+
+    /// YES outcome mint (pinned to the market's recorded yes_mint).
+    #[account(
+        mut,
+        address = market.yes_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// NO outcome mint (pinned to the market's recorded no_mint).
+    #[account(
+        mut,
+        address = market.no_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// LP mint (pinned to the pool's recorded lp_mint).
+    #[account(
+        mut,
+        address = pool.lp_mint @ MarketsError::InvalidMarketState,
+        seeds = [LP_MINT_SEED, market.key().as_ref()],
+        bump,
+        mint::token_program = lp_token_program,
+    )]
+    pub lp_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// Pool's YES reserve (ATA owned by the pool PDA; the pool signs transfer-out).
+    #[account(
+        mut,
+        associated_token::mint = yes_mint,
+        associated_token::authority = pool,
+        associated_token::token_program = outcome_token_program,
+    )]
+    pub pool_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Pool's NO reserve (ATA owned by the pool PDA; the pool signs transfer-out).
+    #[account(
+        mut,
+        associated_token::mint = no_mint,
+        associated_token::authority = pool,
+        associated_token::token_program = outcome_token_program,
+    )]
+    pub pool_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Provider's YES destination account.
+    #[account(
+        mut,
+        token::mint = yes_mint,
+        token::authority = provider,
+        token::token_program = outcome_token_program,
+    )]
+    pub provider_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Provider's NO destination account.
+    #[account(
+        mut,
+        token::mint = no_mint,
+        token::authority = provider,
+        token::token_program = outcome_token_program,
+    )]
+    pub provider_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Provider's LP source account (burned from; they sign the burn).
+    #[account(
+        mut,
+        token::mint = lp_mint,
+        token::authority = provider,
+        token::token_program = lp_token_program,
+    )]
+    pub provider_lp: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Token-2022 program (outcome mints).
+    #[account(address = TOKEN_2022_PROGRAM_ID @ MarketsError::InvalidMarketState)]
+    pub outcome_token_program: Program<'info, Token2022>,
+    /// Token-2022 program (LP mint).
+    #[account(address = TOKEN_2022_PROGRAM_ID @ MarketsError::InvalidMarketState)]
+    pub lp_token_program: Program<'info, Token2022>,
+}
+
+/// Accounts for `swap` (Phase 2).
+///
+/// The trader pulls the input outcome token in (they sign their source account)
+/// and the pool PDA signs the output transfer-out. Both pool reserve ATAs are
+/// `mut`; the swap updates the REAL reserves and the price moves. Trading halts
+/// post-resolution.
+#[derive(Accounts)]
+pub struct Swap<'info> {
+    #[account(mut)]
+    pub trader: Signer<'info>,
+
+    #[account(
+        seeds = [MARKET_SEED, &market.market_id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+
+    #[account(
+        mut,
+        seeds = [POOL_SEED, market.key().as_ref()],
+        bump = pool.bump,
+        has_one = market @ MarketsError::InvalidMarketState,
+    )]
+    pub pool: Account<'info, Pool>,
+
+    /// YES outcome mint (pinned to the market's recorded yes_mint).
+    #[account(
+        mut,
+        address = market.yes_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// NO outcome mint (pinned to the market's recorded no_mint).
+    #[account(
+        mut,
+        address = market.no_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = outcome_token_program,
+    )]
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// Pool's YES reserve (ATA owned by the pool PDA).
+    #[account(
+        mut,
+        associated_token::mint = yes_mint,
+        associated_token::authority = pool,
+        associated_token::token_program = outcome_token_program,
+    )]
+    pub pool_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Pool's NO reserve (ATA owned by the pool PDA).
+    #[account(
+        mut,
+        associated_token::mint = no_mint,
+        associated_token::authority = pool,
+        associated_token::token_program = outcome_token_program,
+    )]
+    pub pool_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Trader's YES account (source for YesToNo, destination for NoToYes).
+    #[account(
+        mut,
+        token::mint = yes_mint,
+        token::authority = trader,
+        token::token_program = outcome_token_program,
+    )]
+    pub trader_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Trader's NO account (destination for YesToNo, source for NoToYes).
+    #[account(
+        mut,
+        token::mint = no_mint,
+        token::authority = trader,
+        token::token_program = outcome_token_program,
+    )]
+    pub trader_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Token-2022 program (outcome mints).
+    #[account(address = TOKEN_2022_PROGRAM_ID @ MarketsError::InvalidMarketState)]
+    pub outcome_token_program: Program<'info, Token2022>,
 }
