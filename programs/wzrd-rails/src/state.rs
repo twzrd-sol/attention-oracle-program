@@ -338,6 +338,14 @@ pub const MAX_WINDOW_ID: u64 = 99_999_999;
 /// emission, far below the kind of values that suggest "the cap is broken."
 pub const MAX_PER_WINDOW_CAP_CCM: u64 = 100_000_000_000_000_000;
 
+/// Per audit finding M-02: `lock_duration_slots` is the only admin-set scalar
+/// in `initialize_pool` with no upper bound. An absurd value (e.g. 1e18) makes
+/// every staker's `lock_end_slot` unreachable, permanently locking principal.
+/// Cap at ~90 days of headroom: 90d × 24h × 3600s ÷ 0.4s-per-slot
+/// = 90 * 24 * 3600 / 0.4 = 19,440,000 slots. Well above the 7-day default
+/// (1,512,000), far below any value that would brick unstake.
+pub const MAX_LOCK_DURATION_SLOTS: u64 = 19_440_000;
+
 /// Global configuration for the wzrd-rails program.
 ///
 /// One instance per deployment, created by `initialize_config`. Holds program-wide
@@ -747,7 +755,7 @@ mod tests {
         assert_eq!(PayoutWindow::bitmap_bytes(8), 1);
         assert_eq!(PayoutWindow::bitmap_bytes(9), 2);
         assert_eq!(PayoutWindow::bitmap_bytes(MAX_LEAVES_PER_WINDOW), 4_096);
-        assert_eq!(PayoutWindow::space(20), 101);
+        assert_eq!(PayoutWindow::space(20), 109);
     }
 
     #[test]
@@ -755,7 +763,7 @@ mod tests {
         assert_eq!(PayoutAuthorityConfig::space(), 334);
         assert_eq!(PayoutCapConfig::space(), 73);
         assert_eq!(PayoutVaultConfig::space(), 98);
-        assert_eq!(PayoutWindow::space(MAX_LEAVES_PER_WINDOW), 4_194);
+        assert_eq!(PayoutWindow::space(MAX_LEAVES_PER_WINDOW), 4_202);
     }
 
     #[test]

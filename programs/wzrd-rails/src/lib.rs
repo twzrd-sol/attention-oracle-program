@@ -319,6 +319,11 @@ pub mod wzrd_rails {
         );
         let old_admin = ctx.accounts.authority_config.admin;
         ctx.accounts.authority_config.admin = args.new_admin;
+        // Per audit M-01: rotation now covers all three payout configs so the
+        // dual-admin gate on set_per_window_ccm_cap (and any future sibling
+        // checks) stays callable after a rotation.
+        ctx.accounts.cap_config.admin = args.new_admin;
+        ctx.accounts.vault_config.admin = args.new_admin;
 
         emit!(PayoutAdminRotated {
             old_admin,
@@ -414,6 +419,14 @@ pub mod wzrd_rails {
             RailsError::CompensationInvalidProof
         );
 
+        // Per audit L-01: one-time defense-in-depth assertion that the CCM mint
+        // carries no dangerous Token-2022 extensions (PermanentDelegate,
+        // TransferHook, DefaultAccountState). compensate_external_stakers is the
+        // single one-time admin chokepoint where the mint is bound as a real
+        // account and the protocol commits to honoring it, so the check runs
+        // here once rather than on every transfer.
+        assert_ccm_mint_extensions_safe(&ctx.accounts.ccm_mint.to_account_info())?;
+
         ctx.accounts.config.comp_merkle_root = merkle_root;
         emit!(CompensationRootSet {
             config: ctx.accounts.config.key(),
@@ -454,6 +467,15 @@ pub mod wzrd_rails {
 
         // Enforce sequential numbering. Admin must pass pool_id == total_pools.
         require_eq!(pool_id, config.total_pools, RailsError::InvalidPoolId);
+
+        // Per audit M-02: bound lock_duration_slots. An unbounded value (e.g.
+        // 1e18) makes every staker's lock_end_slot unreachable, permanently
+        // locking principal. This mirrors the existing bounds on reward_rate
+        // (MAX_REWARD_RATE_PER_SLOT) and per_window_cap (MAX_PER_WINDOW_CAP_CCM).
+        require!(
+            lock_duration_slots <= MAX_LOCK_DURATION_SLOTS,
+            RailsError::LockDurationTooLong
+        );
 
         let clock = Clock::get()?;
         let pool = &mut ctx.accounts.pool;
@@ -1064,6 +1086,53 @@ fn sorted_pair_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     keccak::hashv(&[first, second]).to_bytes()
 }
 
+/// Per audit L-01: defense-in-depth check that the CCM mint carries none of the
+/// Token-2022 extensions that could silently subvert this protocol's accounting
+/// or transfer behavior. The program already validates `TransferFeeConfig` via
+/// the standard `transfer_checked` path, but it does NOT reject the dangerous
+/// mint-level extensions below. The current mainnet CCM mint is clean (only
+/// `TransferFeeConfig`, mint/freeze authority revoked), so this is purely a
+/// guard against a future CCM mint migration to a hostile or misconfigured mint:
+///
+///   - `PermanentDelegate`: a third party could move staked/reward CCM out of
+///     the program's vaults at will.
+///   - `TransferHook`: an attacker-controlled hook program would run on every
+///     transfer the protocol performs, with arbitrary CPI side effects.
+///   - `DefaultAccountState` (Frozen): newly created vault/user ATAs could be
+///     born frozen, bricking deposits, claims, and compensation.
+///
+/// `mint_account` is the Token-2022 mint account (the `ccm_mint` already
+/// constrained to `config.ccm_mint` and the Token-2022 program by the calling
+/// context). A plain SPL/Token-2022 mint with no extensions passes trivially.
+#[inline(never)]
+fn assert_ccm_mint_extensions_safe(mint_account: &AccountInfo) -> Result<()> {
+    use anchor_spl::token_2022::spl_token_2022::extension::{
+        BaseStateWithExtensions, ExtensionType, StateWithExtensions,
+    };
+    use anchor_spl::token_2022::spl_token_2022::state::Mint as SplMint;
+
+    let data = mint_account.try_borrow_data()?;
+    // A bare mint (no TLV extension data) deserializes fine and reports an
+    // empty extension list, so this also covers legacy/plain mints.
+    let mint_state = StateWithExtensions::<SplMint>::unpack(&data)
+        .map_err(|_| error!(RailsError::InvalidMint))?;
+    let extensions = mint_state
+        .get_extension_types()
+        .map_err(|_| error!(RailsError::InvalidMint))?;
+
+    const DISALLOWED: [ExtensionType; 3] = [
+        ExtensionType::PermanentDelegate,
+        ExtensionType::TransferHook,
+        ExtensionType::DefaultAccountState,
+    ];
+    require!(
+        !extensions.iter().any(|ext| DISALLOWED.contains(ext)),
+        RailsError::InvalidMint
+    );
+
+    Ok(())
+}
+
 fn validate_payout_publishers(publishers: &[Pubkey]) -> Result<()> {
     require!(!publishers.is_empty(), ListenPayoutError::EmptyAllowlist);
     require!(
@@ -1315,6 +1384,22 @@ pub struct SetPayoutAdmin<'info> {
         constraint = authority_config.admin == admin.key() @ ListenPayoutError::NotAdmin,
     )]
     pub authority_config: Account<'info, PayoutAuthorityConfig>,
+    // Per audit M-01: rotation must cover cap_config.admin and
+    // vault_config.admin too. No admin constraint here — the authority is
+    // already proven on authority_config above; this IX intentionally lets the
+    // authority_config admin re-sync the sibling configs.
+    #[account(
+        mut,
+        seeds = [LISTEN_PAYOUT_CAP_CONFIG_SEED],
+        bump = cap_config.bump,
+    )]
+    pub cap_config: Account<'info, PayoutCapConfig>,
+    #[account(
+        mut,
+        seeds = [LISTEN_PAYOUT_VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+    )]
+    pub vault_config: Account<'info, PayoutVaultConfig>,
 }
 
 #[derive(Accounts)]
