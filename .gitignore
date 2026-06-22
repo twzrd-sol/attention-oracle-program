@@ -5,3 +5,8 @@ dump.so
 *.so
 .env
 test-ledger/
+
+# Audit artifacts — never commit to public repo
+.plamen*/
+AUDIT_REPORT.md
+AUDIT_REPORT_*.md
