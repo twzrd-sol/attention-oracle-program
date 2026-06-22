@@ -466,6 +466,8 @@ impl TestEnv {
         let ix = build_set_payout_admin_ix(
             self.admin_pubkey(),
             self.payout_authority_config,
+            self.payout_cap_config,
+            self.payout_vault_config,
             SetPayoutAdminArgs {
                 new_admin: Pubkey::new_from_array(new_admin.to_bytes()),
             },
@@ -481,6 +483,8 @@ impl TestEnv {
         let ix = build_set_payout_admin_ix(
             legacy_from_signer(signer),
             self.payout_authority_config,
+            self.payout_cap_config,
+            self.payout_vault_config,
             SetPayoutAdminArgs {
                 new_admin: Pubkey::new_from_array(new_admin.to_bytes()),
             },
@@ -1316,6 +1320,8 @@ fn build_init_payout_vault_config_ix(
 fn build_set_payout_admin_ix(
     admin: LegacyPubkey,
     authority_config: LegacyPubkey,
+    cap_config: LegacyPubkey,
+    vault_config: LegacyPubkey,
     args: SetPayoutAdminArgs,
 ) -> LegacyInstruction {
     LegacyInstruction {
@@ -1323,6 +1329,8 @@ fn build_set_payout_admin_ix(
         accounts: rail_accounts::SetPayoutAdmin {
             admin,
             authority_config,
+            cap_config,
+            vault_config,
         }
         .to_account_metas(None),
         data: rail_ix::SetPayoutAdmin { args }.data(),
