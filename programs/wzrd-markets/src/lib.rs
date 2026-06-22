@@ -25,10 +25,12 @@ use anchor_spl::token_interface::{
 pub mod curve;
 pub mod error;
 pub mod events;
+pub mod resolution;
 pub mod state;
 
 pub use error::*;
 pub use events::*;
+pub use resolution::*;
 pub use state::*;
 
 use curve::{ConstantProductCurve, RoundDirection};
@@ -78,6 +80,24 @@ macro_rules! pool_signer_seeds {
 // before any audit or mainnet deploy.
 declare_id!("DKMJTZgk6obi2BfTyxSuB4P2S4mLW2HGwC7SpTtrCkfG");
 
+// ─── Phase 3 resolution constants ─────────────────────────────────────────────
+
+/// The bounded re-dispute window (in slots) that `resolve_override` restarts after
+/// correcting a contested outcome. The actual restart is
+/// `min(market.dispute_window_slots, OVERRIDE_REDISPUTE_SLOTS)` so an override can
+/// only ever SHORTEN (never extend beyond) the market's own dispute window — a
+/// market with a tiny dispute window keeps that tiny window after an override.
+/// ~150 slots ≈ 1 minute at 400ms/slot: enough for an honest settler to observe
+/// the correction, not so long it strands funds.
+pub const OVERRIDE_REDISPUTE_SLOTS: u64 = 150;
+
+/// Maximum residual USDC (in base units) the vault may hold and still be closable
+/// via `close_market`. Settle/redeem are 1:1 with no rounding, so in the happy
+/// path the vault drains to exactly 0; this threshold only tolerates dust a
+/// future fee path might leave. Tight (1000 base units = 0.001 USDC) so a market
+/// with real unclaimed collateral can never be closed out from under claimants.
+pub const MARKET_CLOSE_DUST_THRESHOLD: u64 = 1_000;
+
 #[cfg(not(feature = "no-entrypoint"))]
 use solana_security_txt::security_txt;
 
@@ -118,14 +138,50 @@ pub mod wzrd_markets {
     /// that `usdc_mint` is a real mint or that `resolver_multisig` is a valid
     /// multisig — those are trust-the-admin parameters re-checked at the point
     /// of use in later phases.
+    ///
+    /// Phase 3 additions:
+    ///   - `default_dispute_window_slots`: the SDK/publisher default the
+    ///     create_market caller is expected to pass; markets snapshot their own
+    ///     window at create-time (H-01), so this is a reference/default, not the
+    ///     binding value. Must be non-zero.
+    ///   - `resolver_threshold`: the m-of-n threshold for `resolve_override`.
+    ///     Validated `1..=MAX_PUBLISHERS` (the override member set is checked
+    ///     against this at override time).
+    ///   - Resolve/override separation: the `resolver_multisig` MUST be disjoint
+    ///     from `admin`. The admin owns `resolve_market` + `extend_dispute_window`
+    ///     + sweep/close; the multisig owns `resolve_override`. Letting the admin
+    ///     also sit on the override path would collapse the two-key remedy into
+    ///     one, so we reject `resolver_multisig == admin` at init.
     pub fn initialize_markets_config(
         ctx: Context<InitializeMarketsConfig>,
         usdc_mint: Pubkey,
         resolver_multisig: Pubkey,
+        default_dispute_window_slots: u64,
+        resolver_threshold: u8,
     ) -> Result<()> {
         let slot = Clock::get()?.slot;
         let config_key = ctx.accounts.config.key();
         let admin = ctx.accounts.admin.key();
+
+        // Resolve/override separation: the override multisig must not be the
+        // admin (otherwise the admin controls both resolution paths).
+        require_keys_neq!(
+            resolver_multisig,
+            admin,
+            MarketsError::MultisigMemberIsAdmin
+        );
+        // A market with a zero-length dispute window would be instantly final;
+        // settle's window check (slot >= settle_unlock_slot) needs a real gap.
+        require!(
+            default_dispute_window_slots > 0,
+            MarketsError::ZeroDisputeWindow
+        );
+        // Threshold must be a real m-of-n (1..=N). The member set supplied to
+        // resolve_override is re-checked against this at override time.
+        require!(
+            resolver_threshold >= 1 && (resolver_threshold as usize) <= MAX_PUBLISHERS,
+            MarketsError::InvalidThreshold
+        );
 
         let config = &mut ctx.accounts.config;
         config.bump = ctx.bumps.config;
@@ -134,7 +190,9 @@ pub mod wzrd_markets {
         config.resolver_multisig = resolver_multisig;
         config.publisher_allowlist = Vec::new();
         config.next_market_id = 0;
-        config._reserved = [0u8; 56];
+        config.default_dispute_window_slots = default_dispute_window_slots;
+        config.resolver_threshold = resolver_threshold;
+        config._reserved = [0u8; 47];
 
         emit!(MarketsConfigInitialized {
             config: config_key,
@@ -218,14 +276,25 @@ pub mod wzrd_markets {
         market.created_slot = clock_slot;
         market.resolve_deadline_slot = resolve_deadline_slot;
         market.resolved = false;
-        market.outcome = false;
+        // Phase 3: the resolution outcome is now a `u8` (per `resolution::outcome`)
+        // so a market can be resolved INVALID. A fresh market carries the
+        // UNRESOLVED sentinel (255), distinct from a resolved NO (0).
+        market.outcome = resolution::outcome::UNRESOLVED;
         market.settled_supply = 0;
+        // H-01 finality: the dispute window is SNAPSHOTTED here at create-time and
+        // never re-read from config afterwards, so a later config change cannot
+        // shorten an open market's window. The admin may still extend THIS
+        // market's window once, post-resolution, via `extend_dispute_window`.
         market.dispute_window_slots = dispute_window_slots;
+        // Phase 3 resolution-state fields — zero until `resolve_market` fires.
+        market.resolved_at_slot = 0;
+        market.settle_unlock_slot = 0;
+        market.dispute_extended = false;
         market.yes_mint = Pubkey::default();
         market.no_mint = Pubkey::default();
         market.vault = Pubkey::default();
         market.tokens_initialized = false;
-        market._reserved = [0u8; 64];
+        market._reserved = [0u8; 47];
 
         // Advance the monotonic counter for the next market.
         let config = &mut ctx.accounts.config;
@@ -956,12 +1025,609 @@ pub mod wzrd_markets {
         Ok(())
     }
 
-    // Phase 3 — resolution + settlement (in-house publisher, audit H-01/H-02/M-04/M-05):
-    //   - publish_attention_root(ctx, args)    // in-house allow-listed publisher (advances AttentionRootConfig.last_published_seq); reuse rails listen-payout pattern
-    //   - resolve_market(ctx, proof)           // verify proof vs the CREATE-TIME-snapshotted root; + dispute window before final
-    //   - settle(ctx)                          // burn winning outcome token 1:1 for USDC; preserve solvency invariant
-    //   - resolve_override(ctx, outcome)       // multisig-gated fallback for disputed/missing data
-    //   - sweep_residual(ctx) / close_market(ctx)  // admin-gated, supply==0 guards
+    // ─── Phase 3 — resolution + settlement ────────────────────────────────────
+    // In-house publisher (audit H-02 option (b)), create-time finality snapshot
+    // (H-01), ONE keccak convention (M-04/CH-3), MR-1 solvency through settle.
+
+    /// Phase 3 — initialize the attention-root publish counter (one-time).
+    ///
+    /// Creates the singleton `AttentionRootConfig` PDA `[ATTENTION_ROOT_SEED]`
+    /// that carries the monotonic `last_published_seq`. Admin-gated. Separate from
+    /// `initialize_markets_config` so the publish subsystem can be stood up
+    /// independently (and so Phase 0/1/2 configs predating Phase 3 still init).
+    pub fn initialize_attention_root_config(
+        ctx: Context<InitializeAttentionRootConfig>,
+    ) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.config.admin,
+            MarketsError::Unauthorized
+        );
+        let root_config = &mut ctx.accounts.root_config;
+        root_config.bump = ctx.bumps.root_config;
+        root_config.last_published_seq = 0;
+        root_config._reserved = [0u8; 32];
+        Ok(())
+    }
+
+    /// Phase 3 — add a publisher to the allow-list (admin).
+    ///
+    /// Mirrors rails `validate_payout_publishers` discipline: reject
+    /// `Pubkey::default()`, reject duplicates, cap at `MAX_PUBLISHERS`. The
+    /// allow-list lives on `MarketsConfig` and was sized into `LEN` at Phase 0, so
+    /// no realloc is needed.
+    pub fn add_publisher(ctx: Context<AdminConfig>, publisher: Pubkey) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.config.admin,
+            MarketsError::Unauthorized
+        );
+        require_keys_neq!(publisher, Pubkey::default(), MarketsError::InvalidPubkey);
+
+        let config = &mut ctx.accounts.config;
+        require!(
+            !config.publisher_allowlist.iter().any(|p| *p == publisher),
+            MarketsError::PublisherAlreadyPresent
+        );
+        require!(
+            config.publisher_allowlist.len() < MAX_PUBLISHERS,
+            MarketsError::PublisherAllowlistFull
+        );
+        config.publisher_allowlist.push(publisher);
+
+        emit!(PublisherAllowlistChanged {
+            config: config.key(),
+            publisher,
+            added: true,
+            count: config.publisher_allowlist.len() as u8,
+            slot: Clock::get()?.slot,
+        });
+        Ok(())
+    }
+
+    /// Phase 3 — remove a publisher from the allow-list (admin).
+    pub fn remove_publisher(ctx: Context<AdminConfig>, publisher: Pubkey) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.config.admin,
+            MarketsError::Unauthorized
+        );
+
+        let config = &mut ctx.accounts.config;
+        let pos = config
+            .publisher_allowlist
+            .iter()
+            .position(|p| *p == publisher)
+            .ok_or(MarketsError::PublisherNotFound)?;
+        config.publisher_allowlist.remove(pos);
+
+        emit!(PublisherAllowlistChanged {
+            config: config.key(),
+            publisher,
+            added: false,
+            count: config.publisher_allowlist.len() as u8,
+            slot: Clock::get()?.slot,
+        });
+        Ok(())
+    }
+
+    /// Phase 3 — publish an attention merkle root for one resolution window.
+    ///
+    /// Mirrors rails `publish_listen_payout_root` (H-01-hardened). The allow-listed
+    /// publisher commits `merkle_root` + `leaf_count` + `schema_version` for
+    /// `window_id`. One root per window: the per-window `AttentionRoot` PDA is
+    /// `init`-ed, so re-publishing the same `window_id` fails on the account-already-
+    /// exists constraint (`WindowAlreadyPublished` surfaced via the typed pre-check
+    /// is not needed — Anchor's `init` is the gate; we keep the error variant for
+    /// the SDK's benefit).
+    ///
+    /// FINALITY (H-01): this account is for discoverability + the `leaf_count`
+    /// commitment. A market resolves against its create-time `resolution_root`
+    /// snapshot, NOT this account, so publishing a (newer) root cannot retroactively
+    /// move an open market's outcome.
+    ///
+    /// Preconditions:
+    ///   - signer is in `config.publisher_allowlist` (UnauthorizedPublisher).
+    ///   - `merkle_root != [0;32]` (ZeroResolutionRoot).
+    ///   - `schema_version == MARKETS_RESOLUTION_LEAF_SCHEMA_V1` (InvalidLeafSchemaVersion).
+    pub fn publish_attention_root(
+        ctx: Context<PublishAttentionRoot>,
+        window_id: u64,
+        merkle_root: [u8; 32],
+        leaf_count: u32,
+        schema_version: u8,
+    ) -> Result<()> {
+        let publisher = ctx.accounts.publisher.key();
+        require!(
+            ctx.accounts.config.publisher_allowed(&publisher),
+            MarketsError::UnauthorizedPublisher
+        );
+        require!(merkle_root != [0u8; 32], MarketsError::ZeroResolutionRoot);
+        require!(
+            schema_version == resolution::MARKETS_RESOLUTION_LEAF_SCHEMA_V1,
+            MarketsError::InvalidLeafSchemaVersion
+        );
+
+        let slot = Clock::get()?.slot;
+
+        // Monotonic publish sequence (transparency / indexer cursor). The seq is
+        // NOT the finality anchor (that's the per-market snapshot); it's a global
+        // publish counter, like rails' last_published_seq.
+        let root_config = &mut ctx.accounts.root_config;
+        let seq = root_config
+            .last_published_seq
+            .checked_add(1)
+            .ok_or(MarketsError::MathOverflow)?;
+        root_config.last_published_seq = seq;
+
+        let root = &mut ctx.accounts.attention_root;
+        root.bump = ctx.bumps.attention_root;
+        root.window_id = window_id;
+        root.merkle_root = merkle_root;
+        root.leaf_count = leaf_count;
+        root.schema_version = schema_version;
+        root.published_at_slot = slot;
+        root.publisher = publisher;
+        root._reserved = [0u8; 32];
+
+        emit!(AttentionRootPublished {
+            window_id,
+            merkle_root,
+            leaf_count,
+            schema_version,
+            seq,
+            publisher,
+            published_at_slot: slot,
+        });
+        Ok(())
+    }
+
+    /// Phase 3 — resolve a market against its create-time-snapshotted root.
+    ///
+    /// THE MERKLE GATE. Verifies a resolution-leaf merkle proof using the LOCKED v1
+    /// convention (`docs/cpmm-merkle-conventions-v1.md` §3) verbatim, against
+    /// `market.resolution_root` (the H-01 snapshot, never a live account). A
+    /// wrong-domain or tampered proof folds to a root that does not equal the
+    /// snapshot → `InvalidMerkleProof` — the M-04/CH-3 silent-failure kill switch.
+    ///
+    /// Auth: allow-listed publisher (Phase-3 trust choice §1; permissionless
+    /// resolution is a later decision — the dispute window + multisig override are
+    /// the checks on publisher error).
+    ///
+    /// Preconditions (in order):
+    ///   1. `!market.resolved` (MarketAlreadyResolved).
+    ///   2. `clock.slot <= market.resolve_deadline_slot` (ResolutionDeadlinePassed).
+    ///   3. `proof.len() <= MARKETS_MAX_PROOF_LEN` (ProofTooLong) — checked BEFORE the fold.
+    ///   4. leaf schema == V1 (InvalidLeafSchemaVersion).
+    ///   5. fold(leaf.hash(), proof) == market.resolution_root (InvalidMerkleProof).
+    ///   6. leaf binds the market: market_id / streamer_ref / metric (Leaf*Mismatch).
+    ///   7. resolved outcome must be a real resolution value (NO/YES/INVALID).
+    ///
+    /// Postconditions: outcome set, resolved=true, resolved_at_slot=now,
+    /// settle_unlock_slot = now + dispute_window_slots.
+    pub fn resolve_market(
+        ctx: Context<ResolveMarket>,
+        window_id: u64,
+        observed_value: u64,
+        outcome: u8,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        let publisher = ctx.accounts.publisher.key();
+        require!(
+            ctx.accounts.config.publisher_allowed(&publisher),
+            MarketsError::UnauthorizedPublisher
+        );
+
+        let clock_slot = Clock::get()?.slot;
+        let market = &mut ctx.accounts.market;
+
+        // (1) one resolution only.
+        require!(!market.resolved, MarketsError::MarketAlreadyResolved);
+        // (2) cannot resolve after the never-resolved fallback has taken over.
+        require!(
+            clock_slot <= market.resolve_deadline_slot,
+            MarketsError::ResolutionDeadlinePassed
+        );
+        // (3) cap the proof BEFORE folding (conventions §3: cap FIRST).
+        require!(
+            proof.len() <= resolution::MARKETS_MAX_PROOF_LEN,
+            MarketsError::ProofTooLong
+        );
+        // (7-pre) the committed outcome must be a real resolution value; a leaf
+        // carrying UNRESOLVED (or any out-of-range value) is rejected.
+        require!(
+            resolution::outcome::is_resolved_value(outcome),
+            MarketsError::InvalidMarketState
+        );
+
+        // (4) reconstruct the leaf with the V1 schema and bind it to the market's
+        // streamer_ref + metric. The leaf is built from the market's OWN
+        // streamer_ref/metric (so a leaf that does not hash to the snapshot root
+        // under those values fails at (5)); window_id/observed_value/outcome come
+        // from the caller and are the values the publisher attests.
+        let leaf = resolution::MarketsResolutionLeafV1::new(
+            market.market_id,
+            market.streamer_ref,
+            window_id,
+            market.metric,
+            observed_value,
+            outcome,
+        );
+
+        // (5) fold and compare to the create-time snapshot. THE GATE.
+        let computed = resolution::compute_root_from_proof(leaf.hash(), &proof);
+        require!(
+            computed == market.resolution_root,
+            MarketsError::InvalidMerkleProof
+        );
+
+        // (6) leaf-to-market binding. market_id/streamer_ref/metric were baked
+        // into `leaf` above, so a successful fold already proves they match the
+        // committed leaf; we assert them explicitly too (conventions §3 step 5,
+        // defense-in-depth + a typed error rather than an opaque proof failure if
+        // a future refactor stops baking them in).
+        require!(
+            leaf.market_id == market.market_id,
+            MarketsError::LeafMarketMismatch
+        );
+        require!(
+            leaf.streamer_ref == market.streamer_ref,
+            MarketsError::LeafStreamerMismatch
+        );
+        require!(
+            leaf.metric == market.metric,
+            MarketsError::LeafMetricMismatch
+        );
+
+        // Postconditions: fix the outcome and start the dispute window.
+        market.outcome = outcome;
+        market.resolved = true;
+        market.resolved_at_slot = clock_slot;
+        market.settle_unlock_slot = clock_slot
+            .checked_add(market.dispute_window_slots)
+            .ok_or(MarketsError::MathOverflow)?;
+
+        emit!(MarketResolved {
+            market: market.key(),
+            market_id: market.market_id,
+            outcome,
+            observed_value,
+            resolved_at_slot: market.resolved_at_slot,
+            settle_unlock_slot: market.settle_unlock_slot,
+        });
+        Ok(())
+    }
+
+    /// Phase 3 — extend a market's dispute window ONCE (admin).
+    ///
+    /// Defense for a contested resolution: the admin can push `settle_unlock_slot`
+    /// out by one additional `dispute_window_slots`, giving the multisig more time
+    /// to override. The `dispute_extended` flag makes this strictly one-shot, so
+    /// the admin cannot indefinitely postpone settlement.
+    ///
+    /// Preconditions:
+    ///   - signer == admin.
+    ///   - market.resolved (MarketNotResolved) and outcome is settleable / not yet
+    ///     past — extension only matters while the window is open, but we allow it
+    ///     any time post-resolution and pre-settle-unlock to keep the rule simple.
+    ///   - !market.dispute_extended (DisputeAlreadyExtended).
+    pub fn extend_dispute_window(ctx: Context<ExtendDisputeWindow>) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.config.admin,
+            MarketsError::Unauthorized
+        );
+        let market = &mut ctx.accounts.market;
+        require!(market.resolved, MarketsError::MarketNotResolved);
+        require!(
+            !market.dispute_extended,
+            MarketsError::DisputeAlreadyExtended
+        );
+
+        let old_unlock = market.settle_unlock_slot;
+        market.settle_unlock_slot = old_unlock
+            .checked_add(market.dispute_window_slots)
+            .ok_or(MarketsError::MathOverflow)?;
+        market.dispute_extended = true;
+
+        emit!(DisputeWindowExtended {
+            market: market.key(),
+            market_id: market.market_id,
+            old_settle_unlock_slot: old_unlock,
+            new_settle_unlock_slot: market.settle_unlock_slot,
+            slot: Clock::get()?.slot,
+        });
+        Ok(())
+    }
+
+    /// Phase 3 — settle the caller's winning-outcome tokens 1:1 for USDC.
+    ///
+    /// After the dispute window closes, burn `amount` of the caller's winning side
+    /// and pay `amount` USDC from the vault. The Market PDA signs the transfer-out
+    /// with the BYTE-IDENTICAL `[MARKET_SEED, market_id]` seeds the vault was
+    /// init-ed with (same pattern as `redeem_complete_set`).
+    ///
+    /// MR-1 SOLVENCY: pre-resolution `vault == yes_supply == no_supply`. Settle
+    /// burns 1 winning token and removes 1 USDC in lockstep, so
+    /// `vault.amount >= winning_supply` holds across every partial settle and the
+    /// vault drains to exactly 0 when the last winning token is burned. (Gate B.)
+    ///
+    /// INVALID markets refuse here (`MarketInvalidUseRedeem`) — both sides recover
+    /// via `redeem_complete_set`.
+    ///
+    /// Preconditions:
+    ///   - market.resolved (MarketNotResolved).
+    ///   - clock.slot >= settle_unlock_slot (DisputeWindowOpen).
+    ///   - outcome != INVALID (MarketInvalidUseRedeem).
+    ///   - amount > 0 (ZeroAmount); caller holds >= amount winning tokens.
+    pub fn settle(ctx: Context<Settle>, amount: u64) -> Result<()> {
+        require!(amount > 0, MarketsError::ZeroAmount);
+
+        let clock_slot = Clock::get()?.slot;
+        // Snapshot the scalar market fields we need BEFORE taking the &mut for the
+        // settled_supply update (avoids holding a borrow across the CPIs).
+        let outcome = ctx.accounts.market.outcome;
+        let resolved = ctx.accounts.market.resolved;
+        let settle_unlock_slot = ctx.accounts.market.settle_unlock_slot;
+        let market_id = ctx.accounts.market.market_id;
+        let market_bump = ctx.accounts.market.bump;
+        let usdc_decimals = ctx.accounts.usdc_mint.decimals;
+
+        require!(resolved, MarketsError::MarketNotResolved);
+        require!(
+            clock_slot >= settle_unlock_slot,
+            MarketsError::DisputeWindowOpen
+        );
+        require!(
+            outcome != resolution::outcome::INVALID,
+            MarketsError::MarketInvalidUseRedeem
+        );
+
+        // Which side won. (Outcome is guaranteed NO or YES here: resolve_market
+        // only writes NO/YES/INVALID, and INVALID was just rejected.)
+        let winner_is_yes = outcome == resolution::outcome::YES;
+
+        // The winning mint + the caller's winning token account were pinned by the
+        // Accounts struct to the market's recorded yes_mint/no_mint. Select the
+        // matching pair here.
+        let (winning_mint, settler_winning) = if winner_is_yes {
+            (
+                ctx.accounts.yes_mint.to_account_info(),
+                ctx.accounts.settler_yes.to_account_info(),
+            )
+        } else {
+            (
+                ctx.accounts.no_mint.to_account_info(),
+                ctx.accounts.settler_no.to_account_info(),
+            )
+        };
+
+        // Clean pre-check for a typed error (the burn would also fail).
+        let settler_winning_balance = if winner_is_yes {
+            ctx.accounts.settler_yes.amount
+        } else {
+            ctx.accounts.settler_no.amount
+        };
+        require!(
+            settler_winning_balance >= amount,
+            MarketsError::InsufficientOutcomeBalance
+        );
+
+        // Burn `amount` winning-outcome tokens from the caller (they sign).
+        token_interface::burn(
+            CpiContext::new(
+                ctx.accounts.outcome_token_program.to_account_info(),
+                Burn {
+                    mint: winning_mint,
+                    from: settler_winning,
+                    authority: ctx.accounts.settler.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        // Transfer `amount` USDC vault → settler; the Market PDA signs.
+        let market_id_bytes = market_id.to_le_bytes();
+        let market_seeds: &[&[u8]] = &[MARKET_SEED, market_id_bytes.as_ref(), &[market_bump]];
+        let signer_seeds: &[&[&[u8]]] = &[market_seeds];
+
+        token_interface::transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.usdc_token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.vault.to_account_info(),
+                    mint: ctx.accounts.usdc_mint.to_account_info(),
+                    to: ctx.accounts.settler_usdc.to_account_info(),
+                    authority: ctx.accounts.market.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            amount,
+            usdc_decimals,
+        )?;
+
+        // Accounting: track cumulative settled winning supply (for sweep/close and
+        // off-chain reconciliation).
+        let market = &mut ctx.accounts.market;
+        market.settled_supply = market
+            .settled_supply
+            .checked_add(amount)
+            .ok_or(MarketsError::MathOverflow)?;
+
+        emit!(Settled {
+            market: market.key(),
+            market_id,
+            winner: outcome,
+            amount,
+            settler: ctx.accounts.settler.key(),
+        });
+        Ok(())
+    }
+
+    /// Phase 3 — multisig override of a contested resolution (pre-settle only).
+    ///
+    /// Emergency remedy for a wrong/contested resolution. Auth is the
+    /// `config.resolver_multisig` signer (a Squads V4 vault PDA that externally
+    /// enforces its own M-of-N member set + `resolver_threshold`), re-asserted to
+    /// be DISJOINT from the admin (no single key both resolves and overrides).
+    ///
+    /// Window: callable only while `clock.slot <= market.settle_unlock_slot` (the
+    /// dispute window — possibly extended — is still open). Override after settle
+    /// has begun moving funds is out of scope (a clawback problem); we gate it as a
+    /// pre-settle remedy only (OverrideWindowClosed).
+    ///
+    /// Sets the corrected outcome (which may be INVALID — the escape hatch for a
+    /// market that cannot be honestly resolved) and RESTARTS a short re-dispute
+    /// window: `settle_unlock_slot = now + min(dispute_window_slots, OVERRIDE_REDISPUTE_SLOTS)`.
+    pub fn resolve_override(ctx: Context<ResolveOverride>, new_outcome: u8) -> Result<()> {
+        // Auth: the configured resolver multisig signer, disjoint from admin.
+        require_keys_eq!(
+            ctx.accounts.resolver_multisig.key(),
+            ctx.accounts.config.resolver_multisig,
+            MarketsError::MultisigThresholdNotMet
+        );
+        require_keys_neq!(
+            ctx.accounts.resolver_multisig.key(),
+            ctx.accounts.config.admin,
+            MarketsError::MultisigMemberIsAdmin
+        );
+
+        let clock_slot = Clock::get()?.slot;
+        let market = &mut ctx.accounts.market;
+
+        // Must already be resolved (override CORRECTS a resolution) and still
+        // pre-settle (the window has not closed).
+        require!(market.resolved, MarketsError::MarketNotResolved);
+        require!(
+            clock_slot <= market.settle_unlock_slot,
+            MarketsError::OverrideWindowClosed
+        );
+        // The corrected value must be a real resolution value (NO/YES/INVALID).
+        require!(
+            resolution::outcome::is_resolved_value(new_outcome),
+            MarketsError::InvalidMarketState
+        );
+
+        let old_outcome = market.outcome;
+        market.outcome = new_outcome;
+        // Restart a bounded re-dispute window.
+        let redispute = market.dispute_window_slots.min(OVERRIDE_REDISPUTE_SLOTS);
+        market.settle_unlock_slot = clock_slot
+            .checked_add(redispute)
+            .ok_or(MarketsError::MathOverflow)?;
+
+        emit!(ResolutionOverridden {
+            market: market.key(),
+            market_id: market.market_id,
+            old_outcome,
+            new_outcome,
+            new_settle_unlock_slot: market.settle_unlock_slot,
+            slot: clock_slot,
+        });
+        Ok(())
+    }
+
+    /// Phase 3 — sweep residual vault dust to the treasury (admin).
+    ///
+    /// After everyone has settled (binary: the winning supply is 0) or redeemed
+    /// (INVALID: both supplies are 0), any rounding dust left in the vault is swept
+    /// to the admin-chosen recipient. Guard: the relevant supply MUST be 0, so a
+    /// market with live redemption obligations cannot be swept.
+    pub fn sweep_residual(ctx: Context<SweepResidual>) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.config.admin,
+            MarketsError::Unauthorized
+        );
+        let market = &ctx.accounts.market;
+        require!(market.resolved, MarketsError::MarketNotResolved);
+
+        // Supply guard: for a binary outcome only the winning side has a claim, so
+        // the winning supply must be 0. For INVALID both sides have claims, so both
+        // must be 0.
+        let yes_supply = ctx.accounts.yes_mint.supply;
+        let no_supply = ctx.accounts.no_mint.supply;
+        if market.outcome == resolution::outcome::INVALID {
+            require!(
+                yes_supply == 0 && no_supply == 0,
+                MarketsError::SupplyNotZero
+            );
+        } else {
+            let winning_supply = if market.outcome == resolution::outcome::YES {
+                yes_supply
+            } else {
+                no_supply
+            };
+            require!(winning_supply == 0, MarketsError::SupplyNotZero);
+        }
+
+        let dust = ctx.accounts.vault.amount;
+        if dust > 0 {
+            let market_id_bytes = market.market_id.to_le_bytes();
+            let market_bump = market.bump;
+            let market_seeds: &[&[u8]] = &[MARKET_SEED, market_id_bytes.as_ref(), &[market_bump]];
+            let signer_seeds: &[&[&[u8]]] = &[market_seeds];
+
+            token_interface::transfer_checked(
+                CpiContext::new_with_signer(
+                    ctx.accounts.usdc_token_program.to_account_info(),
+                    TransferChecked {
+                        from: ctx.accounts.vault.to_account_info(),
+                        mint: ctx.accounts.usdc_mint.to_account_info(),
+                        to: ctx.accounts.recipient.to_account_info(),
+                        authority: ctx.accounts.market.to_account_info(),
+                    },
+                    signer_seeds,
+                ),
+                dust,
+                ctx.accounts.usdc_mint.decimals,
+            )?;
+        }
+
+        emit!(ResidualSwept {
+            market: ctx.accounts.market.key(),
+            market_id: ctx.accounts.market.market_id,
+            amount: dust,
+            recipient: ctx.accounts.recipient.key(),
+            slot: Clock::get()?.slot,
+        });
+        Ok(())
+    }
+
+    /// Phase 3 — close a fully-settled market and return its rent (admin).
+    ///
+    /// Housekeeping: once all outcome supply is 0 and the vault is drained to <=
+    /// the dust threshold, close the `Market` account (Anchor `close` returns rent
+    /// to `rent_recipient`). The Pool account, if any, is closed by a separate
+    /// Phase 2 path / future cleanup; here we only reclaim the Market.
+    pub fn close_market(ctx: Context<CloseMarket>) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.config.admin,
+            MarketsError::Unauthorized
+        );
+        let market = &ctx.accounts.market;
+        require!(market.resolved, MarketsError::MarketNotResolved);
+
+        // All obligations discharged: both outcome supplies are 0.
+        require!(
+            ctx.accounts.yes_mint.supply == 0 && ctx.accounts.no_mint.supply == 0,
+            MarketsError::SupplyNotZero
+        );
+        // Vault drained to dust (rounding residue only).
+        require!(
+            ctx.accounts.vault.amount <= MARKET_CLOSE_DUST_THRESHOLD,
+            MarketsError::VaultNotDrained
+        );
+
+        emit!(MarketClosed {
+            market: ctx.accounts.market.key(),
+            market_id: ctx.accounts.market.market_id,
+            rent_recipient: ctx.accounts.rent_recipient.key(),
+            slot: Clock::get()?.slot,
+        });
+        Ok(())
+    }
 }
 
 // ─── Phase 2 pure helpers ─────────────────────────────────────────────────────
@@ -1807,4 +2473,341 @@ pub struct Swap<'info> {
     /// Token-2022 program (outcome mints).
     #[account(address = TOKEN_2022_PROGRAM_ID @ MarketsError::InvalidMarketState)]
     pub outcome_token_program: Program<'info, Token2022>,
+}
+
+// ─── Phase 3 Accounts ─────────────────────────────────────────────────────────
+
+/// Accounts for `initialize_attention_root_config` (Phase 3).
+///
+/// One-time `init` of the singleton publish-counter PDA `[ATTENTION_ROOT_SEED]`,
+/// admin-gated against the existing config.
+#[derive(Accounts)]
+pub struct InitializeAttentionRootConfig<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + AttentionRootConfig::LEN,
+        seeds = [ATTENTION_ROOT_SEED],
+        bump,
+    )]
+    pub root_config: Account<'info, AttentionRootConfig>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// Accounts for `add_publisher` / `remove_publisher` and any admin-only mutation
+/// of `MarketsConfig` that needs nothing but the admin signature + the config.
+#[derive(Accounts)]
+pub struct AdminConfig<'info> {
+    pub admin: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+}
+
+/// Accounts for `publish_attention_root` (Phase 3).
+///
+/// The allow-listed publisher signs; the per-window `AttentionRoot` PDA is
+/// `init`-ed (so a duplicate `window_id` fails on the already-in-use constraint —
+/// one root per window), and the singleton `root_config` counter is bumped.
+#[derive(Accounts)]
+#[instruction(window_id: u64)]
+pub struct PublishAttentionRoot<'info> {
+    #[account(mut)]
+    pub publisher: Signer<'info>,
+
+    #[account(
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+
+    #[account(
+        mut,
+        seeds = [ATTENTION_ROOT_SEED],
+        bump = root_config.bump,
+    )]
+    pub root_config: Account<'info, AttentionRootConfig>,
+
+    #[account(
+        init,
+        payer = publisher,
+        space = 8 + AttentionRoot::LEN,
+        seeds = [ATTENTION_ROOT_SEED, &window_id.to_le_bytes()],
+        bump,
+    )]
+    pub attention_root: Account<'info, AttentionRoot>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// Accounts for `resolve_market` (Phase 3).
+///
+/// Verifies a resolution proof against `market.resolution_root` (the H-01
+/// create-time snapshot stored ON the Market — NOT a re-read AttentionRoot
+/// account). Auth is the allow-listed publisher. No token movement here:
+/// resolution only fixes the outcome + starts the dispute window.
+#[derive(Accounts)]
+pub struct ResolveMarket<'info> {
+    pub publisher: Signer<'info>,
+
+    #[account(
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+
+    #[account(
+        mut,
+        seeds = [MARKET_SEED, &market.market_id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+}
+
+/// Accounts for `extend_dispute_window` (Phase 3). Admin + the market.
+#[derive(Accounts)]
+pub struct ExtendDisputeWindow<'info> {
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+
+    #[account(
+        mut,
+        seeds = [MARKET_SEED, &market.market_id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+}
+
+/// Accounts for `settle` (Phase 3).
+///
+/// Burns the caller's winning-outcome tokens 1:1 for USDC from the vault (the
+/// Market PDA signs the transfer-out). Mirrors `RedeemCompleteSet`'s account set
+/// but pays only ONE side (the winner). Both outcome mints + both settler outcome
+/// accounts are present so the handler can select the winning pair at runtime
+/// without a second instruction variant.
+#[derive(Accounts)]
+pub struct Settle<'info> {
+    #[account(mut)]
+    pub settler: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [MARKET_SEED, &market.market_id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+
+    #[account(
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+
+    /// USDC collateral mint (pinned to the config mint).
+    #[account(
+        address = config.usdc_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = usdc_token_program,
+    )]
+    pub usdc_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// YES outcome mint (must match the market's recorded yes_mint).
+    #[account(
+        mut,
+        address = market.yes_mint @ MarketsError::AccountMismatch,
+        mint::token_program = outcome_token_program,
+    )]
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// NO outcome mint (must match the market's recorded no_mint).
+    #[account(
+        mut,
+        address = market.no_mint @ MarketsError::AccountMismatch,
+        mint::token_program = outcome_token_program,
+    )]
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// USDC vault (PDA-owned by the market; the market signs the transfer-out).
+    #[account(
+        mut,
+        address = market.vault @ MarketsError::AccountMismatch,
+        token::mint = usdc_mint,
+        token::authority = market,
+        token::token_program = usdc_token_program,
+    )]
+    pub vault: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Settler's USDC destination account.
+    #[account(
+        mut,
+        token::mint = usdc_mint,
+        token::authority = settler,
+        token::token_program = usdc_token_program,
+    )]
+    pub settler_usdc: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Settler's YES account (burned from iff YES won).
+    #[account(
+        mut,
+        token::mint = yes_mint,
+        token::authority = settler,
+        token::token_program = outcome_token_program,
+    )]
+    pub settler_yes: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Settler's NO account (burned from iff NO won).
+    #[account(
+        mut,
+        token::mint = no_mint,
+        token::authority = settler,
+        token::token_program = outcome_token_program,
+    )]
+    pub settler_no: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Token-2022 program (outcome mints).
+    #[account(address = TOKEN_2022_PROGRAM_ID @ MarketsError::InvalidMarketState)]
+    pub outcome_token_program: Program<'info, Token2022>,
+    /// Token program backing USDC.
+    pub usdc_token_program: Interface<'info, TokenInterface>,
+}
+
+/// Accounts for `resolve_override` (Phase 3).
+///
+/// The `resolver_multisig` signer (a Squads V4 vault PDA enforcing its own M-of-N
+/// externally) corrects a contested resolution. The handler re-asserts
+/// `signer == config.resolver_multisig` AND `signer != config.admin` so a single
+/// key can never both resolve and override.
+#[derive(Accounts)]
+pub struct ResolveOverride<'info> {
+    pub resolver_multisig: Signer<'info>,
+
+    #[account(
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+
+    #[account(
+        mut,
+        seeds = [MARKET_SEED, &market.market_id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+}
+
+/// Accounts for `sweep_residual` (Phase 3).
+///
+/// Admin sweeps vault dust to `recipient` after all winning (binary) or all
+/// (INVALID) outcome supply is 0. Both mints are present so the supply guard can
+/// read the relevant side(s); the Market PDA signs the transfer-out.
+#[derive(Accounts)]
+pub struct SweepResidual<'info> {
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+
+    #[account(
+        seeds = [MARKET_SEED, &market.market_id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+
+    /// USDC collateral mint (pinned to the config mint).
+    #[account(
+        address = config.usdc_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = usdc_token_program,
+    )]
+    pub usdc_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// YES outcome mint (read for the supply guard).
+    #[account(address = market.yes_mint @ MarketsError::AccountMismatch)]
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// NO outcome mint (read for the supply guard).
+    #[account(address = market.no_mint @ MarketsError::AccountMismatch)]
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// USDC vault (PDA-owned by the market; the market signs the sweep).
+    #[account(
+        mut,
+        address = market.vault @ MarketsError::AccountMismatch,
+        token::mint = usdc_mint,
+        token::authority = market,
+        token::token_program = usdc_token_program,
+    )]
+    pub vault: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Sweep destination (admin-chosen treasury account).
+    #[account(
+        mut,
+        token::mint = usdc_mint,
+        token::token_program = usdc_token_program,
+    )]
+    pub recipient: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// Token program backing USDC.
+    pub usdc_token_program: Interface<'info, TokenInterface>,
+}
+
+/// Accounts for `close_market` (Phase 3).
+///
+/// Admin closes a fully-settled, drained market and reclaims its rent to
+/// `rent_recipient`. The `close = rent_recipient` constraint is the rent-return;
+/// the handler's supply + dust guards run BEFORE the close takes effect.
+#[derive(Accounts)]
+pub struct CloseMarket<'info> {
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+
+    #[account(
+        mut,
+        close = rent_recipient,
+        seeds = [MARKET_SEED, &market.market_id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+
+    /// YES outcome mint (read for the supply guard).
+    #[account(address = market.yes_mint @ MarketsError::AccountMismatch)]
+    pub yes_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// NO outcome mint (read for the supply guard).
+    #[account(address = market.no_mint @ MarketsError::AccountMismatch)]
+    pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// USDC vault (read for the dust guard).
+    #[account(address = market.vault @ MarketsError::AccountMismatch)]
+    pub vault: Box<InterfaceAccount<'info, TokenAccountInterface>>,
+
+    /// CHECK: rent destination for the closed Market account. Admin-chosen; no
+    /// constraints needed beyond being writable (Anchor `close` credits it).
+    #[account(mut)]
+    pub rent_recipient: UncheckedAccount<'info>,
 }
