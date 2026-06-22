@@ -70,7 +70,7 @@ use wzrd_markets::{
         ATTENTION_ROOT_SEED, MARKETS_CONFIG_SEED, MARKET_SEED, MINT_AUTH_SEED, NO_MINT_SEED,
         VAULT_SEED, YES_MINT_SEED,
     },
-    MarketsError, ID as WZRD_MARKETS_PROGRAM_ID,
+    MarketsError, ID as WZRD_MARKETS_PROGRAM_ID, MAX_MARKET_DURATION_SLOTS,
 };
 
 const USDC_DECIMALS: u8 = 6;
@@ -1890,9 +1890,10 @@ fn func_c03_override_after_settle_forbidden() {
         )],
     );
 
-    // Warp to the settle window and settle a winning amount (settled_supply > 0).
+    // Warp strictly past settle_unlock_slot so settle can proceed (DC-3: settle
+    // requires clock > settle_unlock_slot; the exact boundary belongs to override).
     let market: Market = read_anchor_account(&f.svm, &f.market);
-    f.svm.warp_to_slot(market.settle_unlock_slot);
+    f.svm.warp_to_slot(market.settle_unlock_slot + 1);
     f.svm.expire_blockhash();
     send_tx(
         &mut f.svm,
@@ -1914,10 +1915,21 @@ fn func_c03_override_after_settle_forbidden() {
     let market: Market = read_anchor_account(&f.svm, &f.market);
     assert!(market.settled_supply > 0, "a settle occurred");
 
-    // Now an override (within the window, valid multisig) must be REFUSED because
-    // settlement has begun. Re-arm a window first via the same slot constraints:
-    // override requires clock <= settle_unlock_slot, which still holds right after
-    // settle in the same slot.
+    // Re-open the override window by extending the dispute window (still on first
+    // extension; now settle_unlock_slot > current slot so override is available again).
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.admin],
+        &[build_extend_dispute_window_ix(
+            legacy_from_signer(&f.admin),
+            f.config,
+            f.market,
+        )],
+    );
+
+    // Override must be REFUSED because settled_supply > 0 (C-03 guard), even though
+    // the override window is technically open again after the extension.
     let bad = try_send_tx(
         &mut f.svm,
         &[&f.resolver_multisig],
@@ -2378,5 +2390,286 @@ fn func_node_domain_locked() {
     assert_eq!(
         MARKETS_RESOLUTION_NODE_V1_DOMAIN,
         b"wzrd-markets:attention-resolution-node:v1"
+    );
+}
+
+// ─── Audit Phase 4 Low + DC-3 fixes ──────────────────────────────────────────
+
+/// L-01: create_market rejects a deadline > now + MAX_MARKET_DURATION_SLOTS.
+/// Uses market_id=1 (setup_funded consumed market_id=0, so config.next_market_id=1).
+#[test]
+fn func_l01_deadline_too_far_rejected() {
+    let (root, _proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
+    let (market1, _) = market_pda(1);
+
+    // u64::MAX is always beyond clock + MAX_MARKET_DURATION_SLOTS.
+    f.svm.expire_blockhash();
+    let bad = try_send_tx(
+        &mut f.svm,
+        &[&f.admin],
+        &[build_create_market_ix(
+            legacy_from_signer(&f.admin),
+            f.config,
+            market1,
+            1,
+            STREAMER_REF,
+            METRIC,
+            1_000,
+            [0xab; 32],
+            1,
+            u64::MAX,
+            MIN_DISPUTE_WINDOW,
+        )],
+    );
+    assert_markets_error(bad, MarketsError::DeadlineTooFar);
+
+    // A near-term deadline (1_000_000 << MAX_MARKET_DURATION_SLOTS) is accepted.
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.admin],
+        &[build_create_market_ix(
+            legacy_from_signer(&f.admin),
+            f.config,
+            market1,
+            1,
+            STREAMER_REF,
+            METRIC,
+            1_000,
+            [0xab; 32],
+            1,
+            future_deadline_slot(),
+            MIN_DISPUTE_WINDOW,
+        )],
+    );
+    let mkt1: Market = read_anchor_account(&f.svm, &market1);
+    assert_eq!(mkt1.resolve_deadline_slot, future_deadline_slot());
+}
+
+/// L-02: resolve_market on a market whose tokens have not been initialized is
+/// rejected with TokensNotInitialized (check fires before the merkle proof step).
+/// Uses a minimal fresh SVM: config + publisher allowlist + create_market only
+/// (no initialize_market_tokens, no USDC mint creation needed).
+#[test]
+fn func_l02_resolve_requires_tokens_initialized() {
+    let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
+    let mut svm2 = LiteSVM::new();
+    load_wzrd_markets_program(&mut svm2).expect("load wzrd-markets program");
+    load_token_2022_program(&mut svm2);
+    load_associated_token_program(&mut svm2);
+
+    let admin2 = Keypair::new();
+    let resolver2 = Keypair::new();
+    let publisher2 = Keypair::new();
+    for kp in [&admin2, &resolver2, &publisher2] {
+        svm2.airdrop(&kp.pubkey(), 100_000_000_000).unwrap();
+    }
+
+    let (config2, _) = markets_config_pda();
+    let (market2, _) = market_pda(0);
+    // InitializeMarketsConfig uses UncheckedAccount for usdc_mint and only checks
+    // Token-2022 extensions when data.len() > 82; a non-existent account (0 bytes)
+    // skips that check entirely. No mint creation needed for this test.
+    let fake_usdc = LegacyPubkey::new_unique();
+
+    send_tx(
+        &mut svm2,
+        &[&admin2],
+        &[build_initialize_markets_config_ix(
+            legacy_from_signer(&admin2),
+            config2,
+            fake_usdc,
+            legacy_from_signer(&resolver2),
+        )],
+    );
+    send_tx(
+        &mut svm2,
+        &[&admin2],
+        &[build_add_publisher_ix(
+            legacy_from_signer(&admin2),
+            config2,
+            legacy_from_signer(&publisher2),
+        )],
+    );
+    // Create market but skip initialize_market_tokens — tokens_initialized stays false.
+    send_tx(
+        &mut svm2,
+        &[&admin2],
+        &[build_create_market_ix(
+            legacy_from_signer(&admin2),
+            config2,
+            market2,
+            0,
+            STREAMER_REF,
+            METRIC,
+            OBSERVED_VALUE,
+            root,
+            1,
+            future_deadline_slot(),
+            MIN_DISPUTE_WINDOW,
+        )],
+    );
+    let mkt2: Market = read_anchor_account(&svm2, &market2);
+    assert!(!mkt2.tokens_initialized, "tokens not yet initialized");
+
+    // resolve_market fires the L-02 guard (tokens_initialized) before the merkle
+    // proof check, so even a valid proof returns TokensNotInitialized.
+    let bad = try_send_tx(
+        &mut svm2,
+        &[&publisher2],
+        &[build_resolve_market_ix(
+            legacy_from_signer(&publisher2),
+            config2,
+            market2,
+            WINDOW_ID,
+            OBSERVED_VALUE,
+            resolution::outcome::YES,
+            proof,
+        )],
+    );
+    assert_markets_error(bad, MarketsError::TokensNotInitialized);
+}
+
+/// DC-3: settle at exactly settle_unlock_slot is now rejected (must be strictly
+/// after). The boundary slot belongs to resolve_override.
+#[test]
+fn func_dc3_settle_boundary_slot_rejected() {
+    let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
+
+    send_tx(
+        &mut f.svm,
+        &[&f.publisher],
+        &[build_resolve_market_ix(
+            legacy_from_signer(&f.publisher),
+            f.config,
+            f.market,
+            WINDOW_ID,
+            OBSERVED_VALUE,
+            resolution::outcome::YES,
+            proof,
+        )],
+    );
+    let market: Market = read_anchor_account(&f.svm, &f.market);
+
+    // Warp to EXACTLY settle_unlock_slot — settle must be refused (boundary slot
+    // belongs to override, not settle).
+    f.svm.warp_to_slot(market.settle_unlock_slot);
+    f.svm.expire_blockhash();
+    let at_boundary = try_send_tx(
+        &mut f.svm,
+        &[&f.depositor],
+        &[build_settle_ix(
+            legacy_from_signer(&f.depositor),
+            f.market,
+            f.config,
+            f.usdc_mint,
+            f.yes_mint,
+            f.no_mint,
+            f.vault,
+            f.depositor_usdc,
+            f.depositor_yes,
+            f.depositor_no,
+            SET_AMOUNT,
+        )],
+    );
+    assert_markets_error(at_boundary, MarketsError::DisputeWindowOpen);
+
+    // One slot later settle succeeds.
+    f.svm.warp_to_slot(market.settle_unlock_slot + 1);
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.depositor],
+        &[build_settle_ix(
+            legacy_from_signer(&f.depositor),
+            f.market,
+            f.config,
+            f.usdc_mint,
+            f.yes_mint,
+            f.no_mint,
+            f.vault,
+            f.depositor_usdc,
+            f.depositor_yes,
+            f.depositor_no,
+            SET_AMOUNT,
+        )],
+    );
+}
+
+/// L-05: resolve_override resets dispute_extended so the new post-override
+/// window can be extended once. Before the fix, the flag was sticky and the
+/// single-extension allowance was consumed by any prior call to
+/// extend_dispute_window, leaving the post-override window permanently locked.
+#[test]
+fn func_l05_override_resets_dispute_extended() {
+    let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
+
+    // Resolve YES.
+    send_tx(
+        &mut f.svm,
+        &[&f.publisher],
+        &[build_resolve_market_ix(
+            legacy_from_signer(&f.publisher),
+            f.config,
+            f.market,
+            WINDOW_ID,
+            OBSERVED_VALUE,
+            resolution::outcome::YES,
+            proof,
+        )],
+    );
+
+    // Consume the extension allowance on the initial window.
+    send_tx(
+        &mut f.svm,
+        &[&f.admin],
+        &[build_extend_dispute_window_ix(
+            legacy_from_signer(&f.admin),
+            f.config,
+            f.market,
+        )],
+    );
+    let after_extend: Market = read_anchor_account(&f.svm, &f.market);
+    assert!(
+        after_extend.dispute_extended,
+        "flag set after first extension"
+    );
+
+    // Override (still within the window): dispute_extended MUST be cleared.
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.resolver_multisig],
+        &[build_resolve_override_ix(
+            legacy_from_signer(&f.resolver_multisig),
+            f.config,
+            f.market,
+            resolution::outcome::NO,
+        )],
+    );
+    let after_override: Market = read_anchor_account(&f.svm, &f.market);
+    assert!(
+        !after_override.dispute_extended,
+        "L-05: override must clear dispute_extended"
+    );
+
+    // The new post-override window can now be extended once.
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.admin],
+        &[build_extend_dispute_window_ix(
+            legacy_from_signer(&f.admin),
+            f.config,
+            f.market,
+        )],
+    );
+    let final_mkt: Market = read_anchor_account(&f.svm, &f.market);
+    assert!(
+        final_mkt.dispute_extended,
+        "post-override extension consumed the allowance"
     );
 }
