@@ -169,4 +169,11 @@ pub enum MarketsError {
 
     #[msg("Account does not match the one recorded on the market (mint/vault mismatch).")]
     AccountMismatch = 45,
+
+    // ─── Audit Phase 4 Critical fixes ──────────────────────────────────────────
+    #[msg("Override is forbidden once any settlement has occurred (C-03).")]
+    OverrideAfterSettle = 46,
+
+    #[msg("No admin rotation is pending (C-02 accept_admin).")]
+    NoPendingAdmin = 47,
 }

@@ -107,21 +107,29 @@ pub struct MarketsConfig {
     /// which externally enforces its own member set + threshold); this byte is
     /// transparency metadata, NOT the enforcement point. CARVED from `_reserved`.
     pub resolver_threshold: u8,
+    /// Audit C-02: pending admin for the 2-step `set_admin` / `accept_admin`
+    /// rotation. `Pubkey::default()` (all-zero) means no rotation is in flight.
+    /// `set_admin` (current admin) proposes a new admin here; `accept_admin`
+    /// (the proposed key, signing) promotes it to `admin` and clears this.
+    /// CARVED from `_reserved` (47 → 15) — LEN unchanged, no realloc.
+    pub pending_admin: Pubkey,
     /// Forward-compat reserve. Future config fields are carved from here.
     /// Phase 0 reserved 64 bytes; 8 carved for `next_market_id`, 8 for
-    /// `default_dispute_window_slots`, 1 for `resolver_threshold` → 47 remain.
-    pub _reserved: [u8; 47],
+    /// `default_dispute_window_slots`, 1 for `resolver_threshold`, 32 for
+    /// `pending_admin` → 15 remain.
+    pub _reserved: [u8; 15],
 }
 
 impl MarketsConfig {
     /// Account size including the 8-byte Anchor discriminator.
     /// 8 disc + 1 bump + 32 admin + 32 usdc_mint + 32 resolver_multisig
     ///   + (4 vec_len + 32*MAX_PUBLISHERS) publisher_allowlist + 8 next_market_id
-    ///   + 8 default_dispute_window_slots + 1 resolver_threshold + 47 reserved.
-    /// The Phase 3 fields (default_dispute_window_slots, resolver_threshold) are
-    /// carved from the Phase-0 reserve (64 → 47), so LEN is identical to Phase 0
-    /// — no realloc on the existing config account.
-    pub const LEN: usize = 8 + 1 + 32 + 32 + 32 + (4 + 32 * MAX_PUBLISHERS) + 8 + 8 + 1 + 47;
+    ///   + 8 default_dispute_window_slots + 1 resolver_threshold + 32 pending_admin
+    ///   + 15 reserved.
+    /// The Phase 3 fields + the C-02 `pending_admin` are all carved from the
+    /// Phase-0 reserve (64 → 15), so LEN is identical to Phase 0 — no realloc on
+    /// the existing config account.
+    pub const LEN: usize = 8 + 1 + 32 + 32 + 32 + (4 + 32 * MAX_PUBLISHERS) + 8 + 8 + 1 + 32 + 15;
 
     pub fn publisher_allowed(&self, publisher: &Pubkey) -> bool {
         self.publisher_allowlist.iter().any(|p| p == publisher)
@@ -386,10 +394,10 @@ mod tests {
 
     #[test]
     fn markets_config_len_matches_manual_calc() {
-        // 8 + 1 + 32 + 32 + 32 + (4 + 256) + 8 + 8 + 1 + 47 = 429
-        // The Phase-1 `next_market_id` (8) + Phase-3 `default_dispute_window_slots`
-        // (8) + `resolver_threshold` (1) = 17 bytes are carved from the Phase-0
-        // 64-byte reserve (now 47), so the total LEN is unchanged — no realloc on
+        // 8 + 1 + 32 + 32 + 32 + (4 + 256) + 8 + 8 + 1 + 32 + 15 = 429
+        // next_market_id (8) + default_dispute_window_slots (8) + resolver_threshold
+        // (1) + pending_admin (32, audit C-02) = 49 bytes carved from the Phase-0
+        // 64-byte reserve (now 15), so the total LEN is unchanged — no realloc on
         // the existing config account.
         assert_eq!(MarketsConfig::LEN, 429);
         assert_eq!(MAX_PUBLISHERS, 8);
