@@ -176,4 +176,17 @@ pub enum MarketsError {
 
     #[msg("No admin rotation is pending (C-02 accept_admin).")]
     NoPendingAdmin = 47,
+
+    // ─── Audit Phase 4 High/Medium fixes ──────────────────────────────────────
+    #[msg("Observed value does not derive the attested outcome for this market's metric (H-01).")]
+    ObservedValueOutcomeMismatch = 48,
+
+    #[msg("dispute_window_slots is outside the allowed [MIN, MAX] range (H-03).")]
+    InvalidDisputeWindow = 49,
+
+    #[msg("virtual_liquidity exceeds the protocol maximum (M-02).")]
+    VirtualLiquidityTooHigh = 50,
+
+    #[msg("Collateral mint carries a dangerous Token-2022 extension: PermanentDelegate, TransferHook, or frozen DefaultAccountState (M-01).")]
+    DangerousMintExtension = 51,
 }

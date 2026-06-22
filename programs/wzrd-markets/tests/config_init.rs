@@ -104,11 +104,11 @@ fn build_initialize_markets_config_ix(
         accounts: markets_accounts::InitializeMarketsConfig {
             config,
             admin,
+            usdc_mint,
             system_program: system_program::ID,
         }
         .to_account_metas(None),
         data: markets_ix::InitializeMarketsConfig {
-            usdc_mint: Pubkey::new_from_array(usdc_mint.to_bytes()),
             resolver_multisig: Pubkey::new_from_array(resolver_multisig.to_bytes()),
             // Carved into MarketsConfig in Phase 3 (see _reserved 56 -> 47). The
             // Phase-0 assertions below don't read these back, but the IX guards

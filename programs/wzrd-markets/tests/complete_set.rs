@@ -354,11 +354,11 @@ fn build_initialize_markets_config_ix(
         accounts: markets_accounts::InitializeMarketsConfig {
             config,
             admin,
+            usdc_mint,
             system_program: system_program::ID,
         }
         .to_account_metas(None),
         data: markets_ix::InitializeMarketsConfig {
-            usdc_mint: anchor_pubkey(usdc_mint),
             resolver_multisig: anchor_pubkey(resolver_multisig),
             // Carved into MarketsConfig in Phase 3 (resolver allow-list config).
             // Phase 1 complete-set tests don't exercise the dispute window; these
@@ -604,7 +604,7 @@ fn setup() -> Fixture {
         [9u8; 32], // non-zero resolution root
         42,
         deadline,
-        100,
+        150,
     );
     send_tx(&mut svm, &[&admin], &[ix]);
 

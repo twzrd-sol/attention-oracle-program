@@ -21,6 +21,12 @@ use anchor_spl::token_interface::{
     self, Burn, Mint as MintInterface, MintTo, TokenAccount as TokenAccountInterface,
     TokenInterface, TransferChecked,
 };
+// M-01: Token-2022 extension introspection — checked at initialize_markets_config time.
+use spl_token_2022::extension::{
+    default_account_state::DefaultAccountState as MintDefaultAccountState,
+    permanent_delegate::PermanentDelegate, transfer_hook::TransferHook, BaseStateWithExtensions,
+    StateWithExtensions,
+};
 
 pub mod curve;
 pub mod error;
@@ -98,6 +104,23 @@ pub const OVERRIDE_REDISPUTE_SLOTS: u64 = 150;
 /// with real unclaimed collateral can never be closed out from under claimants.
 pub const MARKET_CLOSE_DUST_THRESHOLD: u64 = 1_000;
 
+/// Minimum per-market dispute window (slots). ~1 minute at 400 ms/slot.
+/// A window below this is short enough to make honest dispute impossible (H-03).
+pub const MIN_DISPUTE_WINDOW_SLOTS: u64 = 150;
+/// Maximum per-market dispute window (slots). ~30 days at 400 ms/slot.
+/// Guards against admin accidentally locking funds indefinitely (H-03).
+pub const MAX_DISPUTE_WINDOW_SLOTS: u64 = 2_628_000;
+
+/// Maximum `virtual_liquidity` at pool init. ~1 million USDC with 6 decimals.
+/// An unbounded value lets the pool initializer permanently distort pricing (M-02).
+pub const MAX_VIRTUAL_LIQUIDITY: u64 = 1_000_000_000_000u64;
+
+/// Grace period (slots) after `settle_unlock_slot` during which an admin can
+/// force-close an INVALID market even when outcome supply is non-zero (outstanding
+/// tokens are voided). ~1 day at 400 ms/slot.
+/// Without this, a holder of any residual token permanently blocks protocol cleanup (H-04).
+pub const INVALID_RECOVERY_GRACE_SLOTS: u64 = 216_000;
+
 #[cfg(not(feature = "no-entrypoint"))]
 use solana_security_txt::security_txt;
 
@@ -154,7 +177,6 @@ pub mod wzrd_markets {
     ///     one, so we reject `resolver_multisig == admin` at init.
     pub fn initialize_markets_config(
         ctx: Context<InitializeMarketsConfig>,
-        usdc_mint: Pubkey,
         resolver_multisig: Pubkey,
         default_dispute_window_slots: u64,
         resolver_threshold: u8,
@@ -162,6 +184,9 @@ pub mod wzrd_markets {
         let slot = Clock::get()?.slot;
         let config_key = ctx.accounts.config.key();
         let admin = ctx.accounts.admin.key();
+        // M-01: derive usdc_mint from the passed account so we can also inspect it
+        // for dangerous Token-2022 extensions.
+        let usdc_mint = ctx.accounts.usdc_mint.key();
 
         // Resolve/override separation: the override multisig must not be the
         // admin (otherwise the admin controls both resolution paths).
@@ -182,6 +207,36 @@ pub mod wzrd_markets {
             resolver_threshold >= 1 && (resolver_threshold as usize) <= MAX_PUBLISHERS,
             MarketsError::InvalidThreshold
         );
+
+        // M-01: If the mint account is present on-chain (data len > standard SPL Mint =
+        // 82 bytes), check for dangerous Token-2022 extensions that could allow the
+        // mint authority or a hook program to drain the vault post-init.
+        {
+            let data = ctx.accounts.usdc_mint.try_borrow_data()?;
+            if data.len() > 82 {
+                let mint_with_ext =
+                    StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&data)
+                        .map_err(|_| MarketsError::InvalidMarketState)?;
+                // PermanentDelegate: can move tokens out of any account without approval.
+                if let Ok(ext) = mint_with_ext.get_extension::<PermanentDelegate>() {
+                    let delegate: Option<Pubkey> = Option::from(ext.delegate);
+                    require!(delegate.is_none(), MarketsError::DangerousMintExtension);
+                }
+                // TransferHook: arbitrary program called on every transfer — attack surface.
+                if let Ok(ext) = mint_with_ext.get_extension::<TransferHook>() {
+                    let hook_program: Option<Pubkey> = Option::from(ext.program_id);
+                    require!(hook_program.is_none(), MarketsError::DangerousMintExtension);
+                }
+                // DefaultAccountState=Frozen: new ATAs start frozen, blocking settlement.
+                if let Ok(ext) = mint_with_ext.get_extension::<MintDefaultAccountState>() {
+                    // AccountState::Frozen = 2; PodAccountState is a pod u8 wrapper.
+                    require!(
+                        u8::from(ext.state) != spl_token_2022::state::AccountState::Frozen as u8,
+                        MarketsError::DangerousMintExtension
+                    );
+                }
+            }
+        }
 
         let config = &mut ctx.accounts.config;
         config.bump = ctx.bumps.config;
@@ -260,6 +315,13 @@ pub mod wzrd_markets {
         require!(
             resolve_deadline_slot > clock_slot,
             MarketsError::DeadlineInPast
+        );
+        // H-03: dispute_window_slots must be in a safe range.
+        // Too small → disputes mechanically impossible; too large → funds locked ~forever.
+        require!(
+            dispute_window_slots >= MIN_DISPUTE_WINDOW_SLOTS
+                && dispute_window_slots <= MAX_DISPUTE_WINDOW_SLOTS,
+            MarketsError::InvalidDisputeWindow
         );
 
         let creator = ctx.accounts.admin.key();
@@ -568,9 +630,21 @@ pub mod wzrd_markets {
     ///     yes_reserve = 0, no_reserve = 0, lp_supply = 0, lp_mint, bump }.
     pub fn initialize_pool(ctx: Context<InitializePool>, virtual_liquidity: u64) -> Result<()> {
         let slot = Clock::get()?.slot;
+        // M-02: restrict pool creation to the admin so a permissionless caller
+        // cannot permanently distort pricing via an extreme virtual_liquidity value.
+        require_keys_eq!(
+            ctx.accounts.payer.key(),
+            ctx.accounts.config.admin,
+            MarketsError::Unauthorized
+        );
         require!(
             ctx.accounts.market.tokens_initialized,
             MarketsError::TokensNotInitialized
+        );
+        // M-02: cap virtual_liquidity so the bounding-phase subsidy stays bounded.
+        require!(
+            virtual_liquidity <= MAX_VIRTUAL_LIQUIDITY,
+            MarketsError::VirtualLiquidityTooHigh
         );
 
         let market_key = ctx.accounts.market.key();
@@ -1346,6 +1420,25 @@ pub mod wzrd_markets {
             MarketsError::LeafMetricMismatch
         );
 
+        // H-01 fix: `resolve_market` cannot publish INVALID — that is reserved for
+        // `resolve_override` only (admin/multisig correction path).
+        // All defined MarketMetric variants use the rule: observed_value >= target → YES,
+        // else NO. Enforce this mechanically so no publisher can lie about the outcome
+        // while keeping a valid merkle proof.
+        require!(
+            outcome != resolution::outcome::INVALID,
+            MarketsError::InvalidMarketState
+        );
+        let expected_outcome = if observed_value >= market.target {
+            resolution::outcome::YES
+        } else {
+            resolution::outcome::NO
+        };
+        require!(
+            outcome == expected_outcome,
+            MarketsError::ObservedValueOutcomeMismatch
+        );
+
         // Postconditions: fix the outcome and start the dispute window.
         market.outcome = outcome;
         market.resolved = true;
@@ -1623,13 +1716,17 @@ pub mod wzrd_markets {
         // Supply guard: for a binary outcome only the winning side has a claim, so
         // the winning supply must be 0. For INVALID both sides have claims, so both
         // must be 0.
+        // H-04: INVALID markets may be force-swept after INVALID_RECOVERY_GRACE_SLOTS
+        // past settle_unlock_slot; any outstanding supply is voided by admin action.
         let yes_supply = ctx.accounts.yes_mint.supply;
         let no_supply = ctx.accounts.no_mint.supply;
         if market.outcome == resolution::outcome::INVALID {
-            require!(
-                yes_supply == 0 && no_supply == 0,
-                MarketsError::SupplyNotZero
-            );
+            if yes_supply != 0 || no_supply != 0 {
+                let clock_slot = Clock::get()?.slot;
+                let past_grace = clock_slot.saturating_sub(market.settle_unlock_slot)
+                    > INVALID_RECOVERY_GRACE_SLOTS;
+                require!(past_grace, MarketsError::SupplyNotZero);
+            }
         } else {
             let winning_supply = if market.outcome == resolution::outcome::YES {
                 yes_supply
@@ -1688,10 +1785,19 @@ pub mod wzrd_markets {
         require!(market.resolved, MarketsError::MarketNotResolved);
 
         // All obligations discharged: both outcome supplies are 0.
-        require!(
-            ctx.accounts.yes_mint.supply == 0 && ctx.accounts.no_mint.supply == 0,
-            MarketsError::SupplyNotZero
-        );
+        // H-04: INVALID markets may be force-closed after INVALID_RECOVERY_GRACE_SLOTS
+        // past settle_unlock_slot; any outstanding supply is voided by admin action.
+        let clock_slot = Clock::get()?.slot;
+        let supply_zero = ctx.accounts.yes_mint.supply == 0 && ctx.accounts.no_mint.supply == 0;
+        if !supply_zero {
+            require!(
+                market.outcome == resolution::outcome::INVALID,
+                MarketsError::SupplyNotZero
+            );
+            let past_grace =
+                clock_slot.saturating_sub(market.settle_unlock_slot) > INVALID_RECOVERY_GRACE_SLOTS;
+            require!(past_grace, MarketsError::SupplyNotZero);
+        }
         // Vault drained to dust (rounding residue only).
         require!(
             ctx.accounts.vault.amount <= MARKET_CLOSE_DUST_THRESHOLD,
@@ -1702,7 +1808,7 @@ pub mod wzrd_markets {
             market: ctx.accounts.market.key(),
             market_id: ctx.accounts.market.market_id,
             rent_recipient: ctx.accounts.rent_recipient.key(),
-            slot: Clock::get()?.slot,
+            slot: clock_slot,
         });
         Ok(())
     }
@@ -1857,6 +1963,11 @@ pub struct InitializeMarketsConfig<'info> {
     pub config: Account<'info, MarketsConfig>,
     #[account(mut)]
     pub admin: Signer<'info>,
+    /// CHECK: M-01 — validated in the handler; checked for dangerous Token-2022
+    /// extensions (PermanentDelegate, TransferHook, frozen DefaultAccountState).
+    /// Using UncheckedAccount so the mint need not exist before config init, but
+    /// extension checks run whenever the mint data is present (len > 82).
+    pub usdc_mint: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -2185,6 +2296,13 @@ pub struct RedeemCompleteSet<'info> {
 /// seeds (the stored `pool.bump`).
 #[derive(Accounts)]
 pub struct InitializePool<'info> {
+    /// M-02: config is read to verify payer == config.admin (admin-only pool init).
+    #[account(
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+
     #[account(mut)]
     pub payer: Signer<'info>,
 

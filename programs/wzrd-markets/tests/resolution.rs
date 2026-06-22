@@ -86,6 +86,8 @@ const WINDOW_ID: u64 = 20_260_622;
 /// non-zero (the IX rejects 0). Never the in-force window on the test markets —
 /// each market overrides it via `create_market`'s own `dispute_window_slots`.
 const CONFIG_DEFAULT_DISPUTE_WINDOW: u64 = 54_000;
+/// H-03: minimum dispute_window_slots enforced by create_market.
+const MIN_DISPUTE_WINDOW: u64 = 150;
 
 /// The rails NODE domain — DISTINCT from the markets node domain. A tree built
 /// under this domain must be rejected by `resolve_market` (Gate A case 1). Kept
@@ -402,11 +404,11 @@ fn build_initialize_markets_config_ix(
         accounts: markets_accounts::InitializeMarketsConfig {
             config,
             admin,
+            usdc_mint,
             system_program: system_program::ID,
         }
         .to_account_metas(None),
         data: markets_ix::InitializeMarketsConfig {
-            usdc_mint: anchor_pubkey(usdc_mint),
             resolver_multisig: anchor_pubkey(resolver_multisig),
             // Protocol-default dispute window applied to markets created WITHOUT
             // an explicit per-market override. Every market in this suite passes
@@ -1160,7 +1162,11 @@ fn gate_a_case1_wrong_node_domain_rejected() {
         "rails and markets node domains must differ"
     );
 
-    let mut f = setup_funded(wrong_domain_root, 0, future_deadline_slot());
+    let mut f = setup_funded(
+        wrong_domain_root,
+        MIN_DISPUTE_WINDOW,
+        future_deadline_slot(),
+    );
 
     // Submit the honest sibling proof; on-chain fold uses the MARKETS node domain.
     let result = try_send_tx(
@@ -1216,7 +1222,7 @@ fn gate_a_case2_wrong_leaf_domain_rejected() {
     );
     let root = markets_resolution_node_hash_v1(&ha_wrong, &hb_wrong);
 
-    let mut f = setup_funded(root, 0, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     // The proof sibling is the rails-domain hash of leaf B. On-chain, the verifier
     // computes leaf A under the MARKETS domain (ha_correct != ha_wrong), folds with
@@ -1246,7 +1252,7 @@ fn gate_a_case2_wrong_leaf_domain_rejected() {
 fn gate_a_case3_overlong_proof_rejected() {
     // Use a valid root so the ONLY thing wrong is proof length.
     let (root, _proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 0, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     // 17 siblings (> 16). Content is irrelevant — the cap check trips first.
     let overlong: Vec<[u8; 32]> = (0..17u8).map(|i| [i; 32]).collect();
@@ -1274,7 +1280,7 @@ fn gate_a_case3_overlong_proof_rejected() {
 #[test]
 fn gate_a_case4_tampered_sibling_rejected() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 0, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     let mut tampered = proof.clone();
     tampered[0][0] ^= 0xFF; // flip a byte in the sibling
@@ -1309,7 +1315,7 @@ fn gate_a_case5_wrong_market_leaf_rejected() {
     let (root, proof) =
         markets_two_leaf_tree(foreign_market_id, WINDOW_ID, resolution::outcome::YES);
     // Create the REAL market (id 0) with that foreign-market root.
-    let mut f = setup_funded(root, 0, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     let result = try_send_tx(
         &mut f.svm,
@@ -1337,7 +1343,7 @@ fn gate_a_case5_wrong_market_leaf_rejected() {
 #[test]
 fn gate_a_case6_malformed_proof_rejected() {
     let (root, _proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 0, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     // A junk sibling that is not hash(leafB).
     let junk = vec![[0xABu8; 32]];
@@ -1363,7 +1369,7 @@ fn gate_a_case6_malformed_proof_rejected() {
 #[test]
 fn gate_a_case7_valid_proof_accepted() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     send_tx(
         &mut f.svm,
@@ -1389,7 +1395,7 @@ fn gate_a_case7_valid_proof_accepted() {
     // resolved_at_slot is 0 (litesvm boots at slot 0); settle_unlock is +window.
     assert_eq!(
         market.settle_unlock_slot,
-        market.resolved_at_slot + 100,
+        market.resolved_at_slot + MIN_DISPUTE_WINDOW,
         "dispute window started"
     );
 }
@@ -1403,10 +1409,8 @@ fn gate_a_case7_valid_proof_accepted() {
 
 #[test]
 fn gate_b_settle_solvency() {
-    // dispute_window = 0 so `settle_unlock_slot == resolved_at_slot == 0` and
-    // settle is legal immediately (clock.slot 0 >= unlock 0).
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 0, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     // Resolve YES (the depositor's YES is now the winning side).
     send_tx(
@@ -1422,6 +1426,10 @@ fn gate_b_settle_solvency() {
             proof,
         )],
     );
+
+    // H-03: warp past the MIN_DISPUTE_WINDOW before settling.
+    let market: Market = read_anchor_account(&f.svm, &f.market);
+    f.svm.warp_to_slot(market.settle_unlock_slot + 1);
 
     // Baseline: vault == winning(yes) supply == SET_AMOUNT.
     assert_eq!(read_token_balance(&f.svm, &f.vault), SET_AMOUNT);
@@ -1540,7 +1548,7 @@ fn gate_b_settle_solvency() {
 fn gate_c_never_resolved_recovery() {
     // Deadline = 500 so we can warp past it. Root is the sentinel (never used —
     // we never resolve). dispute_window irrelevant.
-    let mut f = setup_funded([9u8; 32], 100, 500);
+    let mut f = setup_funded([9u8; 32], MIN_DISPUTE_WINDOW, 500);
 
     // Warp PAST the resolution deadline: the market is now in never-resolved
     // recovery. A late resolve would be rejected (ResolutionDeadlinePassed); the
@@ -1591,7 +1599,7 @@ fn gate_c_never_resolved_recovery() {
 #[test]
 fn func_publish_root_happy_and_idempotent() {
     let (root, _) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
     let (attention_root, _) = attention_root_pda(WINDOW_ID);
 
     // Publish a (separate, discoverability-only) root for the window.
@@ -1649,7 +1657,7 @@ fn func_publish_root_happy_and_idempotent() {
 #[test]
 fn func_publish_root_validation() {
     let (root, _) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
     let (attention_root, _) = attention_root_pda(WINDOW_ID);
 
     // Zero root → ZeroResolutionRoot.
@@ -1694,7 +1702,7 @@ fn func_publish_root_validation() {
 fn func_settle_dispute_window_enforced() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
     // Non-zero window so settle is initially illegal at slot 0.
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     send_tx(
         &mut f.svm,
@@ -1710,7 +1718,10 @@ fn func_settle_dispute_window_enforced() {
         )],
     );
     let market: Market = read_anchor_account(&f.svm, &f.market);
-    assert_eq!(market.settle_unlock_slot, market.resolved_at_slot + 100);
+    assert_eq!(
+        market.settle_unlock_slot,
+        market.resolved_at_slot + MIN_DISPUTE_WINDOW
+    );
 
     // Window still open (slot 0 < unlock 100) → settle rejected.
     let early = try_send_tx(
@@ -1765,7 +1776,7 @@ fn func_settle_dispute_window_enforced() {
 #[test]
 fn func_invalid_routes_to_redeem() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     // Resolve YES first...
     send_tx(
@@ -1862,7 +1873,7 @@ fn func_invalid_routes_to_redeem() {
 #[test]
 fn func_c03_override_after_settle_forbidden() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     // Resolve YES.
     send_tx(
@@ -1926,7 +1937,7 @@ fn func_c03_override_after_settle_forbidden() {
 #[test]
 fn func_override_authorization() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     send_tx(
         &mut f.svm,
@@ -1995,7 +2006,7 @@ fn func_override_authorization() {
 #[test]
 fn func_extend_dispute_window_once() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     send_tx(
         &mut f.svm,
@@ -2049,9 +2060,8 @@ fn func_extend_dispute_window_once() {
 /// remaining vault dust to a treasury recipient).
 #[test]
 fn func_sweep_residual_supply_guard() {
-    // dispute_window 0 → settle legal at slot 0.
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 0, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     send_tx(
         &mut f.svm,
@@ -2075,7 +2085,7 @@ fn func_sweep_residual_supply_guard() {
         &f.usdc_mint,
     );
 
-    // Winning (YES) supply is live → sweep refused.
+    // Winning (YES) supply is live → sweep refused (supply guard, not window).
     let early = try_send_tx(
         &mut f.svm,
         &[&f.admin],
@@ -2091,6 +2101,10 @@ fn func_sweep_residual_supply_guard() {
         )],
     );
     assert_markets_error(early, MarketsError::SupplyNotZero);
+
+    // H-03: warp past the dispute window before settling.
+    let market: Market = read_anchor_account(&f.svm, &f.market);
+    f.svm.warp_to_slot(market.settle_unlock_slot + 1);
 
     // Settle the FULL winning side (burns all YES, drains vault to 0).
     send_tx(
@@ -2143,7 +2157,7 @@ fn func_sweep_residual_supply_guard() {
 #[test]
 fn func_publisher_allowlist_enforced() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     // A non-allowlisted signer cannot resolve.
     let outsider = Keypair::new();
@@ -2203,7 +2217,7 @@ fn func_publisher_allowlist_enforced() {
 #[test]
 fn func_allowlist_management_guards() {
     let (root, _) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     // Duplicate add (publisher already added in setup) → PublisherAlreadyPresent.
     // Expire the blockhash first: `setup_funded` already sent a byte-identical
@@ -2255,7 +2269,7 @@ fn func_allowlist_management_guards() {
 #[test]
 fn func_resolve_lifecycle_guards() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 100, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
 
     // Resolve once.
     send_tx(
@@ -2296,7 +2310,7 @@ fn func_resolve_lifecycle_guards() {
 fn func_resolve_after_deadline_rejected() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
     // Deadline = 500 so we can warp to 600.
-    let mut f = setup_funded(root, 100, 500);
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, 500);
     f.svm.warp_to_slot(600);
 
     let late = try_send_tx(
@@ -2319,7 +2333,7 @@ fn func_resolve_after_deadline_rejected() {
 #[test]
 fn func_settle_zero_amount_rejected() {
     let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
-    let mut f = setup_funded(root, 0, future_deadline_slot());
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
     send_tx(
         &mut f.svm,
         &[&f.publisher],
@@ -2333,6 +2347,9 @@ fn func_settle_zero_amount_rejected() {
             proof,
         )],
     );
+    // H-03: warp past the dispute window so the ZeroAmount check is reached.
+    let market: Market = read_anchor_account(&f.svm, &f.market);
+    f.svm.warp_to_slot(market.settle_unlock_slot + 1);
     let zero = try_send_tx(
         &mut f.svm,
         &[&f.depositor],

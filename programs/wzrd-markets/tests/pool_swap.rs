@@ -360,11 +360,11 @@ fn build_initialize_markets_config_ix(
         accounts: markets_accounts::InitializeMarketsConfig {
             config,
             admin,
+            usdc_mint,
             system_program: system_program::ID,
         }
         .to_account_metas(None),
         data: markets_ix::InitializeMarketsConfig {
-            usdc_mint: anchor_pubkey(usdc_mint),
             resolver_multisig: anchor_pubkey(resolver_multisig),
             // Carved into MarketsConfig in Phase 3 (resolver allow-list config).
             // Phase 2 pool/swap tests don't exercise the dispute window; these
@@ -519,6 +519,7 @@ fn build_redeem_complete_set_ix(
 
 #[allow(clippy::too_many_arguments)]
 fn build_initialize_pool_ix(
+    config: LegacyPubkey,
     payer: LegacyPubkey,
     market: LegacyPubkey,
     pool: LegacyPubkey,
@@ -532,6 +533,7 @@ fn build_initialize_pool_ix(
     LegacyInstruction {
         program_id: WZRD_MARKETS_PROGRAM_ID,
         accounts: markets_accounts::InitializePool {
+            config,
             payer,
             market,
             pool,
@@ -756,7 +758,7 @@ fn setup_pool() -> Fixture {
             [9u8; 32],
             42,
             future_deadline_slot(),
-            100,
+            150,
         )],
     );
 
@@ -788,6 +790,7 @@ fn setup_pool() -> Fixture {
         &mut svm,
         &[&admin],
         &[build_initialize_pool_ix(
+            config,
             legacy_from_signer(&admin),
             market,
             pool,
@@ -1462,7 +1465,7 @@ fn swap_on_uninitialized_pool_rejected() {
             [5u8; 32],
             1,
             future_deadline_slot(),
-            10,
+            150,
         )],
     );
     let (yes1, _) = yes_mint_pda(market1_id);
@@ -1564,6 +1567,7 @@ fn double_initialize_pool_rejected() {
     let mut f = setup_pool(); // already initialized the pool once
 
     let ix = build_initialize_pool_ix(
+        f.config,
         legacy_from_signer(&f.admin),
         f.market,
         f.pool,
