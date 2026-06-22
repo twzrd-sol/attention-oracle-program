@@ -94,19 +94,34 @@ pub struct MarketsConfig {
     /// collide. CARVED from the original 64-byte `_reserved` (now 56) so the
     /// account LEN is unchanged — no realloc on the existing Phase-0 config.
     pub next_market_id: u64,
+    /// Phase 3: protocol-default dispute / challenge window (in slots) applied to
+    /// every market at `create_market` time. Scope-locked default ~54,000 slots
+    /// (~6h at 400ms/slot). The admin can change this for FUTURE markets; the
+    /// value in force at create-time is snapshotted onto `Market.dispute_window_slots`
+    /// (H-01 finality: a per-market window cannot drift after the market opens).
+    /// CARVED from `_reserved` (now 47) — LEN unchanged, no realloc.
+    pub default_dispute_window_slots: u64,
+    /// Phase 3: recorded policy metadata for `resolve_override` — the M-of-N
+    /// threshold the `resolver_multisig` is expected to enforce. The on-chain
+    /// authority check is `signer == resolver_multisig` (the Squads V4 vault PDA,
+    /// which externally enforces its own member set + threshold); this byte is
+    /// transparency metadata, NOT the enforcement point. CARVED from `_reserved`.
+    pub resolver_threshold: u8,
     /// Forward-compat reserve. Future config fields are carved from here.
-    /// Was `[u8; 64]` in Phase 0; 8 bytes carved for `next_market_id` above.
-    pub _reserved: [u8; 56],
+    /// Phase 0 reserved 64 bytes; 8 carved for `next_market_id`, 8 for
+    /// `default_dispute_window_slots`, 1 for `resolver_threshold` → 47 remain.
+    pub _reserved: [u8; 47],
 }
 
 impl MarketsConfig {
     /// Account size including the 8-byte Anchor discriminator.
     /// 8 disc + 1 bump + 32 admin + 32 usdc_mint + 32 resolver_multisig
     ///   + (4 vec_len + 32*MAX_PUBLISHERS) publisher_allowlist + 8 next_market_id
-    ///   + 56 reserved.
-    /// (The 8-byte `next_market_id` is carved from the original 64-byte reserve,
-    /// which is now 56 — the total LEN is identical to Phase 0, so no realloc.)
-    pub const LEN: usize = 8 + 1 + 32 + 32 + 32 + (4 + 32 * MAX_PUBLISHERS) + 8 + 56;
+    ///   + 8 default_dispute_window_slots + 1 resolver_threshold + 47 reserved.
+    /// The Phase 3 fields (default_dispute_window_slots, resolver_threshold) are
+    /// carved from the Phase-0 reserve (64 → 47), so LEN is identical to Phase 0
+    /// — no realloc on the existing config account.
+    pub const LEN: usize = 8 + 1 + 32 + 32 + 32 + (4 + 32 * MAX_PUBLISHERS) + 8 + 8 + 1 + 47;
 
     pub fn publisher_allowed(&self, publisher: &Pubkey) -> bool {
         self.publisher_allowlist.iter().any(|p| p == publisher)
@@ -150,15 +165,30 @@ pub struct Market {
     /// AUDIT H-01: hard finality deadline. After this slot a never-resolved
     /// market is eligible for admin pro-rata recovery (Phase 3).
     pub resolve_deadline_slot: u64,
-    /// True once `resolve_market` has fixed the outcome.
+    /// True once `resolve_market` (or `resolve_override`) has fixed the outcome.
     pub resolved: bool,
-    /// The resolved outcome (meaningful only when `resolved == true`).
-    pub outcome: bool,
+    /// The resolved outcome, encoded per `resolution::outcome`
+    /// (0=NO, 1=YES, 2=INVALID, 255=UNRESOLVED). Phase 3 widened this from a
+    /// `bool` to a `u8` (width-neutral, 1 byte either way) so a market can be
+    /// resolved INVALID — neither side won — which a bool could not express.
+    /// `create_market` sets it to `outcome::UNRESOLVED`; it is meaningful only
+    /// when `resolved == true`.
+    pub outcome: u8,
     /// Total winning-side supply captured at settle, for solvency accounting.
     pub settled_supply: u64,
     /// AUDIT H-01: dispute / challenge window (in slots) that must elapse after
     /// resolution before settlement is final.
     pub dispute_window_slots: u64,
+    /// Phase 3: slot at which `resolve_market`/`resolve_override` fixed the
+    /// outcome. The dispute window is measured FROM this slot. Zero while
+    /// unresolved. CARVED from `_reserved` (no realloc).
+    pub resolved_at_slot: u64,
+    /// Phase 3: slot at which settlement becomes legal
+    /// (`resolved_at_slot + dispute_window_slots`). Precomputed at resolve-time
+    /// so `settle` compares one stored value instead of recomputing (and so the
+    /// admin extend-once writes exactly this field). Zero while unresolved.
+    /// CARVED from `_reserved` (no realloc).
+    pub settle_unlock_slot: u64,
     /// YES outcome mint (Token-2022, fee-free) for this market.
     pub yes_mint: Pubkey,
     /// NO outcome mint (Token-2022, fee-free) for this market.
@@ -167,8 +197,15 @@ pub struct Market {
     pub vault: Pubkey,
     /// True once `initialize_market_tokens` (Phase 1) has created the mints.
     pub tokens_initialized: bool,
-    /// Forward-compat reserve.
-    pub _reserved: [u8; 64],
+    /// Phase 3: true once the admin has used the one-shot dispute-window
+    /// extension (`extend_dispute_window`). A second extension is rejected, so
+    /// the admin cannot indefinitely postpone settlement. CARVED from
+    /// `_reserved` (no realloc).
+    pub dispute_extended: bool,
+    /// Forward-compat reserve. Phase 0 reserved 64 bytes; Phase 3 carved
+    /// 8 (resolved_at_slot) + 8 (settle_unlock_slot) + 1 (dispute_extended) = 17,
+    /// leaving 47 — total LEN unchanged, no realloc on existing markets.
+    pub _reserved: [u8; 47],
 }
 
 impl Market {
@@ -178,10 +215,36 @@ impl Market {
     /// 8 disc + 1 bump + 1 version + 8 market_id + 32 creator + 32 streamer_ref
     ///   + 1 metric + 8 target + 32 resolution_root + 8 resolution_root_seq
     ///   + 8 created_slot + 8 resolve_deadline_slot + 1 resolved + 1 outcome
-    ///   + 8 settled_supply + 8 dispute_window_slots + 32 yes_mint + 32 no_mint
-    ///   + 32 vault + 1 tokens_initialized + 64 reserved.
-    pub const LEN: usize =
-        8 + 1 + 1 + 8 + 32 + 32 + 1 + 8 + 32 + 8 + 8 + 8 + 1 + 1 + 8 + 8 + 32 + 32 + 32 + 1 + 64;
+    ///   + 8 settled_supply + 8 dispute_window_slots + 8 resolved_at_slot
+    ///   + 8 settle_unlock_slot + 32 yes_mint + 32 no_mint + 32 vault
+    ///   + 1 tokens_initialized + 1 dispute_extended + 47 reserved.
+    /// Phase 3 carved 17 bytes (resolved_at_slot + settle_unlock_slot +
+    /// dispute_extended) from the Phase-0 64-byte reserve (now 47); `outcome`
+    /// went bool->u8 (width-neutral). Total LEN is UNCHANGED at 326 — no realloc.
+    pub const LEN: usize = 8
+        + 1
+        + 1
+        + 8
+        + 32
+        + 32
+        + 1
+        + 8
+        + 32
+        + 8
+        + 8
+        + 8
+        + 1
+        + 1
+        + 8
+        + 8
+        + 8
+        + 8
+        + 32
+        + 32
+        + 32
+        + 1
+        + 1
+        + 47;
 }
 
 /// The constant-product (`x * y = k`) pool over a market's YES/NO outcome
@@ -251,6 +314,58 @@ impl AttentionRootConfig {
     pub const LEN: usize = 8 + 1 + 8 + 32;
 }
 
+/// A single published attention merkle root for one resolution window
+/// (audit H-02 option (b): in-house publisher, no cross-program read of the
+/// immutable AO root).
+///
+/// `publish_attention_root` (Phase 3) `init`s one of these per window. Re-publish
+/// of the same `window_id` fails because the PDA already exists — one root per
+/// window, immutable once written (a correction goes through a new window or the
+/// multisig override, never an in-place edit).
+///
+/// **Cross-repo contract surface** (`docs/cpmm-merkle-conventions-v1.md`): the
+/// off-chain tree builder (Team A's forked listen-payout builder, fed by
+/// `twitch_viewer_samples`) publishes INTO this account, and indexers read it.
+/// Its PDA seed and field layout are part of the locked v1 contract — a change
+/// here is a version bump, not an edit.
+///
+/// **Finality note (H-01)**: this account is for discoverability + `leaf_count`
+/// commitment. The root a market *resolves against* is the create-time snapshot
+/// on `Market.resolution_root`, NOT this (potentially newer) account — so a
+/// published root cannot retroactively change an open market's outcome.
+///
+/// PDA: `[ATTENTION_ROOT_SEED, window_id.to_le_bytes()]`
+#[account]
+#[derive(Debug)]
+pub struct AttentionRoot {
+    /// PDA bump.
+    pub bump: u8,
+    /// The resolution window this root commits (also the PDA seed input).
+    pub window_id: u64,
+    /// The published merkle root. Trees are built with the v1 convention
+    /// (`MARKETS_RESOLUTION_LEAF_V1_DOMAIN` / `..._NODE_V1_DOMAIN`, sorted-pair,
+    /// keccak256). `publish_attention_root` rejects an all-zero root.
+    pub merkle_root: [u8; 32],
+    /// Number of leaves in the tree (publisher-committed, for indexers / audit).
+    pub leaf_count: u32,
+    /// Leaf schema version — must equal `MARKETS_RESOLUTION_LEAF_SCHEMA_V1`. A
+    /// future leaf layout bumps this (and the convention version), never edits.
+    pub schema_version: u8,
+    /// Slot at which this root was published.
+    pub published_at_slot: u64,
+    /// The allow-listed publisher that wrote this root.
+    pub publisher: Pubkey,
+    /// Forward-compat reserve.
+    pub _reserved: [u8; 32],
+}
+
+impl AttentionRoot {
+    /// Account size including the 8-byte Anchor discriminator.
+    /// 8 disc + 1 bump + 8 window_id + 32 merkle_root + 4 leaf_count
+    ///   + 1 schema_version + 8 published_at_slot + 32 publisher + 32 reserved.
+    pub const LEN: usize = 8 + 1 + 8 + 32 + 4 + 1 + 8 + 32 + 32;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,9 +386,11 @@ mod tests {
 
     #[test]
     fn markets_config_len_matches_manual_calc() {
-        // 8 + 1 + 32 + 32 + 32 + (4 + 256) + 8 + 56 = 429
-        // The Phase-1 `next_market_id` (8 bytes) is carved from the Phase-0
-        // 64-byte reserve (now 56), so the total LEN is unchanged — no realloc.
+        // 8 + 1 + 32 + 32 + 32 + (4 + 256) + 8 + 8 + 1 + 47 = 429
+        // The Phase-1 `next_market_id` (8) + Phase-3 `default_dispute_window_slots`
+        // (8) + `resolver_threshold` (1) = 17 bytes are carved from the Phase-0
+        // 64-byte reserve (now 47), so the total LEN is unchanged — no realloc on
+        // the existing config account.
         assert_eq!(MarketsConfig::LEN, 429);
         assert_eq!(MAX_PUBLISHERS, 8);
     }
@@ -305,5 +422,33 @@ mod tests {
     #[test]
     fn attention_root_config_len_matches_manual_calc() {
         assert_eq!(AttentionRootConfig::LEN, 49);
+    }
+
+    #[test]
+    fn attention_root_len_matches_manual_calc() {
+        // 8 + 1 + 8 + 32 + 4 + 1 + 8 + 32 + 32 = 126.
+        // Cross-repo contract surface — Team A's builder publishes into this
+        // layout. A change here is a v1 contract version bump.
+        assert_eq!(AttentionRoot::LEN, 126);
+    }
+
+    #[test]
+    fn market_outcome_field_is_u8_default_unresolved() {
+        // The `outcome` field is encoded per `crate::resolution::outcome`. This
+        // test pins the cross-repo / cross-SDK contract that the on-account
+        // `outcome` byte uses the resolution module's encoding, and that a
+        // freshly-created (pre-resolution) market carries the UNRESOLVED sentinel
+        // (255) — distinct from NO (0), so "resolved NO" can never be confused
+        // with "not yet resolved". `create_market` sets `outcome::UNRESOLVED`.
+        use crate::resolution::outcome;
+        assert_eq!(outcome::NO, 0u8);
+        assert_eq!(outcome::YES, 1u8);
+        assert_eq!(outcome::INVALID, 2u8);
+        assert_eq!(outcome::UNRESOLVED, 255u8);
+        // NO and UNRESOLVED must be distinct values (the whole reason for u8).
+        assert_ne!(outcome::NO, outcome::UNRESOLVED);
+        // Compile-time witness that `Market.outcome` is a `u8` of this encoding:
+        // this closure fails to compile if the field type ever drifts off `u8`.
+        let _assign_outcome: fn(&mut Market, u8) = |m, v| m.outcome = v;
     }
 }

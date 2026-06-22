@@ -110,6 +110,11 @@ fn build_initialize_markets_config_ix(
         data: markets_ix::InitializeMarketsConfig {
             usdc_mint: Pubkey::new_from_array(usdc_mint.to_bytes()),
             resolver_multisig: Pubkey::new_from_array(resolver_multisig.to_bytes()),
+            // Carved into MarketsConfig in Phase 3 (see _reserved 56 -> 47). The
+            // Phase-0 assertions below don't read these back, but the IX guards
+            // require window > 0 and threshold in 1..=MAX_PUBLISHERS.
+            default_dispute_window_slots: 54_000,
+            resolver_threshold: 1,
         }
         .data(),
     }
@@ -168,7 +173,7 @@ fn initialize_markets_config_works() {
         parsed.next_market_id, 0,
         "next_market_id starts at 0 (Phase 1 counter)"
     );
-    assert_eq!(parsed._reserved, [0u8; 56], "reserved zero-initialized");
+    assert_eq!(parsed._reserved, [0u8; 47], "reserved zero-initialized");
 }
 
 #[test]

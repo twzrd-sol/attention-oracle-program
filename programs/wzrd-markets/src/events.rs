@@ -137,8 +137,100 @@ pub struct Swapped {
     pub implied_no_price_bps: u64,
 }
 
-// TODO(Phase 3): AttentionRootPublished { seq, root, published_by, slot }
-// TODO(Phase 3): MarketResolved { market, outcome, resolved_slot }
-// TODO(Phase 3): MarketSettled { market, user, shares_burned, collateral_paid }
-// TODO(Phase 3): MarketResolvedByOverride { market, outcome, multisig, slot }
-// TODO(Phase 3): ResidualSwept / MarketClosed
+/// Emitted by `add_publisher` / `remove_publisher` (Phase 3 allow-list admin).
+/// `added` is true on insert, false on removal. `count` is the post-op size of
+/// the allow-list.
+#[event]
+pub struct PublisherAllowlistChanged {
+    pub config: Pubkey,
+    pub publisher: Pubkey,
+    pub added: bool,
+    pub count: u8,
+    pub slot: u64,
+}
+
+/// Emitted by `publish_attention_root` (Phase 3). One per resolution window. The
+/// off-chain builder (cross-repo contract, conventions v1) is expected to read
+/// `window_id` + `merkle_root` + `leaf_count` back from this event / account.
+#[event]
+pub struct AttentionRootPublished {
+    pub window_id: u64,
+    pub merkle_root: [u8; 32],
+    pub leaf_count: u32,
+    pub schema_version: u8,
+    pub seq: u64,
+    pub publisher: Pubkey,
+    pub published_at_slot: u64,
+}
+
+/// Emitted by `resolve_market` (Phase 3). The outcome is encoded per
+/// `resolution::outcome` (0=NO, 1=YES, 2=INVALID). `observed_value` is the metric
+/// value the resolution leaf committed. `settle_unlock_slot` is when the dispute
+/// window closes and `settle` becomes legal.
+#[event]
+pub struct MarketResolved {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub outcome: u8,
+    pub observed_value: u64,
+    pub resolved_at_slot: u64,
+    pub settle_unlock_slot: u64,
+}
+
+/// Emitted by `extend_dispute_window` (Phase 3). The one-shot admin extension;
+/// `new_settle_unlock_slot` is the post-extension unlock slot.
+#[event]
+pub struct DisputeWindowExtended {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub old_settle_unlock_slot: u64,
+    pub new_settle_unlock_slot: u64,
+    pub slot: u64,
+}
+
+/// Emitted by `settle` (Phase 3). `winner` is the winning outcome (0=NO, 1=YES);
+/// `amount` winning-outcome tokens were burned and `amount` USDC paid to the
+/// settler — the lockstep that preserves `vault >= winning_supply` (audit MR-1).
+#[event]
+pub struct Settled {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub winner: u8,
+    pub amount: u64,
+    pub settler: Pubkey,
+}
+
+/// Emitted by `resolve_override` (Phase 3). The multisig corrected a contested
+/// resolution pre-settle. `old_outcome`/`new_outcome` are encoded per
+/// `resolution::outcome`. `new_settle_unlock_slot` reflects the restarted
+/// re-dispute window.
+#[event]
+pub struct ResolutionOverridden {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub old_outcome: u8,
+    pub new_outcome: u8,
+    pub new_settle_unlock_slot: u64,
+    pub slot: u64,
+}
+
+/// Emitted by `sweep_residual` (Phase 3). Remaining vault dust swept to the
+/// treasury after all winning (or, for INVALID, all) supply was settled/redeemed.
+#[event]
+pub struct ResidualSwept {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub amount: u64,
+    pub recipient: Pubkey,
+    pub slot: u64,
+}
+
+/// Emitted by `close_market` (Phase 3). The Market account was closed and its
+/// rent returned after full settlement + sweep.
+#[event]
+pub struct MarketClosed {
+    pub market: Pubkey,
+    pub market_id: u64,
+    pub rent_recipient: Pubkey,
+    pub slot: u64,
+}

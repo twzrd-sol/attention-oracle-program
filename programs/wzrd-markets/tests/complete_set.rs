@@ -360,6 +360,11 @@ fn build_initialize_markets_config_ix(
         data: markets_ix::InitializeMarketsConfig {
             usdc_mint: anchor_pubkey(usdc_mint),
             resolver_multisig: anchor_pubkey(resolver_multisig),
+            // Carved into MarketsConfig in Phase 3 (resolver allow-list config).
+            // Phase 1 complete-set tests don't exercise the dispute window; these
+            // just satisfy the IX guards (window > 0, threshold in 1..=MAX).
+            default_dispute_window_slots: 54_000,
+            resolver_threshold: 1,
         }
         .data(),
     }
