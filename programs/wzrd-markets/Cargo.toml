@@ -1,0 +1,49 @@
+[package]
+name = "wzrd-markets"
+version = "0.1.0"
+description = "CPMM outcome-token prediction markets — constant-product AMM over per-market YES/NO Token-2022 outcome tokens, USDC-collateralized"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "wzrd_markets"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+localtest = []
+
+[dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+anchor-spl = { version = "0.32.1", features = ["associated_token", "token_2022"] }
+spl-token-2022 = "8.0.1"
+solana-security-txt = "1.1"
+constant_time_eq = "=0.3.1"  # pin: 0.4.2 requires edition2024, SBF toolchain is 1.84
+blake3 = "=1.5.5"  # pin: 1.6+ pulls constant_time_eq 0.4.x
+solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
+
+[dev-dependencies]
+# proptest drives the vendored Raydium curve invariants (the audited correctness
+# properties: curve value never decreases on swap / deposit / withdraw).
+proptest = "1"
+# `uint` is used ONLY by the host-only curve proptest helpers (U256 widening to
+# avoid u128 overflow in the deposit/withdraw value-non-decrease comparisons).
+# This mirrors raydium-cp-swap's own `construct_uint!` usage. It is a
+# dev-dependency, so it never enters the SBF on-chain build.
+uint = "0.10.0"
+litesvm = "0.10"
+solana-sdk = "=2.2.1"
+solana-account = "=3.4.0"
+solana-address = "=2.2.0"
+solana-instruction = "=3.2.0"
+solana-keypair = "=3.1.2"
+solana-message = "=3.1.0"
+solana-signer = "=3.0.0"
+solana-transaction = "=3.1.0"
+solana-system-interface = "1.0"
+spl-token-2022 = "8.0.1"

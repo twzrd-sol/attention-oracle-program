@@ -1,5 +1,46 @@
 # Security Audit Report - wzrd-rails + attention-oracle (markets.rs port reference)
 
+---
+
+## Status Overlay (updated 2026-06-22)
+
+> This block tracks remediation status against the original finding IDs. All original finding text below is unchanged.
+
+### wzrd-markets (CPMM) Critical fixes — MERGED to AOP main
+
+These three Critical findings were identified by a separate Plamen audit of `programs/wzrd-markets/`
+(the CPMM prediction-market program, **NOT in scope of this wzrd-rails report**). They are recorded
+here because the CPMM re-audit confirms their fix state, and bridge PR #1036 was unblocked by their merge.
+
+| Finding | Title | Fix | Commit | Status |
+|---------|-------|-----|--------|--------|
+| **C-01** | INVALID resolution locks 100% collateral (`redeem_complete_set` refused all resolved markets; `settle` refused INVALID — no exit path) | Allow redeem when `outcome==INVALID` in `lib.rs:470` | `5015dc8` (#113) | **FIXED** |
+| **C-02** | No admin rotation — single SPOF key for all market admin actions | Added 2-step `set_admin`/`accept_admin`; `pending_admin` carved from `MarketsConfig._reserved` 47→15 (LEN unchanged 429, no realloc) | `5015dc8` (#113) | **FIXED** |
+| **C-03** | `resolve_override` post-settle vault drain — override could re-arm settle window after vault drained | `require!(settled_supply == 0, OverrideAfterSettle)` guard in `resolve_override` | `5015dc8` (#113) | **FIXED** |
+
+74 tests pass (0 fail) with `--features localtest`. Program is **pre-deploy** (placeholder program ID); no funds were at risk.
+
+### wzrd-rails (this report) — remediation status
+
+| Finding | Status | Notes |
+|---------|--------|-------|
+| **M-01** | OPEN — AOP #108 | set_payout_admin rotation bricks set_per_window_ccm_cap |
+| **M-02** | OPEN — AOP #108 | Unbounded lock_duration_slots |
+| **M-03** | OPEN — AOP #109 | Emission remainder-carry + StakePool realloc (FUNDS-TOUCHING, mandatory deploy sequence) |
+| **L-01** | OPEN — AOP #108 | Token-2022 extension allowlist |
+| **I-04** | OPEN — AOP #108 | Stale test constants |
+| All others | OPEN | H-01, H-02, M-04, M-05, L-02..L-08, I-01..I-03 — no fix PRs yet |
+
+### ID reconciliation note
+
+The wzrd-rails audit (this report) uses `M-05` for "Resolution root authenticated by single semi-trusted publisher key." A concurrent CPMM re-audit of wzrd-markets may assign `H-03` or `H-04` to a related finding in its own ID space. These are **separate findings in separate programs** — the wzrd-rails `M-05` ID is canonical for this report and is not changed.
+
+---
+
+**End of status overlay. All original finding text follows unchanged.**
+
+---
+
 **Date**: 2026-06-21
 **Auditor**: Automated Security Analysis (Plamen / Claude Opus 4.8, Core mode)
 **Scope**: `programs/wzrd-rails/` (upgradeable, PRIMARY) + `programs/attention-oracle/src/instructions/markets.rs` (immutable, port reference)
@@ -8,24 +49,13 @@
 **Static Analysis Status**: Fender MCP unavailable; grep-based + manual analysis used. unified-vuln-db RAG unavailable (WebSearch fallback noted).
 **On-chain verification**: CCM mint extension state verified live on mainnet (decisive for severity).
 
-> **Canonical report (reconciled 2026-06-22).** This is the single authoritative
-> wzrd-rails audit. It SUPERSEDES the two April 2026 drafts (the preliminary
-> recon-only `AUDIT_REPORT.md` and `AUDIT_REPORT_PREPUSH.md`), which used a
-> different, now-stale finding-ID scheme and have been removed. Those drafts'
-> findings are accounted for in the "Excluded (prior-audit resolved)" section at
-> the end (the `-pre` suffixed IDs). **The finding IDs here match the shipped fix
-> PRs:** M-01 → PR #108 (admin cap-rotation), M-02 → PR #108 (lock_duration bound),
-> M-03 → PR #109 (emission remainder-carry + StakePool realloc), L-01 → PR #108
-> (Token-2022 ext allowlist), I-04 → PR #108 (PayoutWindow::space test constants).
-> Re-audit (Phase 4) builds on this report.
-
 ---
 
 ## Executive Summary
 
 This audit covers `wzrd-rails`, the upgradeable Solana program that the team intends to extend into a prediction-market settlement layer ("Polymarket/Kalshi on wzrd+dflow rails"), and `markets.rs` from the immutable attention-oracle program as the reference implementation that market logic would be ported from. The central question was not "is there a live exploit" but "what blocks a real-money streaming-attention prediction market, and is the foundation sound."
 
-**The live `wzrd-rails` program is in good shape.** A prior audit pass found 0 Critical / 0 High and resolved its main concerns; this deeper pass (token-flow tracing, reward-accounting math, merkle-proof integrity, and on-chain verification) confirms there are **no Critical and no High severity issues in the live program**. The reward accumulator math (MasterChef-style) is conservation-correct, the four token vaults are donation-safe by construction, and the merkle claim paths are replay-safe and not forgeable. The most important on-chain check -- the CCM Token-2022 mint -- came back clean: it carries only a transfer-fee extension (no PermanentDelegate, no TransferHook), and both mint and freeze authorities are revoked, which **removes the only path to a Critical finding** on the live surface.
+**The live `wzrd-rails` program is in good shape.** A prior audit pass found 0 Critical / 0 High and resolved its main concerns; this deeper pass (token-flow tracing, reward-accounting math, merkle-proof integrity, and on-chain verification) confirms there are **no Critical and no High severity issues in the live program**. The reward accumulator math (MasterChef-style) is conservation-correct, the four token vaults are donation-safe by construction, and the merkle claim paths are replay-safe and not forgeable. The most important on-chain check -- the CCM Token-2022 mint -- came back clean: it carries only a transfer-fee extension (50 bps, max 5000 CCM). There is **no PermanentDelegate, no TransferHook, no DefaultAccountState**, and both **mintAuthority and freezeAuthority are revoked**, which **removes the only path to a Critical finding** on the live surface.
 
 Three Medium issues remain in the live program, all fixable in a few lines each: an **admin-rotation bug that permanently bricks the per-window cap setter** (proven by an existing failing test, and which triggers on the first planned move to a multisig); an **unbounded lockup duration** that lets a single bad pool-initialization argument permanently lock all stakers' principal; and a **permissionless reward-crank truncation** that strands emissions at high TVL. None risk theft; all degrade availability or control.
 
@@ -156,8 +186,7 @@ This is the **only admin-set scalar the program forgot to bound** -- `reward_rat
 **Impact**:
 Day 1 ships a single global pool, so one bad or typo'd `initialize_pool` argument strands every subsequent staker's principal with no on-chain exit. Low likelihood (admin error/malice at pool creation), conditional-but-severe impact (principal lock). The upgrade authority caps the ceiling.
 
-**PoC Result**:
-Code-trace verified at exact lines (lib.rs:465 store with no bound; :553-556 checked_add; :679-682 gate; grep confirms zero `MAX_LOCK` constant anywhere). The logic is an absence-of-bound with no external state, so the trace is complete and mechanical.
+**PoC Result**: Code-trace verified at exact lines (lib.rs:465 store with no bound; :553-556 checked_add; :679-682 gate; grep confirms zero `MAX_LOCK` constant anywhere). The logic is an absence-of-bound with no external state, so the trace is complete and mechanical.
 
 **Recommendation**:
 Bound `lock_duration_slots` at `initialize_pool` with a `MAX_LOCK_DURATION_SLOTS` (e.g. <= 90 days ~= 19.4M slots) and a sensible minimum, mirroring the existing `MAX_REWARD_RATE_PER_SLOT` / `MAX_PER_WINDOW_CAP_CCM` pattern. Optionally reconsider adding an emergency-withdraw escape hatch.

@@ -2,6 +2,7 @@
 members = [
   "programs/attention-oracle",
   "programs/wzrd-rails",
+  "programs/wzrd-markets",
 ]
 resolver = "2"
 
