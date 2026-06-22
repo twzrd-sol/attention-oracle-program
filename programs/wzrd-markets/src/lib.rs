@@ -121,6 +121,35 @@ pub const MAX_VIRTUAL_LIQUIDITY: u64 = 1_000_000_000_000u64;
 /// Without this, a holder of any residual token permanently blocks protocol cleanup (H-04).
 pub const INVALID_RECOVERY_GRACE_SLOTS: u64 = 216_000;
 
+/// Maximum distance (slots) between `create_market` and the caller-supplied
+/// `resolve_deadline_slot`. ~90 days at 400 ms/slot.  Without an upper bound,
+/// an admin can create a market whose deadline is years away, permanently locking
+/// collateral even when the market is stale (L-01).
+pub const MAX_MARKET_DURATION_SLOTS: u64 = 19_440_000;
+
+// ─── settle_unlock helpers (L-03) ─────────────────────────────────────────────
+// Three callers compute settle_unlock_slot with the same checked_add pattern but
+// from different bases: `resolve_market` anchors from NOW, `extend_dispute_window`
+// anchors from the EXISTING unlock (additive), and `resolve_override` anchors from
+// NOW with a capped window.  Naming the helpers makes the anchor impossible to
+// confuse and the correct anchor auditable at every call site.
+
+/// `resolve_market` anchor: settle_unlock = NOW + window.
+#[inline]
+fn settle_unlock_from_now(now: u64, window_slots: u64) -> Result<u64> {
+    now.checked_add(window_slots)
+        .ok_or_else(|| error!(MarketsError::MathOverflow))
+}
+
+/// `extend_dispute_window` anchor: settle_unlock = OLD_UNLOCK + window (additive,
+/// not from now — gives the full extra window from wherever the clock already is).
+#[inline]
+fn settle_unlock_extend(old_unlock: u64, window_slots: u64) -> Result<u64> {
+    old_unlock
+        .checked_add(window_slots)
+        .ok_or_else(|| error!(MarketsError::MathOverflow))
+}
+
 #[cfg(not(feature = "no-entrypoint"))]
 use solana_security_txt::security_txt;
 
@@ -315,6 +344,12 @@ pub mod wzrd_markets {
         require!(
             resolve_deadline_slot > clock_slot,
             MarketsError::DeadlineInPast
+        );
+        // L-01: upper bound prevents markets with deadlines years in the future,
+        // which would lock collateral indefinitely without any admin recourse.
+        require!(
+            resolve_deadline_slot <= clock_slot.saturating_add(MAX_MARKET_DURATION_SLOTS),
+            MarketsError::DeadlineTooFar
         );
         // H-03: dispute_window_slots must be in a safe range.
         // Too small → disputes mechanically impossible; too large → funds locked ~forever.
@@ -1369,6 +1404,14 @@ pub mod wzrd_markets {
             clock_slot <= market.resolve_deadline_slot,
             MarketsError::ResolutionDeadlinePassed
         );
+        // (2a) L-02: tokens must exist before a resolution can bind supply.
+        // Without this guard an empty market could reach `settle_unlock_slot`
+        // with settled_supply and vault both at zero, satisfying the C-03
+        // override guard spuriously and confusing downstream accounting.
+        require!(
+            market.tokens_initialized,
+            MarketsError::TokensNotInitialized
+        );
         // (3) cap the proof BEFORE folding (conventions §3: cap FIRST).
         require!(
             proof.len() <= resolution::MARKETS_MAX_PROOF_LEN,
@@ -1443,9 +1486,9 @@ pub mod wzrd_markets {
         market.outcome = outcome;
         market.resolved = true;
         market.resolved_at_slot = clock_slot;
-        market.settle_unlock_slot = clock_slot
-            .checked_add(market.dispute_window_slots)
-            .ok_or(MarketsError::MathOverflow)?;
+        // L-03: anchor is NOW (first resolution — window starts from the current slot).
+        market.settle_unlock_slot =
+            settle_unlock_from_now(clock_slot, market.dispute_window_slots)?;
 
         emit!(MarketResolved {
             market: market.key(),
@@ -1485,9 +1528,9 @@ pub mod wzrd_markets {
         );
 
         let old_unlock = market.settle_unlock_slot;
-        market.settle_unlock_slot = old_unlock
-            .checked_add(market.dispute_window_slots)
-            .ok_or(MarketsError::MathOverflow)?;
+        // L-03: anchor is OLD_UNLOCK (additive — gives the full extra window
+        // from wherever the dispute clock already sits, not from now).
+        market.settle_unlock_slot = settle_unlock_extend(old_unlock, market.dispute_window_slots)?;
         market.dispute_extended = true;
 
         emit!(DisputeWindowExtended {
@@ -1534,8 +1577,11 @@ pub mod wzrd_markets {
         let usdc_decimals = ctx.accounts.usdc_mint.decimals;
 
         require!(resolved, MarketsError::MarketNotResolved);
+        // DC-3: strictly AFTER settle_unlock_slot so the boundary slot belongs to
+        // resolve_override (override uses <=, settle uses >, the two windows are
+        // disjoint and override always has priority at the exact boundary).
         require!(
-            clock_slot >= settle_unlock_slot,
+            clock_slot > settle_unlock_slot,
             MarketsError::DisputeWindowOpen
         );
         require!(
@@ -1682,10 +1728,12 @@ pub mod wzrd_markets {
         let old_outcome = market.outcome;
         market.outcome = new_outcome;
         // Restart a bounded re-dispute window.
+        // L-03: anchor is NOW (fresh window after override, same as resolve_market).
         let redispute = market.dispute_window_slots.min(OVERRIDE_REDISPUTE_SLOTS);
-        market.settle_unlock_slot = clock_slot
-            .checked_add(redispute)
-            .ok_or(MarketsError::MathOverflow)?;
+        market.settle_unlock_slot = settle_unlock_from_now(clock_slot, redispute)?;
+        // L-05: reset the extension flag so the new post-override window can be
+        // extended once if needed — an override is functionally a fresh resolution.
+        market.dispute_extended = false;
 
         emit!(ResolutionOverridden {
             market: market.key(),

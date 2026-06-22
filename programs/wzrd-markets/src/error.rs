@@ -189,4 +189,8 @@ pub enum MarketsError {
 
     #[msg("Collateral mint carries a dangerous Token-2022 extension: PermanentDelegate, TransferHook, or frozen DefaultAccountState (M-01).")]
     DangerousMintExtension = 51,
+
+    // ─── Audit Phase 4 Low fixes ───────────────────────────────────────────────
+    #[msg("resolve_deadline_slot is too far in the future (exceeds MAX_MARKET_DURATION_SLOTS from now).")]
+    DeadlineTooFar = 52,
 }
