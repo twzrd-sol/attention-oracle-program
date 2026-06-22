@@ -234,3 +234,24 @@ pub struct MarketClosed {
     pub rent_recipient: Pubkey,
     pub slot: u64,
 }
+
+/// Emitted by `set_admin` (audit C-02 step 1). The current admin proposed a new
+/// admin; not effective until `accept_admin`. `pending_admin == Pubkey::default()`
+/// means a pending rotation was cancelled.
+#[event]
+pub struct AdminRotationProposed {
+    pub config: Pubkey,
+    pub current_admin: Pubkey,
+    pub pending_admin: Pubkey,
+    pub slot: u64,
+}
+
+/// Emitted by `accept_admin` (audit C-02 step 2). The proposed admin accepted;
+/// `admin` is now `new_admin` and the pending slot was cleared.
+#[event]
+pub struct AdminRotated {
+    pub config: Pubkey,
+    pub old_admin: Pubkey,
+    pub new_admin: Pubkey,
+    pub slot: u64,
+}

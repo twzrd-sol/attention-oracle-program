@@ -173,7 +173,13 @@ fn initialize_markets_config_works() {
         parsed.next_market_id, 0,
         "next_market_id starts at 0 (Phase 1 counter)"
     );
-    assert_eq!(parsed._reserved, [0u8; 47], "reserved zero-initialized");
+    // Audit C-02: no admin rotation in flight at init.
+    assert_eq!(
+        parsed.pending_admin,
+        Pubkey::default(),
+        "pending_admin starts at the zero sentinel (no rotation)"
+    );
+    assert_eq!(parsed._reserved, [0u8; 15], "reserved zero-initialized");
 }
 
 #[test]

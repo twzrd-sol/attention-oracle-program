@@ -1841,23 +1841,83 @@ fn func_invalid_routes_to_redeem() {
             SET_AMOUNT,
         )],
     );
-    // redeem_complete_set guards on !resolved (MarketResolved). An INVALID market
-    // is resolved, so this path is REFUSED — INVALID recovery is a distinct
-    // concern documented for Phase 3 follow-up. Assert the guard fires so the
-    // behavior is pinned (not silently wrong).
-    match redeem {
-        Ok(_) => {
-            // If the program allows redeem on INVALID, the depositor is made whole.
-            assert_eq!(
-                read_token_balance(&f.svm, &f.depositor_usdc),
-                usdc_before + SET_AMOUNT,
-                "INVALID redeem made whole 1:1"
-            );
-        }
-        Err(_) => {
-            assert_markets_error(redeem, MarketsError::MarketResolved);
-        }
-    }
+    // Audit C-01 fix: redeem_complete_set STAYS OPEN for an INVALID market, so
+    // the depositor recovers collateral 1:1. (Pre-fix this was refused with
+    // MarketResolved, and since settle also refused INVALID, 100% of collateral
+    // was permanently locked — the C-01 Critical.) This is now a HARD assertion:
+    // redeem MUST succeed and the depositor MUST be made whole.
+    redeem.expect("C-01: INVALID redeem must succeed (collateral recoverable 1:1)");
+    assert_eq!(
+        read_token_balance(&f.svm, &f.depositor_usdc),
+        usdc_before + SET_AMOUNT,
+        "C-01: INVALID redeem made whole 1:1"
+    );
+}
+
+/// Audit C-03 PoC: `resolve_override` is FORBIDDEN once any settlement has
+/// occurred. Pre-fix, an override could flip the outcome AFTER winners settled
+/// (draining the vault) without resetting `settled_supply`, so the new winners
+/// would settle against an already-drained vault. The fix gates override on
+/// `settled_supply == 0`.
+#[test]
+fn func_c03_override_after_settle_forbidden() {
+    let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
+    let mut f = setup_funded(root, 100, future_deadline_slot());
+
+    // Resolve YES.
+    send_tx(
+        &mut f.svm,
+        &[&f.publisher],
+        &[build_resolve_market_ix(
+            legacy_from_signer(&f.publisher),
+            f.config,
+            f.market,
+            WINDOW_ID,
+            OBSERVED_VALUE,
+            resolution::outcome::YES,
+            proof,
+        )],
+    );
+
+    // Warp to the settle window and settle a winning amount (settled_supply > 0).
+    let market: Market = read_anchor_account(&f.svm, &f.market);
+    f.svm.warp_to_slot(market.settle_unlock_slot);
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.depositor],
+        &[build_settle_ix(
+            legacy_from_signer(&f.depositor),
+            f.market,
+            f.config,
+            f.usdc_mint,
+            f.yes_mint,
+            f.no_mint,
+            f.vault,
+            f.depositor_usdc,
+            f.depositor_yes,
+            f.depositor_no,
+            SET_AMOUNT,
+        )],
+    );
+    let market: Market = read_anchor_account(&f.svm, &f.market);
+    assert!(market.settled_supply > 0, "a settle occurred");
+
+    // Now an override (within the window, valid multisig) must be REFUSED because
+    // settlement has begun. Re-arm a window first via the same slot constraints:
+    // override requires clock <= settle_unlock_slot, which still holds right after
+    // settle in the same slot.
+    let bad = try_send_tx(
+        &mut f.svm,
+        &[&f.resolver_multisig],
+        &[build_resolve_override_ix(
+            legacy_from_signer(&f.resolver_multisig),
+            f.config,
+            f.market,
+            resolution::outcome::NO,
+        )],
+    );
+    assert_markets_error(bad, MarketsError::OverrideAfterSettle);
 }
 
 /// §9.4 — resolve_override authorization: wrong signer is rejected
