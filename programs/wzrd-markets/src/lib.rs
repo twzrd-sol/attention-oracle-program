@@ -192,7 +192,9 @@ pub mod wzrd_markets {
         config.next_market_id = 0;
         config.default_dispute_window_slots = default_dispute_window_slots;
         config.resolver_threshold = resolver_threshold;
-        config._reserved = [0u8; 47];
+        // Audit C-02: no admin rotation in flight at init.
+        config.pending_admin = Pubkey::default();
+        config._reserved = [0u8; 15];
 
         emit!(MarketsConfigInitialized {
             config: config_key,
@@ -467,7 +469,17 @@ pub mod wzrd_markets {
             ctx.accounts.market.tokens_initialized,
             MarketsError::TokensNotInitialized
         );
-        require!(!ctx.accounts.market.resolved, MarketsError::MarketResolved);
+        // Audit C-01 fix: the complete-set redeem rail STAYS OPEN for an INVALID
+        // resolution (as `resolution::outcome` documents), so collateral is
+        // recoverable 1:1 when neither side won. NO/YES resolved markets still
+        // route to `settle`. Burning a complete set returns exactly its backing,
+        // so MR-1 is preserved. Pre-fix, an INVALID market with live supply had no
+        // exit (redeem refused resolved, settle refused INVALID) -> 100% lock.
+        require!(
+            !ctx.accounts.market.resolved
+                || ctx.accounts.market.outcome == resolution::outcome::INVALID,
+            MarketsError::MarketResolved
+        );
         require!(amount > 0, MarketsError::ZeroAmount);
 
         // Clean pre-check (the burn CPI would also fail, but this gives a typed
@@ -1111,6 +1123,61 @@ pub mod wzrd_markets {
         Ok(())
     }
 
+    /// Audit C-02 — step 1 of admin rotation: the current admin PROPOSES a new
+    /// admin. Stored in `pending_admin`; not effective until `accept_admin`.
+    /// Passing `Pubkey::default()` cancels a pending rotation. This closes the
+    /// no-rotation SPOF (a compromised/lost single admin key was previously
+    /// unrecoverable on-chain).
+    pub fn set_admin(ctx: Context<AdminConfig>, new_admin: Pubkey) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.config.admin,
+            MarketsError::Unauthorized
+        );
+        // The proposed admin must not equal the current admin (no-op) unless it is
+        // the zero sentinel used to cancel a pending rotation.
+        require!(
+            new_admin != ctx.accounts.config.admin,
+            MarketsError::InvalidPubkey
+        );
+        let config = &mut ctx.accounts.config;
+        config.pending_admin = new_admin;
+        emit!(AdminRotationProposed {
+            config: config.key(),
+            current_admin: config.admin,
+            pending_admin: new_admin,
+            slot: Clock::get()?.slot,
+        });
+        Ok(())
+    }
+
+    /// Audit C-02 — step 2 of admin rotation: the PROPOSED admin accepts, signing
+    /// for itself. Promotes `pending_admin` to `admin` and clears the pending
+    /// slot. The 2-step handshake prevents transferring admin to a key that
+    /// cannot sign (typo / dead address).
+    pub fn accept_admin(ctx: Context<AcceptAdmin>) -> Result<()> {
+        let config = &mut ctx.accounts.config;
+        require!(
+            config.pending_admin != Pubkey::default(),
+            MarketsError::NoPendingAdmin
+        );
+        require_keys_eq!(
+            ctx.accounts.new_admin.key(),
+            config.pending_admin,
+            MarketsError::Unauthorized
+        );
+        let old_admin = config.admin;
+        config.admin = config.pending_admin;
+        config.pending_admin = Pubkey::default();
+        emit!(AdminRotated {
+            config: config.key(),
+            old_admin,
+            new_admin: config.admin,
+            slot: Clock::get()?.slot,
+        });
+        Ok(())
+    }
+
     /// Phase 3 — publish an attention merkle root for one resolution window.
     ///
     /// Mirrors rails `publish_listen_payout_root` (H-01-hardened). The allow-listed
@@ -1501,6 +1568,17 @@ pub mod wzrd_markets {
         require!(
             clock_slot <= market.settle_unlock_slot,
             MarketsError::OverrideWindowClosed
+        );
+        // Audit C-03 fix: forbid an override once ANY settlement has occurred.
+        // Pre-fix, an override could flip the outcome AFTER winners had settled
+        // (draining the vault) without resetting `settled_supply`, so the new
+        // winners would settle against an already-drained vault (collateral
+        // mis-paid + tail-settler DoS, and override->INVALID could then lock the
+        // residual via C-01). Gating on `settled_supply == 0` means a correction
+        // is only possible before funds have moved, keeping the vault solvent.
+        require!(
+            market.settled_supply == 0,
+            MarketsError::OverrideAfterSettle
         );
         // The corrected value must be a real resolution value (NO/YES/INVALID).
         require!(
@@ -2509,6 +2587,21 @@ pub struct InitializeAttentionRootConfig<'info> {
 #[derive(Accounts)]
 pub struct AdminConfig<'info> {
     pub admin: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [MARKETS_CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, MarketsConfig>,
+}
+
+/// Accounts for `accept_admin` (audit C-02 step 2): the PROPOSED admin signs for
+/// itself to complete the 2-step rotation. Authorization (signer == pending_admin)
+/// is enforced in the handler.
+#[derive(Accounts)]
+pub struct AcceptAdmin<'info> {
+    pub new_admin: Signer<'info>,
 
     #[account(
         mut,
