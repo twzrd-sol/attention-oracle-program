@@ -63,6 +63,9 @@ pub enum RailsError {
 
     #[msg("Lock duration exceeds the configured maximum (would brick unstake).")]
     LockDurationTooLong = 18,
+
+    #[msg("Stake pool account has an unexpected size; realloc migration expects the legacy 61-byte layout.")]
+    StakePoolUnexpectedSize = 19,
 }
 
 #[error_code]

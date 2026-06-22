@@ -40,9 +40,9 @@ use wzrd_rails::{
         InitPayoutCapConfigArgs, InitPayoutVaultConfigArgs, ListenPayoutClaimed,
         PayoutAdminRotated, PayoutAllowlistUpdated, PayoutAuthorityConfig, PayoutCapConfig,
         PayoutCapUpdated, PayoutPauseChanged, PayoutVaultConfig, PayoutWindow,
-        PayoutWindowPublished, PublishListenPayoutRootArgs, SetPausedArgs, SetPayoutAdminArgs,
-        SetPayoutAuthorityAllowlistArgs, SetPerWindowCcmCapArgs, StakePool, UserStake,
-        COMPENSATION_LEAF_DOMAIN, COMP_CLAIMED_SEED, COMP_VAULT_SEED, CONFIG_SEED,
+        PayoutWindowPublished, PoolReallocated, PublishListenPayoutRootArgs, SetPausedArgs,
+        SetPayoutAdminArgs, SetPayoutAuthorityAllowlistArgs, SetPerWindowCcmCapArgs, StakePool,
+        UserStake, COMPENSATION_LEAF_DOMAIN, COMP_CLAIMED_SEED, COMP_VAULT_SEED, CONFIG_SEED,
         LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED, LISTEN_PAYOUT_CAP_CONFIG_SEED,
         LISTEN_PAYOUT_VAULT_AUTHORITY_SEED, LISTEN_PAYOUT_VAULT_CONFIG_SEED,
         LISTEN_PAYOUT_WINDOW_SEED, MAX_LEAVES_PER_WINDOW, MAX_PER_WINDOW_CAP_CCM, MAX_PROOF_LEN,
@@ -2946,4 +2946,230 @@ fn claim_listen_payout_rejects_when_cumulative_exceeds_total_amount_ccm() {
     let win: PayoutWindow =
         read_anchor_account(&env.svm, &derive_payout_window(PAYOUT_WINDOW_ID).0);
     assert_eq!(win.claimed_so_far, amounts[0]);
+}
+
+// ───────────────────────── Audit M-03: pool realloc migration ────────────────
+//
+// These tests prove the full migration path for the `reward_remainder` field
+// add (StakePool 61 → 77 bytes). The acceptance gate is that the migration
+// works on an OLD 61-byte account that mimics the live mainnet pool 0:
+//   1. A raw 61-byte StakePool account is installed via set_account.
+//   2. update_pool / stake on it FAIL to deserialize (proves the binary cannot
+//      read the legacy account — the reason realloc is required).
+//   3. realloc_stake_pool(0) as admin succeeds and grows the account to 77 bytes.
+//   4. update_pool now works; reward_remainder == 0; accrual carries remainder.
+//   5. A second realloc_stake_pool(0) is idempotent (already 77 → Ok).
+
+/// Raw little-endian serialization of the PRE-M-03 (legacy 61-byte) StakePool,
+/// i.e. the on-chain layout of the live pool 0 before this fix. Deliberately
+/// hand-rolled (no `reward_remainder`) so the test exercises the real migration
+/// from old bytes, not a struct that already has the new field.
+fn legacy_stake_pool_bytes(
+    pool_id: u32,
+    total_staked: u64,
+    acc_reward_per_share: u128,
+    reward_rate_per_slot: u64,
+    last_update_slot: u64,
+    lock_duration_slots: u64,
+    bump: u8,
+) -> Vec<u8> {
+    let mut data = Vec::with_capacity(StakePool::LEGACY_LEN);
+    data.extend_from_slice(<StakePool as anchor_lang::Discriminator>::DISCRIMINATOR);
+    data.extend_from_slice(&pool_id.to_le_bytes());
+    data.extend_from_slice(&total_staked.to_le_bytes());
+    data.extend_from_slice(&acc_reward_per_share.to_le_bytes());
+    data.extend_from_slice(&reward_rate_per_slot.to_le_bytes());
+    data.extend_from_slice(&last_update_slot.to_le_bytes());
+    data.extend_from_slice(&lock_duration_slots.to_le_bytes());
+    data.push(bump);
+    assert_eq!(
+        data.len(),
+        StakePool::LEGACY_LEN,
+        "legacy layout must be 61 bytes"
+    );
+    data
+}
+
+/// Overwrite the pool PDA with a raw legacy 61-byte account owned by the
+/// program, preserving enough lamports for the legacy size (the realloc tops up
+/// the rest). This simulates the live pre-migration pool 0.
+fn install_legacy_pool(env: &mut TestEnv, bytes: Vec<u8>) {
+    let rent = env
+        .svm
+        .minimum_balance_for_rent_exemption(StakePool::LEGACY_LEN);
+    let account = solana_account::Account {
+        lamports: rent,
+        data: bytes,
+        owner: address_from_legacy(&WZRD_RAILS_PROGRAM_ID),
+        executable: false,
+        rent_epoch: 0,
+    };
+    env.svm
+        .set_account(address_from_legacy(&env.pool), account)
+        .expect("set_account legacy pool");
+}
+
+fn build_realloc_stake_pool_ix(
+    config: LegacyPubkey,
+    pool: LegacyPubkey,
+    admin: LegacyPubkey,
+) -> LegacyInstruction {
+    LegacyInstruction {
+        program_id: WZRD_RAILS_PROGRAM_ID,
+        accounts: rail_accounts::ReallocStakePool {
+            config,
+            pool,
+            admin,
+            system_program: system_program::ID,
+        }
+        .to_account_metas(None),
+        data: rail_ix::ReallocStakePool { pool_id: POOL_ID }.data(),
+    }
+}
+
+fn build_update_pool_ix(pool: LegacyPubkey, config: LegacyPubkey) -> LegacyInstruction {
+    LegacyInstruction {
+        program_id: WZRD_RAILS_PROGRAM_ID,
+        accounts: rail_accounts::UpdatePool { pool, config }.to_account_metas(None),
+        data: rail_ix::UpdatePool { _pool_id: POOL_ID }.data(),
+    }
+}
+
+fn pool_data_len(env: &TestEnv, pool: &LegacyPubkey) -> usize {
+    env.svm
+        .get_account(&address_from_legacy(pool))
+        .expect("pool account exists")
+        .data
+        .len()
+}
+
+/// FULL MIGRATION PATH on an old 61-byte pool that mimics live pool 0.
+#[test]
+fn realloc_stake_pool_migrates_legacy_pool_full_path() {
+    let mut env = setup_rails();
+
+    // Read the real (77-byte) pool the harness just created so we can reuse its
+    // bump/last_update_slot, then OVERWRITE it with a 61-byte legacy account
+    // carrying live-pool-like values (large total_staked, rate=1000).
+    let real_pool: StakePool = read_anchor_account(&env.svm, &env.pool);
+    let live_total_staked: u64 = 3_116_139_772_974_855;
+    let live_rate: u64 = 1_000;
+    let legacy = legacy_stake_pool_bytes(
+        POOL_ID,
+        live_total_staked,
+        7_777, // some pre-existing acc_reward_per_share
+        live_rate,
+        real_pool.last_update_slot,
+        real_pool.lock_duration_slots,
+        real_pool.bump,
+    );
+    install_legacy_pool(&mut env, legacy);
+    assert_eq!(pool_data_len(&env, &env.pool), StakePool::LEGACY_LEN);
+
+    // STEP 2: update_pool MUST fail to deserialize the legacy 61-byte account
+    // against the new 77-byte struct — this is exactly why realloc is needed.
+    let pre = build_update_pool_ix(env.pool, env.config);
+    let pre_result = try_send_tx(&mut env.svm, &[&env.admin], &[pre]);
+    assert!(
+        pre_result.is_err(),
+        "update_pool must fail on the un-migrated 61-byte pool"
+    );
+
+    // STEP 3: admin runs the migration. It must succeed and grow to 77 bytes.
+    env.svm.expire_blockhash();
+    let admin_pubkey = env.admin_pubkey();
+    let ix = build_realloc_stake_pool_ix(env.config, env.pool, admin_pubkey);
+    let meta = send_tx_with_metadata(&mut env.svm, &[&env.admin], &[ix]);
+    assert_eq!(
+        pool_data_len(&env, &env.pool),
+        StakePool::LEN,
+        "pool must be 77 bytes after migration"
+    );
+
+    // Event sanity: PoolReallocated reports the 61 → 77 transition.
+    let event: PoolReallocated = decode_anchor_event(&meta.logs);
+    assert_eq!(event.old_size, StakePool::LEGACY_LEN as u64);
+    assert_eq!(event.new_size, StakePool::LEN as u64);
+    assert_eq!(event.pool_id, POOL_ID);
+
+    // STEP 4: the migrated pool deserializes; reward_remainder starts at 0 and
+    // all legacy fields are preserved bit-for-bit.
+    let migrated: StakePool = read_anchor_account(&env.svm, &env.pool);
+    assert_eq!(migrated.reward_remainder, 0, "new field zero-initialized");
+    assert_eq!(migrated.total_staked, live_total_staked);
+    assert_eq!(migrated.reward_rate_per_slot, live_rate);
+    assert_eq!(migrated.acc_reward_per_share, 7_777);
+    assert_eq!(migrated.bump, real_pool.bump);
+
+    // update_pool now works AND carries the truncation remainder. At this scale
+    // one slot's numerator (1 * 1000 * 1e12 = 1e15) is below total_staked, so
+    // acc_reward_per_share is unchanged but reward_remainder captures the dust.
+    env.svm.expire_blockhash();
+    let next_slot = migrated.last_update_slot + 1;
+    warp_to_slot(&mut env, next_slot);
+    let post = build_update_pool_ix(env.pool, env.config);
+    send_tx(&mut env.svm, &[&env.admin], &[post]);
+
+    let after: StakePool = read_anchor_account(&env.svm, &env.pool);
+    assert_eq!(
+        after.last_update_slot, next_slot,
+        "accrual advanced the slot"
+    );
+    assert_eq!(
+        after.acc_reward_per_share, 7_777,
+        "single-slot increment floors to 0 at live scale"
+    );
+    assert_eq!(
+        after.reward_remainder,
+        1u128 * live_rate as u128 * StakePool::REWARD_SCALE,
+        "the dust that the OLD code burned is now carried"
+    );
+
+    // STEP 5: idempotency — a second migration on the already-77-byte pool is a
+    // no-op success (no error, size unchanged).
+    env.svm.expire_blockhash();
+    let ix2 = build_realloc_stake_pool_ix(env.config, env.pool, env.admin_pubkey());
+    let again = try_send_tx(&mut env.svm, &[&env.admin], &[ix2]);
+    assert!(again.is_ok(), "second realloc must be idempotent Ok");
+    assert_eq!(pool_data_len(&env, &env.pool), StakePool::LEN);
+}
+
+/// realloc_stake_pool on a freshly-init'd (already-77-byte) pool is a no-op
+/// success. Complements the full-path test's idempotency leg with the
+/// already-migrated genesis case.
+#[test]
+fn realloc_stake_pool_is_idempotent_on_fresh_pool() {
+    let mut env = setup_rails();
+    assert_eq!(pool_data_len(&env, &env.pool), StakePool::LEN);
+
+    let admin_pubkey = env.admin_pubkey();
+    let ix = build_realloc_stake_pool_ix(env.config, env.pool, admin_pubkey);
+    let result = try_send_tx(&mut env.svm, &[&env.admin], &[ix]);
+    assert!(
+        result.is_ok(),
+        "realloc on an already-77-byte pool must succeed"
+    );
+    assert_eq!(pool_data_len(&env, &env.pool), StakePool::LEN);
+
+    // Pool still deserializes and is otherwise untouched.
+    let pool: StakePool = read_anchor_account(&env.svm, &env.pool);
+    assert_eq!(pool.reward_remainder, 0);
+    assert_eq!(pool.pool_id, POOL_ID);
+}
+
+/// realloc_stake_pool is admin-gated: a non-admin signer is rejected by the
+/// Config `has_one = admin` constraint before any resize.
+#[test]
+fn realloc_stake_pool_rejects_non_admin() {
+    let mut env = setup_rails();
+    let outsider = Keypair::new();
+    env.svm
+        .airdrop(&outsider.pubkey(), 100_000_000_000)
+        .unwrap();
+
+    let ix = build_realloc_stake_pool_ix(env.config, env.pool, legacy_from_signer(&outsider));
+    assert_rails_error(
+        try_send_tx(&mut env.svm, &[&outsider], &[ix]),
+        RailsError::Unauthorized,
+    );
 }
