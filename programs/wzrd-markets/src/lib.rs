@@ -131,6 +131,18 @@ pub const INVALID_RECOVERY_GRACE_SLOTS: u64 = 216_000;
 /// `resolve_deadline_slot`. ~90 days at 400 ms/slot.  Without an upper bound,
 /// an admin can create a market whose deadline is years away, permanently locking
 /// collateral even when the market is stale (L-01).
+///
+/// NOTE (L-03): This constant bounds the *resolution deadline only*, not the total
+/// fund-lock period.  User collateral is unlocked at `settle_unlock_slot`, which is
+/// set at resolution time and can extend beyond this window.  Worst-case stack:
+///   resolve_deadline  ≤ MAX_MARKET_DURATION_SLOTS  (~90 days)
+///   + dispute window  ≤ MAX_DISPUTE_WINDOW_SLOTS   (~30 days, added at resolve)
+///   + one extension   ≤ MAX_DISPUTE_WINDOW_SLOTS   (~30 days, additive from unlock)
+///   ─────────────────────────────────────────────────────────────────────────────
+///   max fund lock                                  (~150 days)
+///
+/// UIs, SDKs, and user agreements should document the ~150-day worst-case lock
+/// rather than the ~90-day value implied by this constant alone.
 pub const MAX_MARKET_DURATION_SLOTS: u64 = 19_440_000;
 
 // ─── settle_unlock helpers (L-03) ─────────────────────────────────────────────
