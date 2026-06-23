@@ -18,14 +18,20 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_2022::{Token2022, ID as TOKEN_2022_PROGRAM_ID};
 use anchor_spl::token_interface::{
-    self, Burn, Mint as MintInterface, MintTo, TokenAccount as TokenAccountInterface,
-    TokenInterface, TransferChecked,
+    self, Burn, CloseAccount, Mint as MintInterface, MintTo,
+    TokenAccount as TokenAccountInterface, TokenInterface, TransferChecked,
 };
 // M-01: Token-2022 extension introspection — checked at initialize_markets_config time.
 use spl_token_2022::extension::{
+    confidential_transfer::ConfidentialTransferMint,
     default_account_state::DefaultAccountState as MintDefaultAccountState,
-    permanent_delegate::PermanentDelegate, transfer_hook::TransferHook, BaseStateWithExtensions,
-    StateWithExtensions,
+    interest_bearing_mint::InterestBearingConfig,
+    mint_close_authority::MintCloseAuthority,
+    pausable::PausableConfig,
+    permanent_delegate::PermanentDelegate,
+    transfer_fee::TransferFeeConfig,
+    transfer_hook::TransferHook,
+    BaseStateWithExtensions, StateWithExtensions,
 };
 
 pub mod curve;
@@ -125,6 +131,18 @@ pub const INVALID_RECOVERY_GRACE_SLOTS: u64 = 216_000;
 /// `resolve_deadline_slot`. ~90 days at 400 ms/slot.  Without an upper bound,
 /// an admin can create a market whose deadline is years away, permanently locking
 /// collateral even when the market is stale (L-01).
+///
+/// NOTE (L-03): This constant bounds the *resolution deadline only*, not the total
+/// fund-lock period.  User collateral is unlocked at `settle_unlock_slot`, which is
+/// set at resolution time and can extend beyond this window.  Worst-case stack:
+///   resolve_deadline  ≤ MAX_MARKET_DURATION_SLOTS  (~90 days)
+///   + dispute window  ≤ MAX_DISPUTE_WINDOW_SLOTS   (~30 days, added at resolve)
+///   + one extension   ≤ MAX_DISPUTE_WINDOW_SLOTS   (~30 days, additive from unlock)
+///   ─────────────────────────────────────────────────────────────────────────────
+///   max fund lock                                  (~150 days)
+///
+/// UIs, SDKs, and user agreements should document the ~150-day worst-case lock
+/// rather than the ~90-day value implied by this constant alone.
 pub const MAX_MARKET_DURATION_SLOTS: u64 = 19_440_000;
 
 // ─── settle_unlock helpers (L-03) ─────────────────────────────────────────────
@@ -237,11 +255,17 @@ pub mod wzrd_markets {
             MarketsError::InvalidThreshold
         );
 
-        // M-01: If the mint account is present on-chain (data len > standard SPL Mint =
-        // 82 bytes), check for dangerous Token-2022 extensions that could allow the
-        // mint authority or a hook program to drain the vault post-init.
+        // M-01 (L-01 fix): Reject dangerous Token-2022 extensions on the collateral mint.
+        // Owner must be token-2022 program (catches plain-SPL or uninitialized UncheckedAccount
+        // passed by a malicious admin). Data must be >= 82 bytes (standard Mint layout).
+        require_keys_eq!(
+            *ctx.accounts.usdc_mint.owner,
+            spl_token_2022::id(),
+            MarketsError::InvalidMarketState
+        );
         {
             let data = ctx.accounts.usdc_mint.try_borrow_data()?;
+            require!(data.len() >= 82, MarketsError::InvalidMarketState);
             if data.len() > 82 {
                 let mint_with_ext =
                     StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&data)
@@ -263,6 +287,26 @@ pub mod wzrd_markets {
                         u8::from(ext.state) != spl_token_2022::state::AccountState::Frozen as u8,
                         MarketsError::DangerousMintExtension
                     );
+                }
+                // MintCloseAuthority: authority can destroy the mint and zero all vault accounts.
+                if mint_with_ext.get_extension::<MintCloseAuthority>().is_ok() {
+                    return Err(MarketsError::DangerousMintExtension.into());
+                }
+                // TransferFeeConfig: silent fee deduction on each transfer causes accounting gap.
+                if mint_with_ext.get_extension::<TransferFeeConfig>().is_ok() {
+                    return Err(MarketsError::DangerousMintExtension.into());
+                }
+                // ConfidentialTransferMint: encrypted balances break plaintext accounting model.
+                if mint_with_ext.get_extension::<ConfidentialTransferMint>().is_ok() {
+                    return Err(MarketsError::DangerousMintExtension.into());
+                }
+                // PausableConfig: mint authority can freeze all transfers, blocking settlement.
+                if mint_with_ext.get_extension::<PausableConfig>().is_ok() {
+                    return Err(MarketsError::DangerousMintExtension.into());
+                }
+                // InterestBearingConfig: silently inflates reported balances, corrupting NAV.
+                if mint_with_ext.get_extension::<InterestBearingConfig>().is_ok() {
+                    return Err(MarketsError::DangerousMintExtension.into());
                 }
             }
         }
@@ -1846,11 +1890,40 @@ pub mod wzrd_markets {
                 clock_slot.saturating_sub(market.settle_unlock_slot) > INVALID_RECOVERY_GRACE_SLOTS;
             require!(past_grace, MarketsError::SupplyNotZero);
         }
-        // Vault drained to dust (rounding residue only).
-        require!(
-            ctx.accounts.vault.amount <= MARKET_CLOSE_DUST_THRESHOLD,
-            MarketsError::VaultNotDrained
-        );
+        // Vault must be drained to dust (rounding residue only).
+        let dust = ctx.accounts.vault.amount;
+        require!(dust <= MARKET_CLOSE_DUST_THRESHOLD, MarketsError::VaultNotDrained);
+
+        // L-02 fix: burn dust + close vault in handler body so the Market PDA is
+        // still a valid CPI signer. Anchor's `close =` on Market PDA runs AFTER
+        // this handler returns, so ordering is: burn → close_account → [market close].
+        let market_id_bytes = ctx.accounts.market.market_id.to_le_bytes();
+        let market_bump = ctx.accounts.market.bump;
+        let market_seeds: &[&[u8]] = &[MARKET_SEED, market_id_bytes.as_ref(), &[market_bump]];
+        if dust > 0 {
+            token_interface::burn(
+                CpiContext::new_with_signer(
+                    ctx.accounts.usdc_token_program.to_account_info(),
+                    Burn {
+                        mint: ctx.accounts.usdc_mint.to_account_info(),
+                        from: ctx.accounts.vault.to_account_info(),
+                        authority: ctx.accounts.market.to_account_info(),
+                    },
+                    &[market_seeds],
+                ),
+                dust,
+            )?;
+        }
+        // Close the vault token account; rent lamports go to rent_recipient.
+        token_interface::close_account(CpiContext::new_with_signer(
+            ctx.accounts.usdc_token_program.to_account_info(),
+            CloseAccount {
+                account: ctx.accounts.vault.to_account_info(),
+                destination: ctx.accounts.rent_recipient.to_account_info(),
+                authority: ctx.accounts.market.to_account_info(),
+            },
+            &[market_seeds],
+        ))?;
 
         emit!(MarketClosed {
             market: ctx.accounts.market.key(),
@@ -3061,12 +3134,29 @@ pub struct CloseMarket<'info> {
     #[account(address = market.no_mint @ MarketsError::AccountMismatch)]
     pub no_mint: Box<InterfaceAccount<'info, MintInterface>>,
 
-    /// USDC vault (read for the dust guard).
-    #[account(address = market.vault @ MarketsError::AccountMismatch)]
+    /// USDC collateral mint — needed for the dust-burn CPI (L-02 fix).
+    #[account(
+        address = config.usdc_mint @ MarketsError::InvalidMarketState,
+        mint::token_program = usdc_token_program,
+    )]
+    pub usdc_mint: Box<InterfaceAccount<'info, MintInterface>>,
+
+    /// USDC vault — dust burned then closed manually via close_account CPI in the
+    /// handler body, before the Market PDA is zeroed by Anchor's `close =` (L-02 fix).
+    #[account(
+        mut,
+        address = market.vault @ MarketsError::AccountMismatch,
+        token::mint = usdc_mint,
+        token::authority = market,
+        token::token_program = usdc_token_program,
+    )]
     pub vault: Box<InterfaceAccount<'info, TokenAccountInterface>>,
 
-    /// CHECK: rent destination for the closed Market account. Admin-chosen; no
-    /// constraints needed beyond being writable (Anchor `close` credits it).
+    /// CHECK: rent destination for the closed Market and vault accounts. Admin-chosen;
+    /// no constraints needed beyond being writable (Anchor `close` credits it).
     #[account(mut)]
     pub rent_recipient: UncheckedAccount<'info>,
+
+    /// Token program backing USDC (required for the dust-burn and vault close CPIs).
+    pub usdc_token_program: Interface<'info, TokenInterface>,
 }
