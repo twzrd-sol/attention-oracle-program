@@ -770,10 +770,12 @@ fn build_sweep_residual_ix(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_close_market_ix(
     admin: LegacyPubkey,
     config: LegacyPubkey,
     market: LegacyPubkey,
+    usdc_mint: LegacyPubkey,
     yes_mint: LegacyPubkey,
     no_mint: LegacyPubkey,
     vault: LegacyPubkey,
@@ -785,10 +787,12 @@ fn build_close_market_ix(
             admin,
             config,
             market,
+            usdc_mint,
             yes_mint,
             no_mint,
             vault,
             rent_recipient,
+            usdc_token_program: spl_token_2022::id(),
         }
         .to_account_metas(None),
         data: markets_ix::CloseMarket {}.data(),
@@ -937,6 +941,15 @@ fn setup_funded(resolution_root: [u8; 32], dispute_window_slots: u64, deadline: 
     let (root_config, _rc_bump) = attention_root_config_pda();
     let usdc_mint = legacy_from_signer(&usdc_mint_kp);
 
+    // 0) "USDC" mint FIRST — initialize_markets_config (M-01/L-01 fix) validates
+    // the collateral mint account (owner == token-2022), so it must exist.
+    create_plain_token_2022_mint(
+        &mut svm,
+        &admin,
+        &usdc_mint_kp,
+        &legacy_from_signer(&usdc_mint_authority),
+    );
+
     // 1) config — resolver_multisig is DISTINCT from admin (resolve/override sep).
     send_tx(
         &mut svm,
@@ -969,13 +982,7 @@ fn setup_funded(resolution_root: [u8; 32], dispute_window_slots: u64, deadline: 
         )],
     );
 
-    // 3) "USDC" mint + fund depositor's USDC ATA.
-    create_plain_token_2022_mint(
-        &mut svm,
-        &admin,
-        &usdc_mint_kp,
-        &legacy_from_signer(&usdc_mint_authority),
-    );
+    // 3) fund depositor's USDC ATA (mint created in step 0).
     let depositor_usdc = create_ata(
         &mut svm,
         &depositor,
@@ -2468,10 +2475,16 @@ fn func_l02_resolve_requires_tokens_initialized() {
 
     let (config2, _) = markets_config_pda();
     let (market2, _) = market_pda(0);
-    // InitializeMarketsConfig uses UncheckedAccount for usdc_mint and only checks
-    // Token-2022 extensions when data.len() > 82; a non-existent account (0 bytes)
-    // skips that check entirely. No mint creation needed for this test.
-    let fake_usdc = LegacyPubkey::new_unique();
+    // InitializeMarketsConfig (M-01/L-01 fix) now validates the collateral mint
+    // (owner == token-2022), so a real mint must exist before config init.
+    let usdc_mint_kp2 = Keypair::new();
+    create_plain_token_2022_mint(
+        &mut svm2,
+        &admin2,
+        &usdc_mint_kp2,
+        &legacy_from_signer(&admin2),
+    );
+    let real_usdc = legacy_from_signer(&usdc_mint_kp2);
 
     send_tx(
         &mut svm2,
@@ -2479,7 +2492,7 @@ fn func_l02_resolve_requires_tokens_initialized() {
         &[build_initialize_markets_config_ix(
             legacy_from_signer(&admin2),
             config2,
-            fake_usdc,
+            real_usdc,
             legacy_from_signer(&resolver2),
         )],
     );
