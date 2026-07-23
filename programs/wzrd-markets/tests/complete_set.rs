@@ -560,7 +560,17 @@ fn setup() -> Fixture {
     let usdc_mint = legacy_from_signer(&usdc_mint_kp);
     let resolver_multisig = legacy_from_signer(&Keypair::new());
 
-    // 1) config
+    // 1) "USDC" mint FIRST — initialize_markets_config (M-01/L-01 fix) now
+    // validates the collateral mint account (owner == token-2022, no dangerous
+    // extensions), so the mint must exist before config init.
+    create_plain_token_2022_mint(
+        &mut svm,
+        &admin,
+        &usdc_mint_kp,
+        &legacy_from_signer(&usdc_mint_authority),
+    );
+
+    // 2) config
     let ix = build_initialize_markets_config_ix(
         legacy_from_signer(&admin),
         config,
@@ -568,14 +578,6 @@ fn setup() -> Fixture {
         resolver_multisig,
     );
     send_tx(&mut svm, &[&admin], &[ix]);
-
-    // 2) "USDC" mint + fund depositor's USDC ATA
-    create_plain_token_2022_mint(
-        &mut svm,
-        &admin,
-        &usdc_mint_kp,
-        &legacy_from_signer(&usdc_mint_authority),
-    );
     let depositor_usdc = create_ata(
         &mut svm,
         &depositor,

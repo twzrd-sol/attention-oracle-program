@@ -18,12 +18,14 @@ use solana_address::Address;
 use solana_instruction::Instruction as ModernInstruction;
 use solana_keypair::Keypair;
 use solana_message::Message;
+use solana_sdk::system_instruction;
 use solana_sdk::{
-    instruction::Instruction as LegacyInstruction, pubkey::Pubkey as LegacyPubkey, system_program,
+    instruction::Instruction as LegacyInstruction, program_pack::Pack,
+    pubkey::Pubkey as LegacyPubkey, system_program,
 };
 use solana_signer::Signer;
 use solana_transaction::Transaction;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use wzrd_markets::{
     accounts as markets_accounts, instruction as markets_ix,
     state::{MarketsConfig, MARKETS_CONFIG_SEED},
@@ -93,6 +95,67 @@ fn markets_config_pda() -> (LegacyPubkey, u8) {
     (LegacyPubkey::new_from_array(addr.to_bytes()), bump)
 }
 
+/// Locate a litesvm-bundled SPL ELF from the cargo registry (same lookup as
+/// complete_set.rs). Needed since the M-01/L-01 fix: initialize_markets_config
+/// validates the collateral mint (owner == token-2022), so a REAL Token-2022
+/// mint must exist before config init even in Phase-0 tests.
+fn find_litesvm_elf(prefix: &str) -> Option<Vec<u8>> {
+    let home = std::env::var("HOME").ok()?;
+    let base = PathBuf::from(home).join(".cargo/registry/src");
+    for index_entry in std::fs::read_dir(base).ok()?.flatten() {
+        for crate_entry in std::fs::read_dir(index_entry.path()).ok()?.flatten() {
+            let name = crate_entry.file_name();
+            if !name
+                .to_str()
+                .is_some_and(|value| value.starts_with("litesvm-"))
+            {
+                continue;
+            }
+            let elf_dir = crate_entry.path().join("src/programs/elf");
+            for elf_entry in std::fs::read_dir(elf_dir).ok()?.flatten() {
+                let name = elf_entry.file_name();
+                if name
+                    .to_str()
+                    .is_some_and(|value| value.starts_with(prefix) && value.ends_with(".so"))
+                {
+                    return std::fs::read(elf_entry.path()).ok();
+                }
+            }
+        }
+    }
+    None
+}
+
+fn load_token_2022_program(svm: &mut LiteSVM) {
+    let bytes =
+        find_litesvm_elf("spl_token_2022").expect("Token-2022 ELF not found in cargo registry");
+    svm.add_program(address_from_legacy(&spl_token_2022::id()), &bytes)
+        .expect("add Token-2022 program");
+}
+
+/// Create a fee-free Token-2022 mint (6 decimals) standing in for USDC.
+fn create_plain_token_2022_mint(svm: &mut LiteSVM, payer: &Keypair, mint: &Keypair) {
+    let payer_pubkey = legacy_from_signer(payer);
+    let mint_pubkey = legacy_from_signer(mint);
+    let rent = svm.minimum_balance_for_rent_exemption(spl_token_2022::state::Mint::LEN);
+    let create_ix = system_instruction::create_account(
+        &payer_pubkey,
+        &mint_pubkey,
+        rent,
+        spl_token_2022::state::Mint::LEN as u64,
+        &spl_token_2022::id(),
+    );
+    let init_ix = spl_token_2022::instruction::initialize_mint2(
+        &spl_token_2022::id(),
+        &mint_pubkey,
+        &payer_pubkey,
+        None,
+        6,
+    )
+    .unwrap();
+    try_send_tx(svm, &[payer, mint], &[create_ix, init_ix]).expect("create token-2022 mint");
+}
+
 fn build_initialize_markets_config_ix(
     admin: LegacyPubkey,
     config: LegacyPubkey,
@@ -124,6 +187,7 @@ fn build_initialize_markets_config_ix(
 fn initialize_markets_config_works() {
     let mut svm = LiteSVM::new();
     load_wzrd_markets_program(&mut svm).expect("load wzrd-markets program");
+    load_token_2022_program(&mut svm);
 
     let admin = Keypair::new();
     svm.airdrop(&admin.pubkey(), 100_000_000_000)
@@ -131,7 +195,9 @@ fn initialize_markets_config_works() {
 
     let (config, expected_bump) = markets_config_pda();
     // Distinct sentinel mints so the assertions catch any field cross-wiring.
-    let usdc_mint = legacy_from_signer(&Keypair::new());
+    let usdc_mint_kp = Keypair::new();
+    create_plain_token_2022_mint(&mut svm, &admin, &usdc_mint_kp);
+    let usdc_mint = legacy_from_signer(&usdc_mint_kp);
     let resolver_multisig = legacy_from_signer(&Keypair::new());
 
     let ix = build_initialize_markets_config_ix(
@@ -186,13 +252,16 @@ fn initialize_markets_config_works() {
 fn initialize_markets_config_is_one_time() {
     let mut svm = LiteSVM::new();
     load_wzrd_markets_program(&mut svm).expect("load wzrd-markets program");
+    load_token_2022_program(&mut svm);
 
     let admin = Keypair::new();
     svm.airdrop(&admin.pubkey(), 100_000_000_000)
         .expect("airdrop admin");
 
     let (config, _bump) = markets_config_pda();
-    let usdc_mint = legacy_from_signer(&Keypair::new());
+    let usdc_mint_kp = Keypair::new();
+    create_plain_token_2022_mint(&mut svm, &admin, &usdc_mint_kp);
+    let usdc_mint = legacy_from_signer(&usdc_mint_kp);
     let resolver_multisig = legacy_from_signer(&Keypair::new());
 
     let ix = build_initialize_markets_config_ix(

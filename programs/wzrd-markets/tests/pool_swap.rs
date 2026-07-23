@@ -725,6 +725,15 @@ fn setup_pool() -> Fixture {
     let usdc_mint = legacy_from_signer(&usdc_mint_kp);
     let resolver_multisig = legacy_from_signer(&Keypair::new());
 
+    // Mint FIRST — initialize_markets_config (M-01/L-01 fix) validates the
+    // collateral mint account (owner == token-2022), so it must exist.
+    create_plain_token_2022_mint(
+        &mut svm,
+        &admin,
+        &usdc_mint_kp,
+        &legacy_from_signer(&usdc_mint_authority),
+    );
+
     send_tx(
         &mut svm,
         &[&admin],
@@ -734,13 +743,6 @@ fn setup_pool() -> Fixture {
             usdc_mint,
             resolver_multisig,
         )],
-    );
-
-    create_plain_token_2022_mint(
-        &mut svm,
-        &admin,
-        &usdc_mint_kp,
-        &legacy_from_signer(&usdc_mint_authority),
     );
 
     let (market, _) = market_pda(MARKET_ID);
