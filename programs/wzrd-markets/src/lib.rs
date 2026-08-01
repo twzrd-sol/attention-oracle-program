@@ -86,11 +86,17 @@ macro_rules! pool_signer_seeds {
     };
 }
 
-// TODO: real program id before deploy. Placeholder keypair generated 2026-06-21
-// solely so Phase 0 compiles + deploys to a local validator; it is NOT the
-// production program id and MUST be replaced (with a vanity/published keypair)
-// before any audit or mainnet deploy.
-declare_id!("DKMJTZgk6obi2BfTyxSuB4P2S4mLW2HGwC7SpTtrCkfG");
+// Live mainnet program id. Deployed 2026-07-07 (slot 431429172) from this
+// source tree; programdata account EX8GDdvw841HGRZSib4fdYjLHcbqhYdocQoCykbErcQW,
+// upgrade authority 2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD.
+//
+// Reproducible build: `cargo build-sbf --manifest-path programs/wzrd-markets/Cargo.toml`
+// emits target/deploy/wzrd_markets.so with
+//   sha256 4f7b14d65629cbcb298d97cba0cc7add236b5619a345b912648c15b5bba0fbcb
+// which is byte-identical to the deployed programdata body (731,120 bytes).
+// Keep this id committed - the deploy previously depended on an uncommitted
+// local edit, which left mainnet unreproducible from any checked-in tree.
+declare_id!("7YZZxQC9JrWwoo1W1fYgxZs6rnbW17iF72mi65vU93sy");
 
 // ─── Phase 3 resolution constants ─────────────────────────────────────────────
 
