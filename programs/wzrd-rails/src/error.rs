@@ -70,7 +70,7 @@ pub enum RailsError {
 
 #[error_code]
 pub enum ListenPayoutError {
-    #[msg("Listen payout publishing and claiming are paused")]
+    #[msg("Listen payout publishing is paused (claims on published windows remain live)")]
     Paused = 100,
 
     #[msg("Authority is not in the publisher allow-list")]
@@ -144,4 +144,13 @@ pub enum ListenPayoutError {
 
     #[msg("Cumulative claimed amount would exceed the published window total")]
     ExceedsWindowTotal = 124,
+
+    #[msg("No payout admin rotation is pending (accept_payout_admin)")]
+    NoPendingPayoutAdmin = 125,
+
+    #[msg("Signer is not the pending payout admin")]
+    NotPendingPayoutAdmin = 126,
+
+    #[msg("Only the live payout admin may pause listen payout publishing")]
+    OnlyPayoutAdminMayPause = 127,
 }
