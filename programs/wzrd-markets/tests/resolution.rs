@@ -2686,3 +2686,399 @@ fn func_l05_override_resets_dispute_extended() {
         "post-override extension consumed the allowance"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plamen Phase-5 verification PoCs (Medium hypotheses H-7 / H-9 / H-10)
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn build_set_admin_ix(
+    admin: LegacyPubkey,
+    config: LegacyPubkey,
+    new_admin: LegacyPubkey,
+) -> LegacyInstruction {
+    LegacyInstruction {
+        program_id: WZRD_MARKETS_PROGRAM_ID,
+        accounts: markets_accounts::AdminConfig { admin, config }.to_account_metas(None),
+        data: markets_ix::SetAdmin {
+            new_admin: anchor_pubkey(new_admin),
+        }
+        .data(),
+    }
+}
+
+fn build_accept_admin_ix(new_admin: LegacyPubkey, config: LegacyPubkey) -> LegacyInstruction {
+    LegacyInstruction {
+        program_id: WZRD_MARKETS_PROGRAM_ID,
+        accounts: markets_accounts::AcceptAdmin { new_admin, config }.to_account_metas(None),
+        data: markets_ix::AcceptAdmin {}.data(),
+    }
+}
+
+/// H-7 / B3-1 / DST-5 / DEC-3 — resolve_override can indefinitely postpone settle.
+///
+/// Observable: each (even no-op) override restarts settle_unlock_slot to
+/// now+min(window, OVERRIDE_REDISPUTE_SLOTS=150) and settle requires strict `>`,
+/// so a resolver that re-calls override before unlock keeps settlement unreachable.
+#[test]
+fn test_plamen_h7_resolve_override_infinite_postpone() {
+    let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
+    // Use the min dispute window so override redispute is also 150 slots.
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
+
+    send_tx(
+        &mut f.svm,
+        &[&f.publisher],
+        &[build_resolve_market_ix(
+            legacy_from_signer(&f.publisher),
+            f.config,
+            f.market,
+            WINDOW_ID,
+            OBSERVED_VALUE,
+            resolution::outcome::YES,
+            proof,
+        )],
+    );
+
+    let after_resolve: Market = read_anchor_account(&f.svm, &f.market);
+    let unlock0 = after_resolve.settle_unlock_slot;
+    assert!(unlock0 > 0, "resolve must set an unlock slot");
+
+    // First no-op override (same outcome YES→YES) restarts the window from NOW.
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.resolver_multisig],
+        &[build_resolve_override_ix(
+            legacy_from_signer(&f.resolver_multisig),
+            f.config,
+            f.market,
+            resolution::outcome::YES, // same outcome — still restarts unlock
+        )],
+    );
+    let after_ov1: Market = read_anchor_account(&f.svm, &f.market);
+    let unlock1 = after_ov1.settle_unlock_slot;
+    assert!(
+        unlock1 >= unlock0,
+        "override must not shrink unlock (got {unlock1} vs prior {unlock0})"
+    );
+    // redispute = min(dispute_window, 150) = 150 for MIN_DISPUTE_WINDOW
+    assert_eq!(
+        after_ov1.dispute_window_slots.min(wzrd_markets::OVERRIDE_REDISPUTE_SLOTS),
+        150
+    );
+
+    // At the original unlock+1, settle would have been available without override.
+    // After override, unlock1 is later (or equal if override was at same slot as resolve,
+    // but still: warp to unlock0+1 and if unlock1 >= unlock0, settle may still be blocked
+    // at unlock0 when unlock1 > unlock0). Force a second postpone after advancing time.
+    f.svm.warp_to_slot(unlock1); // boundary still belongs to override
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.resolver_multisig],
+        &[build_resolve_override_ix(
+            legacy_from_signer(&f.resolver_multisig),
+            f.config,
+            f.market,
+            resolution::outcome::YES,
+        )],
+    );
+    let after_ov2: Market = read_anchor_account(&f.svm, &f.market);
+    let unlock2 = after_ov2.settle_unlock_slot;
+    assert_eq!(
+        unlock2,
+        unlock1 + 150,
+        "second override restarts from NOW(=unlock1): expected unlock1+150, got {unlock2}"
+    );
+
+    // Warp to what would have been settleable after first override (unlock1+1):
+    // still blocked because unlock2 is further out.
+    f.svm.warp_to_slot(unlock1 + 1);
+    f.svm.expire_blockhash();
+    let blocked = try_send_tx(
+        &mut f.svm,
+        &[&f.depositor],
+        &[build_settle_ix(
+            legacy_from_signer(&f.depositor),
+            f.market,
+            f.config,
+            f.usdc_mint,
+            f.yes_mint,
+            f.no_mint,
+            f.vault,
+            f.depositor_usdc,
+            f.depositor_yes,
+            f.depositor_no,
+            SET_AMOUNT,
+        )],
+    );
+    assert_markets_error(blocked, MarketsError::DisputeWindowOpen);
+
+    // And still blocked at unlock2 boundary (strict >).
+    f.svm.warp_to_slot(unlock2);
+    f.svm.expire_blockhash();
+    let at_boundary = try_send_tx(
+        &mut f.svm,
+        &[&f.depositor],
+        &[build_settle_ix(
+            legacy_from_signer(&f.depositor),
+            f.market,
+            f.config,
+            f.usdc_mint,
+            f.yes_mint,
+            f.no_mint,
+            f.vault,
+            f.depositor_usdc,
+            f.depositor_yes,
+            f.depositor_no,
+            SET_AMOUNT,
+        )],
+    );
+    assert_markets_error(at_boundary, MarketsError::DisputeWindowOpen);
+
+    println!(
+        "[H-7] unlock0={unlock0} unlock1={unlock1} unlock2={unlock2} — settle blocked across repeated no-op overrides"
+    );
+}
+
+/// H-9 / B3-2 / DST-6 — accept_admin can set admin==resolver, permanently bricking override.
+#[test]
+fn test_plamen_h9_accept_admin_eq_resolver_bricks_override() {
+    let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
+
+    let resolver_pk = legacy_from_signer(&f.resolver_multisig);
+    let admin_pk = legacy_from_signer(&f.admin);
+
+    // Precondition: init separation held.
+    let cfg0: MarketsConfig = read_anchor_account(&f.svm, &f.config);
+    assert_ne!(cfg0.admin.to_bytes(), cfg0.resolver_multisig.to_bytes());
+
+    // 2-step rotation: propose resolver as new admin, then accept.
+    send_tx(
+        &mut f.svm,
+        &[&f.admin],
+        &[build_set_admin_ix(admin_pk, f.config, resolver_pk)],
+    );
+    let pending: MarketsConfig = read_anchor_account(&f.svm, &f.config);
+    assert_eq!(pending.pending_admin.to_bytes(), resolver_pk.to_bytes());
+
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.resolver_multisig],
+        &[build_accept_admin_ix(resolver_pk, f.config)],
+    );
+    let cfg1: MarketsConfig = read_anchor_account(&f.svm, &f.config);
+    assert_eq!(
+        cfg1.admin.to_bytes(),
+        cfg1.resolver_multisig.to_bytes(),
+        "accept_admin allowed admin==resolver (no re-check)"
+    );
+    assert_eq!(cfg1.pending_admin, Pubkey::default());
+
+    // Resolve so override path is live.
+    send_tx(
+        &mut f.svm,
+        &[&f.publisher],
+        &[build_resolve_market_ix(
+            legacy_from_signer(&f.publisher),
+            f.config,
+            f.market,
+            WINDOW_ID,
+            OBSERVED_VALUE,
+            resolution::outcome::YES,
+            proof,
+        )],
+    );
+
+    // Override by the (only) resolver signer now fails MultisigMemberIsAdmin forever
+    // (resolver is immutable post-init; no set_resolver recovery).
+    f.svm.expire_blockhash();
+    let bad = try_send_tx(
+        &mut f.svm,
+        &[&f.resolver_multisig],
+        &[build_resolve_override_ix(
+            legacy_from_signer(&f.resolver_multisig),
+            f.config,
+            f.market,
+            resolution::outcome::NO,
+        )],
+    );
+    assert_markets_error(bad, MarketsError::MultisigMemberIsAdmin);
+
+    let market: Market = read_anchor_account(&f.svm, &f.market);
+    assert_eq!(
+        market.outcome,
+        resolution::outcome::YES,
+        "override did not apply"
+    );
+    println!("[H-9] admin==resolver → MultisigMemberIsAdmin on resolve_override (permanent brick)");
+}
+
+/// H-10 / B3-3 / DTF-6 / DEC-4 — INVALID leaves asymmetric inventory stranded;
+/// after grace, admin can force-sweep the full vault residual (voiding claims).
+#[test]
+fn test_plamen_h10_invalid_asymmetric_and_grace_void() {
+    let (root, proof) = markets_two_leaf_tree(MARKET_ID, WINDOW_ID, resolution::outcome::YES);
+    let mut f = setup_funded(root, MIN_DISPUTE_WINDOW, future_deadline_slot());
+
+    // Create asymmetric inventory: move all NO to a second wallet before resolution.
+    let other = Keypair::new();
+    f.svm
+        .airdrop(&other.pubkey(), 10_000_000_000)
+        .expect("airdrop other");
+    let other_pk = legacy_from_signer(&other);
+    let other_no = create_ata(&mut f.svm, &f.admin, &other_pk, &f.no_mint);
+
+    let xfer = spl_token_2022::instruction::transfer_checked(
+        &spl_token_2022::id(),
+        &f.depositor_no,
+        &f.no_mint,
+        &other_no,
+        &legacy_from_signer(&f.depositor),
+        &[],
+        SET_AMOUNT,
+        USDC_DECIMALS,
+    )
+    .expect("build transfer_checked");
+    send_tx(&mut f.svm, &[&f.depositor], &[xfer]);
+    assert_eq!(read_token_balance(&f.svm, &f.depositor_no), 0);
+    assert_eq!(read_token_balance(&f.svm, &f.depositor_yes), SET_AMOUNT);
+    assert_eq!(read_token_balance(&f.svm, &other_no), SET_AMOUNT);
+
+    // Resolve YES then override to INVALID (escape hatch).
+    send_tx(
+        &mut f.svm,
+        &[&f.publisher],
+        &[build_resolve_market_ix(
+            legacy_from_signer(&f.publisher),
+            f.config,
+            f.market,
+            WINDOW_ID,
+            OBSERVED_VALUE,
+            resolution::outcome::YES,
+            proof,
+        )],
+    );
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.resolver_multisig],
+        &[build_resolve_override_ix(
+            legacy_from_signer(&f.resolver_multisig),
+            f.config,
+            f.market,
+            resolution::outcome::INVALID,
+        )],
+    );
+    let market: Market = read_anchor_account(&f.svm, &f.market);
+    assert_eq!(market.outcome, resolution::outcome::INVALID);
+
+    // Asymmetric holder cannot redeem (needs both legs).
+    let redeem_fail = try_send_tx(
+        &mut f.svm,
+        &[&f.depositor],
+        &[build_redeem_complete_set_ix(
+            legacy_from_signer(&f.depositor),
+            f.market,
+            f.config,
+            f.usdc_mint,
+            f.yes_mint,
+            f.no_mint,
+            f.vault,
+            f.depositor_usdc,
+            f.depositor_yes,
+            f.depositor_no,
+            SET_AMOUNT,
+        )],
+    );
+    assert_markets_error(redeem_fail, MarketsError::InsufficientOutcomeBalance);
+
+    // Settle is also refused for INVALID.
+    f.svm.warp_to_slot(market.settle_unlock_slot + 1);
+    f.svm.expire_blockhash();
+    let settle_fail = try_send_tx(
+        &mut f.svm,
+        &[&f.depositor],
+        &[build_settle_ix(
+            legacy_from_signer(&f.depositor),
+            f.market,
+            f.config,
+            f.usdc_mint,
+            f.yes_mint,
+            f.no_mint,
+            f.vault,
+            f.depositor_usdc,
+            f.depositor_yes,
+            f.depositor_no,
+            SET_AMOUNT,
+        )],
+    );
+    assert_markets_error(settle_fail, MarketsError::MarketInvalidUseRedeem);
+
+    let vault_before = read_token_balance(&f.svm, &f.vault);
+    assert_eq!(vault_before, SET_AMOUNT, "vault still fully funded");
+
+    // Pre-grace force-sweep refused (supply live).
+    let treasury = create_ata(
+        &mut f.svm,
+        &f.admin,
+        &legacy_from_signer(&f.admin),
+        &f.usdc_mint,
+    );
+    let early_sweep = try_send_tx(
+        &mut f.svm,
+        &[&f.admin],
+        &[build_sweep_residual_ix(
+            legacy_from_signer(&f.admin),
+            f.config,
+            f.market,
+            f.usdc_mint,
+            f.yes_mint,
+            f.no_mint,
+            f.vault,
+            treasury,
+        )],
+    );
+    assert_markets_error(early_sweep, MarketsError::SupplyNotZero);
+
+    // After INVALID_RECOVERY_GRACE_SLOTS past unlock, admin voids residual vault.
+    let grace_target = market.settle_unlock_slot + wzrd_markets::INVALID_RECOVERY_GRACE_SLOTS + 1;
+    f.svm.warp_to_slot(grace_target);
+    f.svm.expire_blockhash();
+    send_tx(
+        &mut f.svm,
+        &[&f.admin],
+        &[build_sweep_residual_ix(
+            legacy_from_signer(&f.admin),
+            f.config,
+            f.market,
+            f.usdc_mint,
+            f.yes_mint,
+            f.no_mint,
+            f.vault,
+            treasury,
+        )],
+    );
+
+    assert_eq!(
+        read_token_balance(&f.svm, &f.vault),
+        0,
+        "grace force-sweep drained entire vault"
+    );
+    assert_eq!(
+        read_token_balance(&f.svm, &treasury),
+        vault_before,
+        "full residual went to admin recipient (void of user claims)"
+    );
+    // Outcome supply still live — users hold worthless YES/NO with empty vault.
+    assert_eq!(read_mint_supply(&f.svm, &f.yes_mint), SET_AMOUNT);
+    assert_eq!(read_mint_supply(&f.svm, &f.no_mint), SET_AMOUNT);
+    assert_eq!(read_token_balance(&f.svm, &f.depositor_yes), SET_AMOUNT);
+    assert_eq!(read_token_balance(&f.svm, &other_no), SET_AMOUNT);
+
+    println!(
+        "[H-10] asymmetric YES holder stranded; post-grace sweep voided {vault_before} USDC vault"
+    );
+}

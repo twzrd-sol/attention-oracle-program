@@ -1620,3 +1620,141 @@ fn initialize_pool_state() {
     assert_eq!(read_token_balance(&f.svm, &f.pool_yes), 0);
     assert_eq!(read_token_balance(&f.svm, &f.pool_no), 0);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plamen Phase-5 verification PoC — H-11 first/re-entry LP free ratio
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// H-11 / B4-3 / DTF-3 / DEC-5 — when lp_supply==0, first add_liquidity freely
+/// sets YES:NO ratio via geometric-mean mint (no admin seed constraint). Full
+/// remove re-opens the free-ratio branch for the next LP.
+#[test]
+fn test_plamen_h11_first_lp_free_ratio_and_reentry() {
+    let mut f = setup_pool();
+
+    // First LP deposits heavily skewed ratio 10:1.
+    const YES_IN: u64 = 1_000_000_000; // 1000
+    const NO_IN: u64 = 100_000_000; // 100
+    let lp1 = seed_liquidity(&mut f, YES_IN, NO_IN);
+    let p1 = pool_state(&f);
+    assert_eq!(p1.yes_reserve, YES_IN, "first LP free-ratio YES accepted");
+    assert_eq!(p1.no_reserve, NO_IN, "first LP free-ratio NO accepted");
+    assert!(p1.lp_supply > 0);
+    let expected_lp = {
+        // geometric mean floor(sqrt(yes*no))
+        let product = (YES_IN as u128) * (NO_IN as u128);
+        // integer sqrt
+        let mut x = product;
+        let mut y = (x + 1) / 2;
+        while y < x {
+            x = y;
+            y = (x + product / x) / 2;
+        }
+        x as u64
+    };
+    assert_eq!(
+        p1.lp_supply, expected_lp,
+        "first LP mints sqrt(yes*no) — free ratio geometric mean"
+    );
+    // Spot implied from reserves is free-set (not 1:1).
+    assert_ne!(p1.yes_reserve, p1.no_reserve);
+
+    // Second LP cannot freely set ratio — must match existing.
+    let lp2 = new_actor(&mut f, DEPOSITOR_USDC_FUNDING);
+    // Offer equal amounts; pool should take matching ratio (scarcer NO binds).
+    const OFFER: u64 = 200_000_000;
+    mint_set(&mut f, &lp2, OFFER);
+    let yes_before = read_token_balance(&f.svm, &lp2.yes);
+    let no_before = read_token_balance(&f.svm, &lp2.no);
+    let ix = build_add_liquidity_ix(
+        legacy_from_signer(&lp2.kp),
+        f.market,
+        f.pool,
+        f.yes_mint,
+        f.no_mint,
+        f.lp_mint,
+        f.pool_yes,
+        f.pool_no,
+        lp2.yes,
+        lp2.no,
+        lp2.lp,
+        OFFER,
+        OFFER,
+        0,
+    );
+    send_tx(&mut f.svm, &[&lp2.kp], &[ix]);
+    let p2 = pool_state(&f);
+    // Ratio preserved: yes/no == original YES_IN/NO_IN
+    // yes_reserve / no_reserve ≈ YES_IN / NO_IN
+    let ratio_num = (p2.yes_reserve as u128) * (NO_IN as u128);
+    let ratio_den = (p2.no_reserve as u128) * (YES_IN as u128);
+    assert_eq!(
+        ratio_num, ratio_den,
+        "subsequent LP must match free-set ratio (got yes={} no={})",
+        p2.yes_reserve, p2.no_reserve
+    );
+    let yes_used = yes_before - read_token_balance(&f.svm, &lp2.yes);
+    let no_used = no_before - read_token_balance(&f.svm, &lp2.no);
+    assert!(yes_used < OFFER || no_used < OFFER, "not both max deposited freely");
+
+    // Full remove by first LP (+ second) drains lp_supply → free-ratio re-entry.
+    // Remove all of lp2 first, then lp1.
+    let lp2_bal = read_token_balance(&f.svm, &lp2.lp);
+    let ix = build_remove_liquidity_ix(
+        legacy_from_signer(&lp2.kp),
+        f.market,
+        f.pool,
+        f.yes_mint,
+        f.no_mint,
+        f.lp_mint,
+        f.pool_yes,
+        f.pool_no,
+        lp2.yes,
+        lp2.no,
+        lp2.lp,
+        lp2_bal,
+        0,
+        0,
+    );
+    send_tx(&mut f.svm, &[&lp2.kp], &[ix]);
+
+    let lp1_bal = read_token_balance(&f.svm, &lp1.lp);
+    let ix = build_remove_liquidity_ix(
+        legacy_from_signer(&lp1.kp),
+        f.market,
+        f.pool,
+        f.yes_mint,
+        f.no_mint,
+        f.lp_mint,
+        f.pool_yes,
+        f.pool_no,
+        lp1.yes,
+        lp1.no,
+        lp1.lp,
+        lp1_bal,
+        0,
+        0,
+    );
+    send_tx(&mut f.svm, &[&lp1.kp], &[ix]);
+    let p_empty = pool_state(&f);
+    assert_eq!(p_empty.lp_supply, 0, "full remove re-opens free-ratio branch");
+    assert_eq!(p_empty.yes_reserve, 0);
+    assert_eq!(p_empty.no_reserve, 0);
+
+    // Re-entry LP freely sets a DIFFERENT ratio (1:10 inverted).
+    const YES2: u64 = 50_000_000;
+    const NO2: u64 = 500_000_000;
+    let _lp3 = seed_liquidity(&mut f, YES2, NO2);
+    let p3 = pool_state(&f);
+    assert_eq!(p3.yes_reserve, YES2);
+    assert_eq!(p3.no_reserve, NO2);
+    assert_ne!(
+        (p3.yes_reserve as u128) * (NO_IN as u128),
+        (p3.no_reserve as u128) * (YES_IN as u128),
+        "re-entry free ratio differs from prior market ratio"
+    );
+
+    println!(
+        "[H-11] first free ratio {YES_IN}:{NO_IN}; re-entry free ratio {YES2}:{NO2}; lp_supply reopened at 0"
+    );
+}
