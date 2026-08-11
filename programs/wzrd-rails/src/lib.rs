@@ -292,7 +292,7 @@ pub mod wzrd_rails {
         cfg.last_published_window_id = 0;
         cfg.admin = args.admin;
         cfg.paused = false;
-        cfg._reserved = [0u8; 32];
+        cfg.pending_admin = Pubkey::default();
         Ok(())
     }
 
@@ -372,15 +372,40 @@ pub mod wzrd_rails {
         Ok(())
     }
 
-    /// Emergency halt for Listen payout root publishing and claiming.
+    /// Halt (or resume) Listen payout **root publishing**.
+    ///
+    /// H-01 (agent trust rails): `paused` freezes **new** `publish_listen_payout_root`
+    /// only. Claims against already-published windows stay live so funded
+    /// entitlements cannot be permanently locked by pause alone.
+    ///
+    /// Authorization:
+    /// - `paused = true`  → live payout admin only
+    /// - `paused = false` → live payout admin **or** rails `Config.admin`
+    ///   (emergency unpause escape when payout-admin key is lost)
     pub fn set_paused(ctx: Context<SetPaused>, args: SetPausedArgs) -> Result<()> {
+        let signer = ctx.accounts.admin.key();
+        let payout_admin = ctx.accounts.authority_config.admin;
+        let rails_admin = ctx.accounts.config.admin;
+
+        if args.paused {
+            require!(
+                signer == payout_admin,
+                ListenPayoutError::OnlyPayoutAdminMayPause
+            );
+        } else {
+            require!(
+                signer == payout_admin || signer == rails_admin,
+                ListenPayoutError::NotAdmin
+            );
+        }
+
         let was = ctx.accounts.authority_config.paused;
         ctx.accounts.authority_config.paused = args.paused;
 
         emit!(PayoutPauseChanged {
             was,
             now: args.paused,
-            updated_by: ctx.accounts.admin.key(),
+            updated_by: signer,
         });
 
         Ok(())
@@ -416,10 +441,12 @@ pub mod wzrd_rails {
         Ok(())
     }
 
-    /// Rotate the single Listen payout admin.
+    /// Propose a new Listen payout admin (H-01 step 1 of 2).
     ///
-    /// Named `set_payout_admin` because `wzrd-rails` already has a global
-    /// `set_admin` IX for the base rails config.
+    /// Stores `pending_admin` only. Live `admin` (and cap/vault admins) are
+    /// **not** mutated until `accept_payout_admin`. Mirrors markets
+    /// `set_admin` / `accept_admin`. Named `set_payout_admin` for continuity
+    /// with the prior 1-step IX surface.
     pub fn set_payout_admin(ctx: Context<SetPayoutAdmin>, args: SetPayoutAdminArgs) -> Result<()> {
         // Per audit finding M-3 / EZ-7: reject Pubkey::default() — typo
         // permanently bricks the payout admin role.
@@ -427,17 +454,46 @@ pub mod wzrd_rails {
             args.new_admin != Pubkey::default(),
             ListenPayoutError::AdminPubkeyMustBeNonZero
         );
+        let current = ctx.accounts.authority_config.admin;
+        ctx.accounts.authority_config.pending_admin = args.new_admin;
+
+        emit!(PayoutAdminProposed {
+            current_admin: current,
+            pending_admin: args.new_admin,
+            proposed_by: ctx.accounts.admin.key(),
+        });
+
+        Ok(())
+    }
+
+    /// Accept a pending Listen payout admin rotation (H-01 step 2 of 2).
+    ///
+    /// The proposed admin must sign. On success: promotes `pending_admin` to
+    /// live `admin` on authority + cap + vault configs (M-01 multi-config
+    /// resync) and clears the pending slot.
+    pub fn accept_payout_admin(ctx: Context<AcceptPayoutAdmin>) -> Result<()> {
+        let pending = ctx.accounts.authority_config.pending_admin;
+        require!(
+            pending != Pubkey::default(),
+            ListenPayoutError::NoPendingPayoutAdmin
+        );
+        require_keys_eq!(
+            ctx.accounts.pending_admin.key(),
+            pending,
+            ListenPayoutError::NotPendingPayoutAdmin
+        );
+
         let old_admin = ctx.accounts.authority_config.admin;
-        ctx.accounts.authority_config.admin = args.new_admin;
-        // Per audit M-01: rotation now covers all three payout configs so the
-        // dual-admin gate on set_per_window_ccm_cap (and any future sibling
-        // checks) stays callable after a rotation.
-        ctx.accounts.cap_config.admin = args.new_admin;
-        ctx.accounts.vault_config.admin = args.new_admin;
+        ctx.accounts.authority_config.admin = pending;
+        ctx.accounts.authority_config.pending_admin = Pubkey::default();
+        // Per audit M-01: rotation covers all three payout configs so the
+        // dual-admin gate on set_per_window_ccm_cap stays callable after accept.
+        ctx.accounts.cap_config.admin = pending;
+        ctx.accounts.vault_config.admin = pending;
 
         emit!(PayoutAdminRotated {
             old_admin,
-            new_admin: args.new_admin,
+            new_admin: pending,
         });
 
         Ok(())
@@ -1078,11 +1134,12 @@ pub mod wzrd_rails {
         ctx: Context<ClaimListenPayout>,
         args: ClaimListenPayoutArgs,
     ) -> Result<()> {
-        let auth_cfg = &ctx.accounts.authority_config;
+        // H-01: do NOT gate claims on `paused`. Pause freezes publish only so
+        // already-funded published windows remain claimable (agent-hard evidence).
+        // `authority_config` remains in the accounts struct for PDA validation.
         let win = &mut ctx.accounts.payout_window;
         let leaf = &args.leaf;
 
-        require!(!auth_cfg.paused, ListenPayoutError::Paused);
         require!(
             leaf.window_id == win.window_id,
             ListenPayoutError::LeafWindowMismatch
@@ -1446,12 +1503,19 @@ pub struct SetPerWindowCcmCap<'info> {
 
 #[derive(Accounts)]
 pub struct SetPaused<'info> {
+    /// Payout admin (pause or unpause) or rails Config.admin (unpause only).
+    /// Authorization is enforced in the instruction body (role depends on
+    /// `args.paused`).
     pub admin: Signer<'info>,
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, Config>,
     #[account(
         mut,
         seeds = [LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
         bump = authority_config.bump,
-        constraint = authority_config.admin == admin.key() @ ListenPayoutError::NotAdmin,
     )]
     pub authority_config: Account<'info, PayoutAuthorityConfig>,
 }
@@ -1484,6 +1548,7 @@ pub struct InitPayoutVaultConfig<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Step 1: current payout admin proposes a successor (writes `pending_admin` only).
 #[derive(Accounts)]
 pub struct SetPayoutAdmin<'info> {
     pub admin: Signer<'info>,
@@ -1494,10 +1559,21 @@ pub struct SetPayoutAdmin<'info> {
         constraint = authority_config.admin == admin.key() @ ListenPayoutError::NotAdmin,
     )]
     pub authority_config: Account<'info, PayoutAuthorityConfig>,
-    // Per audit M-01: rotation must cover cap_config.admin and
-    // vault_config.admin too. No admin constraint here — the authority is
-    // already proven on authority_config above; this IX intentionally lets the
-    // authority_config admin re-sync the sibling configs.
+}
+
+/// Step 2: proposed admin accepts; promotes pending → live on authority+cap+vault.
+#[derive(Accounts)]
+pub struct AcceptPayoutAdmin<'info> {
+    /// Proposed admin (must equal `authority_config.pending_admin`).
+    pub pending_admin: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED],
+        bump = authority_config.bump,
+    )]
+    pub authority_config: Account<'info, PayoutAuthorityConfig>,
+    // Per audit M-01: accept must cover cap_config.admin and vault_config.admin
+    // so the dual-admin gate on set_per_window_ccm_cap stays callable.
     #[account(
         mut,
         seeds = [LISTEN_PAYOUT_CAP_CONFIG_SEED],

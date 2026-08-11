@@ -77,6 +77,10 @@ pub struct InitPayoutVaultConfigArgs {
     pub ccm_mint: Pubkey,
 }
 
+/// Step 1 of the H-01 2-step payout-admin rotation (propose only).
+///
+/// Named `SetPayoutAdminArgs` for instruction-name continuity with the prior
+/// 1-step path; the rotation is **not** effective until `accept_payout_admin`.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SetPayoutAdminArgs {
     pub new_admin: Pubkey,
@@ -107,6 +111,11 @@ pub struct RegisterVerifiedMomentArgs {
 /// Allow-list + monotonic window state for Listen payout-root publishers.
 ///
 /// PDA: `[LISTEN_PAYOUT_AUTHORITY_CONFIG_SEED]`
+///
+/// Layout note (H-01): `pending_admin` is carved from the former `_reserved[32]`
+/// slot. Account LEN is unchanged (334 body bytes). Live mainnet accounts with
+/// zeroed reserved deserialize as `pending_admin = Pubkey::default()` (no
+/// pending rotation) — no realloc migration required.
 #[account]
 #[derive(Debug)]
 pub struct PayoutAuthorityConfig {
@@ -115,7 +124,9 @@ pub struct PayoutAuthorityConfig {
     pub last_published_window_id: u64,
     pub admin: Pubkey,
     pub paused: bool,
-    pub _reserved: [u8; 32],
+    /// H-01: pending payout admin for 2-step `set_payout_admin` / `accept_payout_admin`.
+    /// `Pubkey::default()` means no rotation is pending.
+    pub pending_admin: Pubkey,
 }
 
 impl PayoutAuthorityConfig {
@@ -123,6 +134,7 @@ impl PayoutAuthorityConfig {
 
     /// Account body size excluding the 8-byte Anchor discriminator.
     pub fn space() -> usize {
+        // bump + publishers vec (len + 8*32) + last_window + admin + paused + pending_admin
         1 + 4 + (32 * Self::MAX_PUBLISHERS) + 8 + 32 + 1 + 32
     }
 
@@ -310,6 +322,15 @@ pub struct PayoutPauseChanged {
     pub updated_by: Pubkey,
 }
 
+/// Emitted by `set_payout_admin` (H-01 step 1). Not effective until accept.
+#[event]
+pub struct PayoutAdminProposed {
+    pub current_admin: Pubkey,
+    pub pending_admin: Pubkey,
+    pub proposed_by: Pubkey,
+}
+
+/// Emitted by `accept_payout_admin` (H-01 step 2).
 #[event]
 pub struct PayoutAdminRotated {
     pub old_admin: Pubkey,
