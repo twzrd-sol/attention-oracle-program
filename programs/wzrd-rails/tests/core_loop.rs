@@ -38,8 +38,8 @@ use wzrd_rails::{
     state::{
         ClaimListenPayoutArgs, CompensationClaimed, Config, InitPayoutAuthorityConfigArgs,
         InitPayoutCapConfigArgs, InitPayoutVaultConfigArgs, ListenPayoutClaimed,
-        PayoutAdminRotated, PayoutAllowlistUpdated, PayoutAuthorityConfig, PayoutCapConfig,
-        PayoutCapUpdated, PayoutPauseChanged, PayoutVaultConfig, PayoutWindow,
+        PayoutAdminProposed, PayoutAdminRotated, PayoutAllowlistUpdated, PayoutAuthorityConfig,
+        PayoutCapConfig, PayoutCapUpdated, PayoutPauseChanged, PayoutVaultConfig, PayoutWindow,
         PayoutWindowPublished, PoolReallocated, PublishListenPayoutRootArgs, SetPausedArgs,
         SetPayoutAdminArgs, SetPayoutAuthorityAllowlistArgs, SetPerWindowCcmCapArgs, StakePool,
         UserStake, COMPENSATION_LEAF_DOMAIN, COMP_CLAIMED_SEED, COMP_VAULT_SEED, CONFIG_SEED,
@@ -422,10 +422,25 @@ impl TestEnv {
     fn set_paused(&mut self, paused: bool) -> TransactionMetadata {
         let ix = build_set_paused_ix(
             self.admin_pubkey(),
+            self.config,
             self.payout_authority_config,
             SetPausedArgs { paused },
         );
         send_tx_with_metadata(&mut self.svm, &[&self.admin], &[ix])
+    }
+
+    fn try_set_paused_as(
+        &mut self,
+        signer: &Keypair,
+        paused: bool,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let ix = build_set_paused_ix(
+            legacy_from_signer(signer),
+            self.config,
+            self.payout_authority_config,
+            SetPausedArgs { paused },
+        );
+        try_send_tx_with_metadata(&mut self.svm, &[signer], &[ix])
     }
 
     fn set_payout_authority_allowlist(
@@ -462,12 +477,11 @@ impl TestEnv {
         try_send_tx_with_metadata(&mut self.svm, &[&self.admin], &[ix])
     }
 
+    /// H-01 step 1: propose pending payout admin (does not rotate live admin).
     fn set_payout_admin(&mut self, new_admin: LegacyPubkey) -> TransactionMetadata {
         let ix = build_set_payout_admin_ix(
             self.admin_pubkey(),
             self.payout_authority_config,
-            self.payout_cap_config,
-            self.payout_vault_config,
             SetPayoutAdminArgs {
                 new_admin: Pubkey::new_from_array(new_admin.to_bytes()),
             },
@@ -483,13 +497,43 @@ impl TestEnv {
         let ix = build_set_payout_admin_ix(
             legacy_from_signer(signer),
             self.payout_authority_config,
-            self.payout_cap_config,
-            self.payout_vault_config,
             SetPayoutAdminArgs {
                 new_admin: Pubkey::new_from_array(new_admin.to_bytes()),
             },
         );
         try_send_tx_with_metadata(&mut self.svm, &[signer], &[ix])
+    }
+
+    /// H-01 step 2: pending admin accepts; rotates authority+cap+vault admins.
+    fn accept_payout_admin(&mut self, pending: &Keypair) -> TransactionMetadata {
+        let ix = build_accept_payout_admin_ix(
+            legacy_from_signer(pending),
+            self.payout_authority_config,
+            self.payout_cap_config,
+            self.payout_vault_config,
+        );
+        send_tx_with_metadata(&mut self.svm, &[pending], &[ix])
+    }
+
+    fn try_accept_payout_admin(
+        &mut self,
+        pending: &Keypair,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let ix = build_accept_payout_admin_ix(
+            legacy_from_signer(pending),
+            self.payout_authority_config,
+            self.payout_cap_config,
+            self.payout_vault_config,
+        );
+        try_send_tx_with_metadata(&mut self.svm, &[pending], &[ix])
+    }
+
+    /// Full 2-step rotation helper (propose + accept).
+    fn rotate_payout_admin(&mut self, new_admin: &Keypair) -> TransactionMetadata {
+        let pk = legacy_from_signer(new_admin);
+        self.set_payout_admin(pk);
+        self.svm.expire_blockhash();
+        self.accept_payout_admin(new_admin)
     }
 
     fn claim_listen_payout(
@@ -1282,6 +1326,7 @@ fn build_set_per_window_ccm_cap_ix(
 
 fn build_set_paused_ix(
     admin: LegacyPubkey,
+    config: LegacyPubkey,
     authority_config: LegacyPubkey,
     args: SetPausedArgs,
 ) -> LegacyInstruction {
@@ -1289,6 +1334,7 @@ fn build_set_paused_ix(
         program_id: WZRD_RAILS_PROGRAM_ID,
         accounts: rail_accounts::SetPaused {
             admin,
+            config,
             authority_config,
         }
         .to_account_metas(None),
@@ -1320,8 +1366,6 @@ fn build_init_payout_vault_config_ix(
 fn build_set_payout_admin_ix(
     admin: LegacyPubkey,
     authority_config: LegacyPubkey,
-    cap_config: LegacyPubkey,
-    vault_config: LegacyPubkey,
     args: SetPayoutAdminArgs,
 ) -> LegacyInstruction {
     LegacyInstruction {
@@ -1329,11 +1373,28 @@ fn build_set_payout_admin_ix(
         accounts: rail_accounts::SetPayoutAdmin {
             admin,
             authority_config,
+        }
+        .to_account_metas(None),
+        data: rail_ix::SetPayoutAdmin { args }.data(),
+    }
+}
+
+fn build_accept_payout_admin_ix(
+    pending_admin: LegacyPubkey,
+    authority_config: LegacyPubkey,
+    cap_config: LegacyPubkey,
+    vault_config: LegacyPubkey,
+) -> LegacyInstruction {
+    LegacyInstruction {
+        program_id: WZRD_RAILS_PROGRAM_ID,
+        accounts: rail_accounts::AcceptPayoutAdmin {
+            pending_admin,
+            authority_config,
             cap_config,
             vault_config,
         }
         .to_account_metas(None),
-        data: rail_ix::SetPayoutAdmin { args }.data(),
+        data: rail_ix::AcceptPayoutAdmin {}.data(),
     }
 }
 
@@ -1831,7 +1892,7 @@ fn set_per_window_ccm_cap_rejects_non_admin() {
 }
 
 #[test]
-fn set_paused_toggles_publish_and_claim_back_on() {
+fn set_paused_toggles_publish_claims_stay_live() {
     let mut env = setup_rails();
 
     let pause_meta = env.set_paused(true);
@@ -1849,15 +1910,14 @@ fn set_paused_toggles_publish_and_claim_back_on() {
     assert!(resume_event.was);
     assert!(!resume_event.now);
 
+    // H-01: publish is frozen by pause; claims on already-published windows stay live.
     let (tree, _, _, _) = setup_published_claim_tree(&mut env);
     env.svm.expire_blockhash();
     env.set_paused(true);
     assert_listen_payout_error(
-        env.try_claim_listen_payout_user_a(claim_args(&tree, 0)),
+        env.try_publish_listen_payout_root_as_admin(payout_args(PAYOUT_WINDOW_ID + 1)),
         ListenPayoutError::Paused,
     );
-    env.svm.expire_blockhash();
-    env.set_paused(false);
     env.claim_listen_payout_user_a(claim_args(&tree, 0));
 }
 
@@ -1904,25 +1964,48 @@ fn set_payout_authority_allowlist_rejects_empty_too_many_and_duplicates() {
 }
 
 #[test]
-fn set_payout_admin_rotates_mutation_gate() {
+fn set_payout_admin_two_step_rotates_mutation_gate() {
     let mut env = setup_rails();
     let new_admin = Keypair::new();
     env.svm
         .airdrop(&new_admin.pubkey(), 100_000_000_000)
         .unwrap();
     let new_admin_pubkey = legacy_from_signer(&new_admin);
+    let old_admin = env.admin_pubkey();
 
-    let meta = env.set_payout_admin(new_admin_pubkey);
-    let event: PayoutAdminRotated = decode_anchor_event(&meta.logs);
-    assert_eq!(event.old_admin, env.admin_pubkey());
-    assert_eq!(event.new_admin, new_admin_pubkey);
+    // Step 1: propose only — live admin unchanged, pending set.
+    let propose_meta = env.set_payout_admin(new_admin_pubkey);
+    let proposed: PayoutAdminProposed = decode_anchor_event(&propose_meta.logs);
+    assert_eq!(proposed.current_admin, old_admin);
+    assert_eq!(proposed.pending_admin, new_admin_pubkey);
+    assert_eq!(proposed.proposed_by, old_admin);
 
+    let cfg: PayoutAuthorityConfig =
+        read_anchor_account(&env.svm, &env.payout_authority_config);
+    assert_eq!(cfg.admin, old_admin);
+    assert_eq!(cfg.pending_admin, new_admin_pubkey);
+
+    // Old admin still holds the dual-admin cap gate until accept.
+    env.try_set_per_window_ccm_cap_as_admin(PAYOUT_CAP_CCM + 1)
+        .expect("current admin still controls cap before accept");
     assert_listen_payout_error(
-        env.try_set_per_window_ccm_cap_as_admin(PAYOUT_CAP_CCM + 1),
+        env.try_set_per_window_ccm_cap_as(&new_admin, PAYOUT_CAP_CCM + 2),
         ListenPayoutError::NotAdmin,
     );
-    env.try_set_per_window_ccm_cap_as(&new_admin, PAYOUT_CAP_CCM + 1)
-        .expect("new payout admin can set cap");
+
+    // Step 2: accept — rotates authority + cap + vault admins.
+    env.svm.expire_blockhash();
+    let accept_meta = env.accept_payout_admin(&new_admin);
+    let rotated: PayoutAdminRotated = decode_anchor_event(&accept_meta.logs);
+    assert_eq!(rotated.old_admin, old_admin);
+    assert_eq!(rotated.new_admin, new_admin_pubkey);
+
+    assert_listen_payout_error(
+        env.try_set_per_window_ccm_cap_as_admin(PAYOUT_CAP_CCM + 3),
+        ListenPayoutError::NotAdmin,
+    );
+    env.try_set_per_window_ccm_cap_as(&new_admin, PAYOUT_CAP_CCM + 3)
+        .expect("new payout admin can set cap after accept");
 }
 
 #[test]
@@ -1936,6 +2019,19 @@ fn set_payout_admin_rejects_non_admin() {
     assert_listen_payout_error(
         env.try_set_payout_admin_as(&outsider, legacy_from_signer(&outsider)),
         ListenPayoutError::NotAdmin,
+    );
+}
+
+#[test]
+fn accept_payout_admin_rejects_without_pending() {
+    let mut env = setup_rails();
+    let outsider = Keypair::new();
+    env.svm
+        .airdrop(&outsider.pubkey(), 100_000_000_000)
+        .unwrap();
+    assert_listen_payout_error(
+        env.try_accept_payout_admin(&outsider),
+        ListenPayoutError::NoPendingPayoutAdmin,
     );
 }
 
@@ -2196,15 +2292,16 @@ fn claim_listen_payout_rejects_invalid_merkle_proof() {
 }
 
 #[test]
-fn claim_listen_payout_rejects_when_paused() {
+fn claim_listen_payout_succeeds_when_paused() {
+    // H-01: pause freezes publish only; funded published windows remain claimable.
     let mut env = setup_rails();
     let (tree, _, _, _) = setup_published_claim_tree(&mut env);
+    let vault_before = read_token_balance(&env.svm, &env.listen_payout_vault);
     env.set_paused(true);
 
-    assert_listen_payout_error(
-        env.try_claim_listen_payout_user_a(claim_args(&tree, 0)),
-        ListenPayoutError::Paused,
-    );
+    env.claim_listen_payout_user_a(claim_args(&tree, 0));
+    let vault_after = read_token_balance(&env.svm, &env.listen_payout_vault);
+    assert!(vault_after < vault_before, "claim paid while publish is paused");
 }
 
 #[test]
@@ -3232,14 +3329,13 @@ fn test_plamen_h6_init_dual_admin_bricks_cap_setter() {
     );
 }
 
-/// H-5 / B2-3 / DST-3 — set_paused freezes funded listen claims with no force-claim path.
-/// (Strengthens existing claim_listen_payout_rejects_when_paused with funded-window context.)
+/// H-01 / was H-5 — after remediation: pause freezes **publish only**; funded
+/// published windows remain claimable (agent-hard evidence guarantee).
 #[test]
-fn test_plamen_h5_pause_freezes_funded_listen_claims() {
+fn test_plamen_h5_pause_publish_only_claims_stay_live() {
     let mut env = setup_rails();
     let (tree, _, _, _) = setup_published_claim_tree(&mut env);
 
-    // Window published + vault funded: claim works before pause.
     let vault_before = read_token_balance(&env.svm, &env.listen_payout_vault);
     assert!(vault_before > 0, "vault must be funded");
 
@@ -3248,25 +3344,103 @@ fn test_plamen_h5_pause_freezes_funded_listen_claims() {
         read_anchor_account(&env.svm, &env.payout_authority_config);
     assert!(authority_cfg.paused);
 
-    // Entitled claimer cannot claim while paused.
-    assert_listen_payout_error(
-        env.try_claim_listen_payout_user_a(claim_args(&tree, 0)),
-        ListenPayoutError::Paused,
-    );
-
-    // No alternate force-claim path exists in the instruction surface — only unpause.
-    // Confirm publish is also frozen (no new windows while paused).
+    // Publish frozen.
     assert_listen_payout_error(
         env.try_publish_listen_payout_root_as_admin(payout_args(PAYOUT_WINDOW_ID + 1)),
         ListenPayoutError::Paused,
     );
 
-    // Unpause restores claim (proves freeze was pause-gated, not a fund issue).
-    env.svm.expire_blockhash();
-    env.set_paused(false);
+    // Claims remain live for already-published funded windows.
     env.claim_listen_payout_user_a(claim_args(&tree, 0));
     let vault_after = read_token_balance(&env.svm, &env.listen_payout_vault);
-    assert!(vault_after < vault_before, "claim paid after unpause");
+    assert!(vault_after < vault_before, "claim paid while paused");
 
-    println!("[H-5] pause freezes funded claims; only set_paused(false) restores (no force-claim)");
+    println!("[H-01/H-5] pause freezes publish only; funded claims stay live");
+}
+
+/// H-01 P1b — rails Config.admin can emergency-unpause when not the payout admin.
+#[test]
+fn test_plamen_h01_config_admin_emergency_unpause() {
+    let mut env = setup_rails();
+    let payout_admin = Keypair::new();
+    env.svm
+        .airdrop(&payout_admin.pubkey(), 100_000_000_000)
+        .unwrap();
+
+    // Rotate payout admin away from rails Config.admin (setup uses same key).
+    env.rotate_payout_admin(&payout_admin);
+    env.svm.expire_blockhash();
+
+    // New payout admin pauses publish.
+    env.try_set_paused_as(&payout_admin, true)
+        .expect("payout admin can pause");
+    let cfg: PayoutAuthorityConfig =
+        read_anchor_account(&env.svm, &env.payout_authority_config);
+    assert!(cfg.paused);
+
+    // Outsider cannot unpause.
+    let outsider = Keypair::new();
+    env.svm
+        .airdrop(&outsider.pubkey(), 100_000_000_000)
+        .unwrap();
+    assert_listen_payout_error(
+        env.try_set_paused_as(&outsider, false),
+        ListenPayoutError::NotAdmin,
+    );
+
+    // Rails Config.admin (env.admin keypair still owns Config) emergency-unpause.
+    // `set_paused` helper always signs as env.admin.
+    env.set_paused(false);
+    let cfg: PayoutAuthorityConfig =
+        read_anchor_account(&env.svm, &env.payout_authority_config);
+    assert!(!cfg.paused);
+
+    // Config.admin still cannot re-pause (payout-admin-only).
+    let ix = build_set_paused_ix(
+        env.admin_pubkey(),
+        env.config,
+        env.payout_authority_config,
+        SetPausedArgs { paused: true },
+    );
+    assert_listen_payout_error(
+        try_send_tx_with_metadata(&mut env.svm, &[&env.admin], &[ix]),
+        ListenPayoutError::OnlyPayoutAdminMayPause,
+    );
+
+    println!("[H-01 P1b] Config.admin unpause-only escape works; pause stays payout-admin gated");
+}
+
+/// H-01 P1 — propose alone does not brick live admin; accept completes rotation.
+#[test]
+fn test_plamen_h01_two_step_payout_admin_rotation() {
+    let mut env = setup_rails();
+    let new_admin = Keypair::new();
+    env.svm
+        .airdrop(&new_admin.pubkey(), 100_000_000_000)
+        .unwrap();
+    let old = env.admin_pubkey();
+    let new_pk = legacy_from_signer(&new_admin);
+
+    env.set_payout_admin(new_pk);
+    let cfg: PayoutAuthorityConfig =
+        read_anchor_account(&env.svm, &env.payout_authority_config);
+    assert_eq!(cfg.admin, old);
+    assert_eq!(cfg.pending_admin, new_pk);
+
+    // Propose is not enough to pause as new_admin (still NotAdmin / OnlyPayoutAdmin).
+    assert_listen_payout_error(
+        env.try_set_paused_as(&new_admin, true),
+        ListenPayoutError::OnlyPayoutAdminMayPause,
+    );
+
+    env.svm.expire_blockhash();
+    env.accept_payout_admin(&new_admin);
+    let cfg: PayoutAuthorityConfig =
+        read_anchor_account(&env.svm, &env.payout_authority_config);
+    assert_eq!(cfg.admin, new_pk);
+    assert_eq!(cfg.pending_admin, Pubkey::default());
+
+    env.try_set_paused_as(&new_admin, true)
+        .expect("accepted admin can pause");
+    println!("[H-01 P1] 2-step payout admin propose/accept works");
 }
