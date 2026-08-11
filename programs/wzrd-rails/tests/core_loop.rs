@@ -3173,3 +3173,100 @@ fn realloc_stake_pool_rejects_non_admin() {
         RailsError::Unauthorized,
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plamen Phase-5 verification PoCs — H-5 / H-6
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// H-6 / B2-1 / DST-1 — independent init admins: if authority.admin ≠ cap.admin,
+/// set_per_window_ccm_cap is unsatisfiable (dual constraint requires one signer
+/// equal both fields) until set_payout_admin resync.
+#[test]
+fn test_plamen_h6_init_dual_admin_bricks_cap_setter() {
+    let mut env = setup_rails_pre_payout_inits();
+    let auth_admin = Keypair::new();
+    let cap_admin = Keypair::new();
+    env.svm
+        .airdrop(&auth_admin.pubkey(), 100_000_000_000)
+        .unwrap();
+    env.svm
+        .airdrop(&cap_admin.pubkey(), 100_000_000_000)
+        .unwrap();
+    let auth_pk = legacy_from_signer(&auth_admin);
+    let cap_pk = legacy_from_signer(&cap_admin);
+    assert_ne!(auth_pk, cap_pk);
+
+    // Init with DIVERGENT admins (each init independently accepts any non-zero admin).
+    env.try_init_payout_authority_config_as_admin(auth_pk, auth_pk)
+        .expect("init authority with auth_admin");
+    env.try_init_payout_cap_config_as_admin(cap_pk, PAYOUT_CAP_CCM)
+        .expect("init cap with cap_admin");
+    env.try_init_payout_vault_config_as_admin(auth_pk, env.ccm_mint_pubkey())
+        .expect("init vault");
+
+    let authority_cfg: PayoutAuthorityConfig =
+        read_anchor_account(&env.svm, &env.payout_authority_config);
+    let cap_cfg: PayoutCapConfig = read_anchor_account(&env.svm, &env.payout_cap_config);
+    assert_eq!(authority_cfg.admin, auth_pk);
+    assert_eq!(cap_cfg.admin, cap_pk);
+    assert_ne!(authority_cfg.admin, cap_cfg.admin);
+
+    // Neither admin alone can satisfy the dual gate.
+    assert_listen_payout_error(
+        env.try_set_per_window_ccm_cap_as(&auth_admin, PAYOUT_CAP_CCM + 1),
+        ListenPayoutError::NotAdmin,
+    );
+    assert_listen_payout_error(
+        env.try_set_per_window_ccm_cap_as(&cap_admin, PAYOUT_CAP_CCM + 1),
+        ListenPayoutError::NotAdmin,
+    );
+
+    // Global rails admin also cannot (not the payout admin on either account).
+    assert_listen_payout_error(
+        env.try_set_per_window_ccm_cap_as_admin(PAYOUT_CAP_CCM + 1),
+        ListenPayoutError::NotAdmin,
+    );
+
+    println!(
+        "[H-6] authority.admin≠cap.admin → set_per_window_ccm_cap unsatisfiable for all signers"
+    );
+}
+
+/// H-5 / B2-3 / DST-3 — set_paused freezes funded listen claims with no force-claim path.
+/// (Strengthens existing claim_listen_payout_rejects_when_paused with funded-window context.)
+#[test]
+fn test_plamen_h5_pause_freezes_funded_listen_claims() {
+    let mut env = setup_rails();
+    let (tree, _, _, _) = setup_published_claim_tree(&mut env);
+
+    // Window published + vault funded: claim works before pause.
+    let vault_before = read_token_balance(&env.svm, &env.listen_payout_vault);
+    assert!(vault_before > 0, "vault must be funded");
+
+    env.set_paused(true);
+    let authority_cfg: PayoutAuthorityConfig =
+        read_anchor_account(&env.svm, &env.payout_authority_config);
+    assert!(authority_cfg.paused);
+
+    // Entitled claimer cannot claim while paused.
+    assert_listen_payout_error(
+        env.try_claim_listen_payout_user_a(claim_args(&tree, 0)),
+        ListenPayoutError::Paused,
+    );
+
+    // No alternate force-claim path exists in the instruction surface — only unpause.
+    // Confirm publish is also frozen (no new windows while paused).
+    assert_listen_payout_error(
+        env.try_publish_listen_payout_root_as_admin(payout_args(PAYOUT_WINDOW_ID + 1)),
+        ListenPayoutError::Paused,
+    );
+
+    // Unpause restores claim (proves freeze was pause-gated, not a fund issue).
+    env.svm.expire_blockhash();
+    env.set_paused(false);
+    env.claim_listen_payout_user_a(claim_args(&tree, 0));
+    let vault_after = read_token_balance(&env.svm, &env.listen_payout_vault);
+    assert!(vault_after < vault_before, "claim paid after unpause");
+
+    println!("[H-5] pause freezes funded claims; only set_paused(false) restores (no force-claim)");
+}

@@ -1115,4 +1115,60 @@ mod tests {
         let claim = stake.total_claimable(2_000_000_000).unwrap();
         assert_eq!(claim, 2750);
     }
+
+    /// H-2 / B1-1 / DTF-1 / DEC-1 — dust TVL + high rate inflates acc so a later
+    /// large re-anchor (`amount * acc`) overflows u128 (entry DoS / MathOverflow).
+    #[test]
+    fn test_plamen_h2_low_tvl_acc_overflow_on_large_reanchor() {
+        let mut pool = fresh_pool();
+        pool.total_staked = 1; // dust TVL
+        pool.reward_rate_per_slot = MAX_REWARD_RATE_PER_SLOT; // 1e6
+        // Per-slot increment = 1e6 * 1e12 / 1 = 1e18. After 30 slots → acc = 3e19.
+        pool.accrue_rewards(pool.last_update_slot + 30).unwrap();
+        assert_eq!(
+            pool.acc_reward_per_share,
+            30u128 * (MAX_REWARD_RATE_PER_SLOT as u128) * StakePool::REWARD_SCALE / 1,
+            "acc grows ~1e18 per slot at dust TVL + MAX rate"
+        );
+
+        // Large stake re-anchor product amount * acc overflows u128.
+        let large_amount = u64::MAX;
+        assert!(
+            (large_amount as u128)
+                .checked_mul(pool.acc_reward_per_share)
+                .is_none(),
+            "product must overflow u128 (entry DoS precondition)"
+        );
+
+        let stake = UserStake {
+            user: Pubkey::default(),
+            pool: Pubkey::default(),
+            amount: large_amount,
+            reward_debt: 0,
+            pending_rewards: 0,
+            lock_end_slot: 0,
+            bump: 0,
+        };
+        assert_eq!(
+            stake.claimable(pool.acc_reward_per_share),
+            Err(AccrueError::Overflow),
+            "claimable/re-anchor path returns Overflow → MathOverflow on-chain"
+        );
+
+        // Continuous small stakes with amount <= total_staked do NOT overflow:
+        // amount=1, product = 1 * 3e19 fits u128.
+        let dust_holder = UserStake {
+            user: Pubkey::default(),
+            pool: Pubkey::default(),
+            amount: 1,
+            reward_debt: 0,
+            pending_rewards: 0,
+            lock_end_slot: 0,
+            bump: 0,
+        };
+        assert!(
+            dust_holder.claimable(pool.acc_reward_per_share).is_ok(),
+            "dust holder still claimable; bug is large re-entry, not continuous principal lock"
+        );
+    }
 }
