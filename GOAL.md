@@ -1,8 +1,8 @@
 # GOAL: Connect AOP to agent trust rails
 
 **Locked**: 2026-08-11  
-**Repo tip**: `ca1e759` (main after #126)  
-**Status**: Active
+**Repo tip**: post-#129 H-01 on `main` (PoCs #127 + governance fix)  
+**Status**: Active — seam draft in `docs/trust-rail-aop-seam.md`
 
 ## One-liner
 
@@ -49,10 +49,16 @@ An agent (or trust gate) can:
 
 ## Done when
 
-1. Plamen Core report lands at `AUDIT_REPORT.md` (or dated sibling) for tip `ca1e759`+  
-2. Medium+ findings on rails/markets settlement paths are classified with remediation order  
-3. Explicit **integration checklist** maps: trust-rail decision → AOP instruction/leaf that may be used as evidence  
-4. Open gaps (hash levels, authority key, publisher trust) listed as product constraints, not silent assumptions  
+1. ~~Plamen Core report~~ — `AUDIT_REPORT_TRUST_RAILS_2026-08-11.md` (local)  
+2. ~~Medium+ classified + PoCs~~ — #127  
+3. ~~H-01 claim liveness + 2-step payout admin~~ — #129  
+4. **Integration seam** — `docs/trust-rail-aop-seam.md` + checklist (PR3): trust-rail decision → AOP fact with locked evidence levels  
+5. Open gaps (upgrade key, fee gross/net, markets finality residuals) listed as product constraints, not silent assumptions  
+6. Follow-on: wzrd-final adapter implements `BindDecision` against the seam contract  
+
+### Evidence hierarchy (locked for PR3+)
+
+`markets reproduced (rebuild)` > `rails artifact_hash` > `AO unreproduced` — never flatten; hard-bind floors follow rank.  
 
 ## Operator posture
 
