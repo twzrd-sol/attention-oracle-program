@@ -1,5 +1,7 @@
 # Attention Oracle Program
 
+> **Experimental:** The Attention Oracle / Liquid Attention Protocol is an experimental, separate product surface. It is not part of the current x402 pre-spend trust gate. This repository remains public for experimentation, transparency, and audit.
+
 Open-source Solana program source for the Liquid Attention Protocol.
 
 ## Current Mainnet State
