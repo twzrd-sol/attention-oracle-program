@@ -72,4 +72,5 @@ this deploy once an upgrade lands). Rules:
 | AO v2 | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | **Unreproduced** - immutable; on-chain hash `b5330fcca2c8dd807fb7d2609b74e72ae7d709c003d7697f275ff54dca7b53b1` has not been reproduced from public source. Source tree is reference material only. |
 
 Do not conflate these three levels. Both upgradeable programs share the same
-single-key upgrade authority (`2pHjZL...`).
+single-key upgrade authority (`2pHjZL...` at lock time; rotated to
+`8di6hHF8...` on 2026-08-24, RPC re-verified 2026-09-02).

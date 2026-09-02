@@ -95,9 +95,9 @@ After **any** upgrade of rails or markets:
 
 | Role | Trust class | Can affect agent evidence |
 |------|-------------|---------------------------|
-| Upgrade authority `2pHjZL…` | FULLY_TRUSTED (product) | Total rewrite both programs |
+| Upgrade authority `8di6hHF8…` (rotated 2026-08-24) | FULLY_TRUSTED (product) | Total rewrite both programs |
 | Markets admin / resolver | FULLY_TRUSTED intent | Finality DoS, INVALID, override brick |
-| Rails Config.admin | FULLY_TRUSTED | Rate, compensate root; **unpause-only** on listen pause (H-01) |
+| Rails Config.admin | FULLY_TRUSTED | Rate, compensate root; **unpause-only** on listen pause (H-01). Still `2pHjZL…` on-chain — **not** rotated with the 2026-08-24 BPF authority rotation; the unpause escape depends on this key's liveness (operator decision pending, see seam §3.1) |
 | Payout admin | **SEMI_TRUSTED** | Publish pause, allowlist, cap; 2-step rotation (H-01) |
 | Listen / attention publisher | **SEMI_TRUSTED** | Root content within caps |
 | Unprivileged user | Permissionless | First LP ratio, dust stake grief windows |

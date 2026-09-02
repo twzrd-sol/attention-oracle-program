@@ -28,7 +28,7 @@ Priority for **consumer hard-bind eligibility** and honest labeling:
 1. **Honesty > marketing.** Flattening rails to `rebuild` would misstate #126’s mechanical proof and invite agents to treat chronological source inference as bit-for-bit rebuild.
 2. **Hard bind follows rank.** A commerce decision that requires the strongest on-chain attestation should prefer markets paths (`rebuild`) over rails (`artifact_hash`). Soft signals may use rails freely with labeled level.
 3. **AO is not a third peer.** Demoting AO is not optional: unreproduced source means no agent-hard evidence path. Do not invent a fourth “legacy” hard tier.
-4. **Shared upgrade authority does not equal shared evidence level.** Both upgradeable programs share `2pHjZL…`; that is a **role risk** (see §5), not a reason to average or merge evidence levels.
+4. **Shared upgrade authority does not equal shared evidence level.** Both upgradeable programs share a single upgrade key (`8di6hHF8…` since the 2026-08-24 rotation); that is a **role risk** (see §5), not a reason to average or merge evidence levels.
 
 **Product rule:** every AOP-backed attestation field MUST include `evidence_level` ∈ {`rebuild`, `artifact_hash`, `unreproduced`}. Consumers MUST refuse hard bind when `evidence_level == unreproduced`.
 
@@ -100,6 +100,16 @@ A high trust score does **not** upgrade `artifact_hash` → `rebuild`. A perfect
 | Config.admin emergency unpause | Ops recovery only; not required for claim liveness of published windows |
 | 2-step payout admin | Reduces rotation footgun; still SEMI_TRUSTED for allowlist/cap/pause-publish |
 
+> **Config.admin split (2026-09-02).** The BPF upgrade authority rotated to
+> `8di6hHF8…` on 2026-08-24, but rails `Config.admin` (config PDA
+> `7pwUU1hv…`) still reads `2pHjZL…` on mainnet. The emergency-unpause
+> escape above requires a live `Config.admin` signer: if `2pHjZL…` is
+> retired for signing, the escape is inoperative until `set_admin` rotates
+> it (which itself needs `2pHjZL…` to sign — otherwise recovery is a
+> program upgrade under `8di6hHF8…`). Whether the split is deliberate is an
+> open operator decision — see the canary playbook note. Do not count the
+> escape as a mitigating control until the split is resolved.
+
 ### 3.2 Markets resolution / settle (markets · `rebuild`)
 
 | Field | Value |
@@ -170,7 +180,7 @@ Suggested JSON shape for adapters (language-agnostic):
 ## 5. Shared constraints (all AOP facts)
 
 1. **Pin refresh:** After any rails/markets upgrade, re-verify hash, update pin, invalidate prior hard binds until re-pin.  
-2. **Upgrade authority:** Single key `2pHjZL…` — product FULLY_TRUSTED today; treat total rewrite as catastrophic until Squads (non-goal for this seam).  
+2. **Upgrade authority:** Single key `8di6hHF8…` (rotated from `2pHjZL…` 2026-08-24; RPC re-verified 2026-09-02) — product FULLY_TRUSTED today; treat total rewrite as catastrophic until Squads (non-goal for this seam).  
 3. **TransferFee:** Live CCM 50 bps — **never** treat event gross as wallet net for settlement math.  
 4. **Domain separation:** Rails listen ↔ markets resolution roots are not interchangeable (GATE A).  
 5. **Leaf parity:** `PayoutAllocationLeafV1` off-chain builders must stay golden-equal to on-chain verifier.  
