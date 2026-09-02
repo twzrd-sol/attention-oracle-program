@@ -9,7 +9,7 @@ Locked 2026-08-09 (hash match + deploy chronology). All times UTC.
 |-------|-------|
 | Program ID | `BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9` |
 | ProgramData | `ftWybjbYPRamJFCZQ14wndSPYRbbHqgmGoCHaZtxEaU` |
-| Upgrade authority | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` (upgradeable) |
+| Upgrade authority | `8di6hHF8GhEgeCVzmjDeKQYcR51SMLdzDPR5ESf55gC8` (upgradeable) |
 | Last deployed slot | `428118420` (2026-06-22 08:03:22 UTC) |
 | Executable hash (solana-verify) | `3128b6448cfa18c15d543bd755935c4fb01eca382bd4e5a20d41edddbd882006` |
 

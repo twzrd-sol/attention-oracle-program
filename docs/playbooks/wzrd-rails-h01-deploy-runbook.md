@@ -3,7 +3,7 @@
 **Target**: mainnet `wzrd-rails` `BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9`
 **Payload**: H-01 listen-payout governance fix (`03acd2c`, merged via #129; program
 source unchanged through current `main` tip `7108e1f`)
-**Requires**: upgrade-authority signer `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD`
+**Requires**: upgrade-authority signer `8di6hHF8GhEgeCVzmjDeKQYcR51SMLdzDPR5ESf55gC8`
 + a docker-capable machine. **Never deploy from a host build.**
 
 ## Why this deploy
@@ -22,7 +22,7 @@ current on-chain pin until this deploy lands and pins refresh.
 | ProgramData | `ftWybjbYPRamJFCZQ14wndSPYRbbHqgmGoCHaZtxEaU` |
 | Live executable hash | `3128b6448cfa18c15d543bd755935c4fb01eca382bd4e5a20d41edddbd882006` (pre–H-01, = #126 pin) |
 | Last deploy slot | `428118420` (2026-06-22) |
-| Upgrade authority | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` |
+| Upgrade authority | `8di6hHF8GhEgeCVzmjDeKQYcR51SMLdzDPR5ESf55gC8` |
 
 Layout safety: `PayoutAuthorityConfig.pending_admin` is carved from the former
 `_reserved[32]`; body stays 334 bytes and live accounts deserialize with
