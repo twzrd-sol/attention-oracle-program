@@ -41,7 +41,9 @@ Read-only discovery on 2026-05-05 found:
 > reading `7pwUU1hv3hCNNTAPmDyMRCeKoMPEz3k5cH1PTbWDNQR6` on mainnet still returns
 > `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD`. The Config admin row above is
 > current on-chain state, not stale copy — do not "correct" it to the new
-> authority. See the operator note on this in the H-01 runbook.
+> authority. Rotating it is specified in
+> `docs/playbooks/wzrd-rails-config-admin-rotation.md`; once that lands, both
+> rows move together.
 
 Pool 0 currently has `total_staked=0`, `reward_rate_per_slot=1000`, and an
 empty reward vault. The swarm preflight correctly refuses to stake into that
