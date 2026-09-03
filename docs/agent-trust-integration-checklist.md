@@ -25,7 +25,32 @@
 
 ## 2. Listen payout — safe consumption constraints
 
-Before treating a listen leaf as **hard** funded entitlement:
+**Blocking precondition — the rail is not bootstrapped on mainnet.** All three
+listen-payout config PDAs are absent; `getAccountInfo` returns null for each
+(verified 2026-09-03):
+
+```
+authority_config  D6vVhAmEGBpNA9NhAfTMgQAraeG1as2SbvCLNmesoNgP
+cap_config        Ebxykho1xsxio3eQr8v4yViukTUrrVAJxYesAGsoHjCz
+vault_config      B4mUpjzUDY82TG4mNxECEWewmbkPcLpqgATnvP3ma2rk
+```
+
+No authority config, no cap config, no vault config — therefore no published
+windows and no payout vault to fund. Every row of the table below presupposes
+accounts that do not exist, so listen facts are unavailable at **any** strength
+today: emit `refuse` for `fact_type` ∈ {`listen_claim`, `listen_window`}, and
+re-resolve the absence against live RPC rather than assuming bootstrap has since
+happened because this document exists. Bootstrap means
+`init_payout_authority_config`, `init_payout_cap_config`,
+`init_payout_vault_config` — in the **deployed** binary all three are gated on
+rails `Config.admin` and all three declare `payer = admin`, and `Config.admin`
+still reads the retired `2pHjZL…` (§5, §7 gap 3,
+`docs/playbooks/wzrd-rails-config-admin-rotation.md`). This gate precedes the
+H-01 pin gate below: the pin decides *which* listen semantics apply, this decides
+whether any listen fact exists at all.
+
+**Once the rail is bootstrapped**, before treating a listen leaf as **hard**
+funded entitlement:
 
 | Check | Pass criteria | If fail |
 |-------|---------------|---------|
@@ -97,12 +122,12 @@ After **any** upgrade of rails or markets:
 |------|-------------|---------------------------|
 | Upgrade authority `8di6hHF8…` (rotated 2026-08-24) | FULLY_TRUSTED (product) | Total rewrite both programs |
 | Markets admin / resolver | FULLY_TRUSTED intent | Finality DoS, INVALID, override brick |
-| Rails Config.admin | FULLY_TRUSTED | Rate, compensate root; **unpause-only** on listen pause (H-01). Still `2pHjZL…` on-chain — **not** rotated with the 2026-08-24 BPF authority rotation; the unpause escape depends on this key's liveness (operator decision pending, see seam §3.1) |
+| Rails Config.admin | FULLY_TRUSTED | **Nine** IX answer to it in the *deployed* binary, not four: `set_admin`, `set_reward_rate`, `initialize_pool`, `compensate_external_stakers`, `realloc_stake_pool`, `register_verified_moment`, plus the three `init_payout_*` bootstraps — so this key also gates standing up the listen-payout rail at all (§2). Also **unpause-only** on listen pause (H-01). Still `2pHjZL…` on-chain — **not** rotated with the 2026-08-24 BPF authority rotation; that key holds 0 lamports while `init_payout_*` declares `payer = admin`, so the un-bootstrapped rail stays blocked until it rotates (`docs/playbooks/wzrd-rails-config-admin-rotation.md`). The unpause escape likewise depends on this key's liveness (operator decision pending, see seam §3.1) |
 | Payout admin | **SEMI_TRUSTED** | Publish pause, allowlist, cap; 2-step rotation (H-01) |
 | Listen / attention publisher | **SEMI_TRUSTED** | Root content within caps |
 | Unprivileged user | Permissionless | First LP ratio, dust stake grief windows |
 
-H-01 behaviors above (2-step rotation, unpause-only Config.admin escape) describe post–H-01 source; they are live on-chain only after the H-01 deploy (§7 gap 3).
+H-01 behaviors above (2-step rotation, unpause-only Config.admin escape) describe post–H-01 source; they are live on-chain only after the H-01 deploy (§7 gap 4).
 
 ---
 
@@ -120,11 +145,12 @@ H-01 behaviors above (2-step rotation, unpause-only Config.admin escape) describ
 
 1. Shared single upgrade key — Squads later; pin hashes now.  
 2. Rails not source-reproduced — label `artifact_hash`.  
-3. Payout pause freezes claims — **fixed in source (H-01 #129) but NOT yet deployed**; live binary `3128b644…` still freezes claims under pause. Cleared only by the H-01 deploy + pin refresh (`docs/playbooks/wzrd-rails-h01-deploy-runbook.md`).  
-4. Outbound gross attestation under live 50 bps TransferFee.  
-5. Unbounded override × extend finality delay (markets).  
-6. INVALID asymmetric + grace full sweep.  
-7. Publisher fairness not on-chain.  
+3. Listen-payout rail **never bootstrapped on mainnet** — all three config PDAs absent (§2), so no listen fact binds at any strength. Its `init_payout_*` bootstraps are gated on the retired `2pHjZL…` `Config.admin`, so clearing this needs the Config admin rotation (`docs/playbooks/wzrd-rails-config-admin-rotation.md`) and then the bootstrap.  
+4. Payout pause freezes claims — **fixed in source (H-01 #129) but NOT yet deployed**; live binary `3128b644…` still freezes claims under pause. Cleared only by the H-01 deploy + pin refresh (`docs/playbooks/wzrd-rails-h01-deploy-runbook.md`).  
+5. Outbound gross attestation under live 50 bps TransferFee.  
+6. Unbounded override × extend finality delay (markets).  
+7. INVALID asymmetric + grace full sweep.  
+8. Publisher fairness not on-chain.  
 
 ---
 

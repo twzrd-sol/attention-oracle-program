@@ -56,6 +56,13 @@ Priority for **consumer hard-bind eligibility** and honest labeling:
    (rebuild)         (artifact_hash)    (unreproduced)
 ```
 
+> **The rails leg is contract surface, not available evidence today.** Its only
+> canonical bind target (§3.1, listen payout) has no accounts on mainnet — that
+> rail has never been bootstrapped — so the adapter currently has exactly one
+> bindable fact family (markets) plus AO reference-only provenance. Evidence
+> level is unaffected: rails is still `artifact_hash`, it simply has nothing to
+> bind yet.
+
 Trust-rail scores and AOP evidence are **orthogonal**:
 
 | Plane | Answers |
@@ -78,6 +85,37 @@ A high trust score does **not** upgrade `artifact_hash` → `rebuild`. A perfect
 | Publish IX | `publish_listen_payout_root` |
 | Claim IX | `claim_listen_payout` |
 | Domain | Listen-payout merkle domains only (never compensation plain, never markets) |
+
+**Bootstrap gate (blocking — precedes the deployment gate below):**
+
+> **The listen-payout rail has never been bootstrapped on mainnet.** All three
+> of its config PDAs are absent — `getAccountInfo` returns null for each
+> (verified 2026-09-03):
+>
+> ```
+> authority_config  D6vVhAmEGBpNA9NhAfTMgQAraeG1as2SbvCLNmesoNgP
+> cap_config        Ebxykho1xsxio3eQr8v4yViukTUrrVAJxYesAGsoHjCz
+> vault_config      B4mUpjzUDY82TG4mNxECEWewmbkPcLpqgATnvP3ma2rk
+> ```
+>
+> There is therefore no authority config, no cap config, no vault config, no
+> published window, and no payout vault to fund. Listen-payout facts are
+> currently unavailable at **any** strength — not `hard`, not `soft`. Adapters
+> MUST emit `refuse` for `fact_type` ∈ {`listen_claim`, `listen_window`} while
+> these accounts are absent, and MUST resolve that absence against live RPC
+> rather than assuming bootstrap has since happened because this document
+> exists. This gate is strictly stronger than the pin gate below: the pin gate
+> decides *which* listen semantics apply, this one decides whether any listen
+> fact exists at all.
+>
+> **Dependency chain.** Bootstrapping means `init_payout_authority_config`,
+> `init_payout_cap_config`, `init_payout_vault_config`. In the **deployed**
+> binary all three are gated on rails `Config.admin`, and all three declare
+> `payer = admin`, so the admin key must itself be funded — a separate fee payer
+> does not cover an allocation bound to `admin` in the context. `Config.admin`
+> still reads the retired `2pHjZL…` (see the split note below), which holds 0
+> lamports. The listen bind target is therefore blocked behind the Config admin
+> rotation: `docs/playbooks/wzrd-rails-config-admin-rotation.md`.
 
 **Post–H-01 liveness (critical — deployment-gated):**
 
@@ -161,6 +199,10 @@ Suggested JSON shape for adapters (language-agnostic):
 
 ### Check definitions and freshness
 
+- **Listen checks presuppose bootstrap.** `claim_live` and `vault_prefund` both
+  assume the rail's config PDAs and payout vault exist on mainnet. They do not
+  (§3.1), so listen fact types short-circuit to `refuse` before either check is
+  evaluated. The definitions below describe the post-bootstrap steady state.
 - **`vault_prefund` is off-chain adapter arithmetic, not an on-chain check.**
   Pass criteria: live listen-payout vault ATA balance ≥
   `total_amount_ccm − claimed_so_far` for the window. The program has no
@@ -203,6 +245,7 @@ Full operational checklist: `docs/agent-trust-integration-checklist.md`.
 
 - [x] Evidence hierarchy locked as `rebuild > artifact_hash > unreproduced`  
 - [x] Post–H-01 claim liveness documented (pause ≠ claim freeze) — **deployment-gated**: live pin `3128b644…` remains pre–H-01 until the deploy + re-pin lands  
+- [x] Listen-payout bind target documented as **unavailable at any strength** — all three config PDAs absent on mainnet, bootstrap gated on `Config.admin` (§3.1)  
 - [x] BindDecision + strength matrix defined  
 - [x] Cross-link checklist for operators  
 
