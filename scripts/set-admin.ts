@@ -135,6 +135,16 @@ async function main(): Promise<void> {
 
   const connection = new Connection(rpcUrl, "confirmed");
   const admin = loadKeypair(keypairPath);
+
+  // A retired admin is often drained, and a zero-balance signer cannot pay its
+  // own fee: simulation fails with AccountNotFound before the program is
+  // reached. FEE_PAYER lets a funded key pay while the admin still signs, so
+  // the rotation does not require re-funding a key that was deliberately
+  // emptied. Defaults to the admin when unset.
+  const feePayerPath = env("FEE_PAYER");
+  const feePayer = feePayerPath ? loadKeypair(feePayerPath) : admin;
+  const separatePayer = !feePayer.publicKey.equals(admin.publicKey);
+
   const [configPda] = PublicKey.findProgramAddressSync([CONFIG_SEED], RAILS_PROGRAM);
 
   console.log("\nwzrd-rails set_admin (SINGLE STEP - no accept leg)");
@@ -143,7 +153,17 @@ async function main(): Promise<void> {
   console.log(`  Program   : ${RAILS_PROGRAM.toBase58()}`);
   console.log(`  Config    : ${configPda.toBase58()}`);
   console.log(`  Signer    : ${admin.publicKey.toBase58()}`);
+  console.log(`  Fee payer : ${feePayer.publicKey.toBase58()}${separatePayer ? " (separate)" : " (same as signer)"}`);
   console.log(`  New admin : ${newAdmin.toBase58()}`);
+
+  const payerBalance = await connection.getBalance(feePayer.publicKey, "confirmed");
+  console.log(`  Fee payer balance: ${payerBalance} lamports`);
+  if (payerBalance === 0) {
+    fail(
+      `Fee payer ${feePayer.publicKey.toBase58()} has 0 lamports and cannot pay. ` +
+        "Set FEE_PAYER to a funded keypair, or fund this one.",
+    );
+  }
 
   const configAcct = await connection.getAccountInfo(configPda, "confirmed");
   if (!configAcct) fail("Config account not found on-chain");
@@ -173,13 +193,13 @@ async function main(): Promise<void> {
 
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   const message = new TransactionMessage({
-    payerKey: admin.publicKey,
+    payerKey: feePayer.publicKey,
     recentBlockhash: blockhash,
     instructions: [ix],
   }).compileToV0Message();
 
   const tx = new VersionedTransaction(message);
-  tx.sign([admin]);
+  tx.sign(separatePayer ? [feePayer, admin] : [admin]);
 
   console.log("\nSimulating transaction...");
   const simulation = await connection.simulateTransaction(tx, {
