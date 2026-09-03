@@ -45,6 +45,38 @@ On-chain guard: `set_admin` rejects `Pubkey::default()`. Per audit M-3 / EZ-7 an
 all-zeros admin permanently retires the role and is recoverable only via program
 upgrade, so the check is in the program, not just in tooling.
 
+## Blocker: the current admin cannot pay its own fee
+
+**`2pHj...` holds 0 SOL** (checked 2026-09-03). It has to sign this instruction,
+and with a zero balance it cannot be the fee payer: simulation fails before the
+program is ever reached, with
+
+```
+Simulation failed: "AccountNotFound"
+```
+
+That is the account-not-funded error, not a missing Config account - the Config
+PDA is present and owned by the program with 1,872,240 lamports. So this is
+almost certainly why the rotation was never completed on 2026-08-24: the key was
+drained as part of standing it down, which also removed its ability to hand off
+its own role.
+
+Two ways through, both needing an operator decision:
+
+1. **Fund `2pHj...` with a few thousand lamports** (~0.001 SOL covers a 5,000
+   lamport fee many times over), rotate, and let the remainder sit. Simplest,
+   and the funding is trivially small - but it briefly re-funds a key that was
+   deliberately drained.
+2. **Use a separate fee payer.** A Solana transaction's fee payer need not be
+   the instruction's signer: `2pHj...` signs as admin while a funded key pays.
+   This needs a `FEE_PAYER` keypair option added to `scripts/set-admin.ts`
+   (set `payerKey` to the fee payer and pass both keypairs to `tx.sign`), plus a
+   funded key the operator controls. `8di6...` has 0.178 SOL but its keypair is
+   not on the ops box, so it cannot co-sign from there.
+
+Option 2 is cleaner if a funded operator key is available to sign locally;
+option 1 is faster.
+
 ## Preconditions
 
 1. **Confirm you control `NEW_ADMIN`.** Single step, no accept leg. For
@@ -59,23 +91,38 @@ upgrade, so the check is in the program, not just in tooling.
 
 ## Procedure
 
-Follow `scripts/set-reward-rate.ts`, the existing admin-instruction script in
-this repo. Its contract is the one to copy: dry-run by default, derive accounts,
-verify the signer really is the on-chain admin, sign, simulate, and only then
-broadcast behind `BROADCAST=1` plus a typed confirmation phrase, with
-`I_UNDERSTAND_MAINNET=1` additionally required on mainnet.
+`scripts/set-admin.ts` implements this, modeled on `scripts/set-reward-rate.ts`:
+dry-run by default, derive accounts, verify the signer really is the on-chain
+admin, sign, simulate, and only then broadcast behind `BROADCAST=1` plus a typed
+confirmation phrase, with `I_UNDERSTAND_MAINNET=1` additionally required on
+mainnet. It refuses an all-zeros `NEW_ADMIN` (mirroring the on-chain guard), a
+no-op where `NEW_ADMIN` already equals the current admin, and any keypair that
+is not the current on-chain admin. After a confirmed send it re-reads the Config
+account and asserts the admin actually changed rather than trusting the
+signature.
 
-A `scripts/set-admin.ts` following that shape does not exist yet. Write it, or
-perform the rotation with equivalent tooling, but keep these properties:
+```bash
+CLUSTER=mainnet-beta RPC_URL="<dedicated rpc>" \
+  KEYPAIR=~/.config/solana/id.json \
+  NEW_ADMIN=8di6hHF8GhEgeCVzmjDeKQYcR51SMLdzDPR5ESf55gC8 \
+  npx tsx scripts/set-admin.ts                       # dry run, simulate only
 
-- refuse if the loaded keypair is not the current on-chain admin
-- refuse `Pubkey::default()` as `NEW_ADMIN`, mirroring the on-chain guard
-- refuse a no-op where `NEW_ADMIN` already equals the current admin
-- **simulate before sending, and abort on any simulation error** - this is what
-  proves the deployed (pre-H-01) binary accepts the instruction, rather than
-  assuming it from current source
-- after confirmation, re-read the Config account and assert the admin actually
-  changed, rather than trusting a successful signature
+# then, once the fee-payer blocker above is resolved:
+... BROADCAST=1 I_UNDERSTAND_MAINNET=1 npx tsx scripts/set-admin.ts
+```
+
+Dry run on 2026-09-03 got as far as confirming the derivation and authority:
+
+```
+Config    : 7pwUU1hv3hCNNTAPmDyMRCeKoMPEz3k5cH1PTbWDNQR6
+Signer    : 2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD
+Current on-chain admin: 2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD
+```
+
+so the signer check passes. Simulation then failed on the zero balance, which
+means **the deployed binary has not yet been proven to accept `set_admin`** -
+the transaction never reached the program. Treat a clean simulation as the real
+go/no-go once the fee payer is sorted; do not skip it.
 
 ## After it lands
 
