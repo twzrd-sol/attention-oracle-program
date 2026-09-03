@@ -28,7 +28,7 @@ Priority for **consumer hard-bind eligibility** and honest labeling:
 1. **Honesty > marketing.** Flattening rails to `rebuild` would misstate #126’s mechanical proof and invite agents to treat chronological source inference as bit-for-bit rebuild.
 2. **Hard bind follows rank.** A commerce decision that requires the strongest on-chain attestation should prefer markets paths (`rebuild`) over rails (`artifact_hash`). Soft signals may use rails freely with labeled level.
 3. **AO is not a third peer.** Demoting AO is not optional: unreproduced source means no agent-hard evidence path. Do not invent a fourth “legacy” hard tier.
-4. **Shared upgrade authority does not equal shared evidence level.** Both upgradeable programs share `2pHjZL…`; that is a **role risk** (see §5), not a reason to average or merge evidence levels.
+4. **Shared upgrade authority does not equal shared evidence level.** Both upgradeable programs share a single upgrade key (`8di6hHF8…` since the 2026-08-24 rotation); that is a **role risk** (see §5), not a reason to average or merge evidence levels.
 
 **Product rule:** every AOP-backed attestation field MUST include `evidence_level` ∈ {`rebuild`, `artifact_hash`, `unreproduced`}. Consumers MUST refuse hard bind when `evidence_level == unreproduced`.
 
@@ -79,14 +79,36 @@ A high trust score does **not** upgrade `artifact_hash` → `rebuild`. A perfect
 | Claim IX | `claim_listen_payout` |
 | Domain | Listen-payout merkle domains only (never compensation plain, never markets) |
 
-**Post–H-01 liveness (critical):**
+**Post–H-01 liveness (critical — deployment-gated):**
 
-| Flag / action | Effect on hard bind |
+> **Deployment gate.** The semantics in the table below exist in source
+> (`03acd2c`, #129) but are **not yet live on mainnet**. The current
+> `artifact_hash` pin `3128b644…` (deployed 2026-06-22, RPC re-verified
+> 2026-08-13) predates H-01: on that binary `claim_listen_payout` reverts
+> while `paused == true`, payout-admin rotation is 1-step, and there is no
+> Config.admin emergency unpause. Against pin `3128b644…`, consumers MUST
+> treat `paused == true` as a claim freeze and refuse hard bind on any
+> listen fact while paused. The table applies **only** to a rails binary
+> hash-verified from post-`03acd2c` source. Sequencing: deploy H-01
+> (`docs/playbooks/wzrd-rails-h01-deploy-runbook.md`) → re-verify hash →
+> refresh pin (§5.1) → only then enable the pause-tolerant rules below.
+
+| Flag / action (post–H-01 binary only) | Effect on hard bind |
 |---------------|---------------------|
 | `PayoutAuthorityConfig.paused == true` | **Does not** block hard bind for *already published* windows — claims remain live |
 | `paused == true` | **Does** block soft/hard bind for *new* unpublished windows (publish frozen) |
 | Config.admin emergency unpause | Ops recovery only; not required for claim liveness of published windows |
 | 2-step payout admin | Reduces rotation footgun; still SEMI_TRUSTED for allowlist/cap/pause-publish |
+
+> **Config.admin split (2026-09-02).** The BPF upgrade authority rotated to
+> `8di6hHF8…` on 2026-08-24, but rails `Config.admin` (config PDA
+> `7pwUU1hv…`) still reads `2pHjZL…` on mainnet. The emergency-unpause
+> escape above requires a live `Config.admin` signer: if `2pHjZL…` is
+> retired for signing, the escape is inoperative until `set_admin` rotates
+> it (which itself needs `2pHjZL…` to sign — otherwise recovery is a
+> program upgrade under `8di6hHF8…`). Whether the split is deliberate is an
+> open operator decision — see the canary playbook note. Do not count the
+> escape as a mitigating control until the split is resolved.
 
 ### 3.2 Markets resolution / settle (markets · `rebuild`)
 
@@ -137,12 +159,28 @@ Suggested JSON shape for adapters (language-agnostic):
 
 **Floor rule:** hard bind on rails requires at least `artifact_hash` pin; hard bind on markets requires `rebuild` pin. Never hard-bind AO.
 
+### Check definitions and freshness
+
+- **`vault_prefund` is off-chain adapter arithmetic, not an on-chain check.**
+  Pass criteria: live listen-payout vault ATA balance ≥
+  `total_amount_ccm − claimed_so_far` for the window. The program has no
+  solvency gate — an underfunded claim simply fails at the transfer CPI.
+  Fee-adjust the expected wallet net per §5.3 before comparing.
+- **`claim_live` is pin-dependent.** On a post–H-01 pin, published-window
+  claims stay live even when `paused == true`; on pin `3128b644…` this check
+  MUST fail while paused (see §3.1 deployment gate).
+- **Staleness.** Every BindDecision carries `as_of_slot`. A hard bind MUST be
+  re-derived before acting when it is older than the consumer's freshness
+  bound (RECOMMENDED default: 300 slots ≈ 2 minutes). Pause flips, vault
+  drains, and pin invalidations between bind and act are otherwise invisible
+  to the consumer.
+
 ---
 
 ## 5. Shared constraints (all AOP facts)
 
 1. **Pin refresh:** After any rails/markets upgrade, re-verify hash, update pin, invalidate prior hard binds until re-pin.  
-2. **Upgrade authority:** Single key `2pHjZL…` — product FULLY_TRUSTED today; treat total rewrite as catastrophic until Squads (non-goal for this seam).  
+2. **Upgrade authority:** Single key `8di6hHF8…` (rotated from `2pHjZL…` 2026-08-24; RPC re-verified 2026-09-02) — product FULLY_TRUSTED today; treat total rewrite as catastrophic until Squads (non-goal for this seam).  
 3. **TransferFee:** Live CCM 50 bps — **never** treat event gross as wallet net for settlement math.  
 4. **Domain separation:** Rails listen ↔ markets resolution roots are not interchangeable (GATE A).  
 5. **Leaf parity:** `PayoutAllocationLeafV1` off-chain builders must stay golden-equal to on-chain verifier.  
@@ -164,7 +202,7 @@ Full operational checklist: `docs/agent-trust-integration-checklist.md`.
 ## 7. Acceptance for this PR
 
 - [x] Evidence hierarchy locked as `rebuild > artifact_hash > unreproduced`  
-- [x] Post–H-01 claim liveness documented (pause ≠ claim freeze)  
+- [x] Post–H-01 claim liveness documented (pause ≠ claim freeze) — **deployment-gated**: live pin `3128b644…` remains pre–H-01 until the deploy + re-pin lands  
 - [x] BindDecision + strength matrix defined  
 - [x] Cross-link checklist for operators  
 

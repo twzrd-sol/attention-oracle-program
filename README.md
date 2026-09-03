@@ -9,7 +9,7 @@ Open-source Solana program source for the Liquid Attention Protocol.
 | Program | Program ID | Status | Upgrade Authority |
 |---------|------------|--------|-------------------|
 | `token_2022` / Attention Oracle | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | Immutable on mainnet | None |
-| `wzrd_rails` | `BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9` | Upgradeable on mainnet | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` |
+| `wzrd_rails` | `BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9` | Upgradeable on mainnet | `8di6hHF8GhEgeCVzmjDeKQYcR51SMLdzDPR5ESf55gC8` |
 
 Mainnet `token_2022` details:
 

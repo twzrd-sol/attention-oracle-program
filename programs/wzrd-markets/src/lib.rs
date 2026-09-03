@@ -88,7 +88,7 @@ macro_rules! pool_signer_seeds {
 
 // Live mainnet program id. Deployed 2026-07-07 (slot 431429172) from this
 // source tree; programdata account EX8GDdvw841HGRZSib4fdYjLHcbqhYdocQoCykbErcQW,
-// upgrade authority 2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD.
+// upgrade authority 8di6hHF8GhEgeCVzmjDeKQYcR51SMLdzDPR5ESf55gC8.
 //
 // Reproducible build: `cargo build-sbf --manifest-path programs/wzrd-markets/Cargo.toml`
 // emits target/deploy/wzrd_markets.so with

@@ -27,13 +27,23 @@ Read-only discovery on 2026-05-05 found:
 | Program | `BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9` |
 | Config PDA | `7pwUU1hv3hCNNTAPmDyMRCeKoMPEz3k5cH1PTbWDNQR6` |
 | Config admin | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` |
-| Upgrade authority | `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD` |
+| Upgrade authority | `8di6hHF8GhEgeCVzmjDeKQYcR51SMLdzDPR5ESf55gC8` |
 | Pool 0 | `6oQDChd9wJv4CJdPT8zsBwPmYT2jUmogetVP9me6u5Vf` |
 | Stake vault | `H8uqT29s3Kc9JLR3s6G2L3ZyF9avz2CJKfhPK1EbcmXr` |
 | Reward vault | `4HnYVcAs91Az5JYt4p5DaJzFvSxzvjpFnXsgzqNejBKh` |
 | Agent 58 wallet | `E4F4MY6Fm3hzq3xmrDB5nnrTxXgKPw19wviaZxVSMwQD` |
 | Agent 58 CCM ATA | `8i1TgsTPQRpmos9qoATwzRyXpADTU3qejVHBWqgKb72x` |
 | Agent 58 UserStake | `HnR59DAGJNiW4q8ZHzgQzWYJcMYPiWrFhb733Tcqxb34` |
+
+> **Config admin vs upgrade authority.** These two rows deliberately differ. The
+> BPF upgrade authority rotated to `8di6hHF8GhEgeCVzmjDeKQYcR51SMLdzDPR5ESf55gC8`
+> on 2026-08-24. The program's own config PDA admin was **not** rotated with it:
+> reading `7pwUU1hv3hCNNTAPmDyMRCeKoMPEz3k5cH1PTbWDNQR6` on mainnet still returns
+> `2pHjZLqsSqi35xuYHmZbZBM1xfYV6Ruv57r3eFPvZZaD`. The Config admin row above is
+> current on-chain state, not stale copy — do not "correct" it to the new
+> authority. Rotating it is specified in
+> `docs/playbooks/wzrd-rails-config-admin-rotation.md`; once that lands, both
+> rows move together.
 
 Pool 0 currently has `total_staked=0`, `reward_rate_per_slot=1000`, and an
 empty reward vault. The swarm preflight correctly refuses to stake into that

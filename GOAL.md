@@ -51,7 +51,7 @@ An agent (or trust gate) can:
 
 1. ~~Plamen Core report~~ — `AUDIT_REPORT_TRUST_RAILS_2026-08-11.md` (local)  
 2. ~~Medium+ classified + PoCs~~ — #127  
-3. ~~H-01 claim liveness + 2-step payout admin~~ — #129  
+3. H-01 claim liveness + 2-step payout admin — #129 **source-complete; mainnet deploy pending** (live pin `3128b644…` is pre–H-01 — see `docs/playbooks/wzrd-rails-h01-deploy-runbook.md`)  
 4. **Integration seam** — `docs/trust-rail-aop-seam.md` + checklist (PR3): trust-rail decision → AOP fact with locked evidence levels  
 5. Open gaps (upgrade key, fee gross/net, markets finality residuals) listed as product constraints, not silent assumptions  
 6. Follow-on: wzrd-final adapter implements `BindDecision` against the seam contract  

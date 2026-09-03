@@ -33,7 +33,7 @@ Before treating a listen leaf as **hard** funded entitlement:
 | Evidence level | Consumer labels `artifact_hash` (not `rebuild`) | Mislabel → refuse honesty gate |
 | Leaf layout | `PayoutAllocationLeafV1` golden parity with on-chain verifier | Refuse |
 | Domain | Listen-payout domain only — never compensation or markets domains | Refuse |
-| **Publish pause (H-01)** | New windows may be blocked if `paused`; **claims on published windows stay live** | Do **not** refuse published claims solely because `paused == true` |
+| **Publish pause (H-01 — pin-dependent)** | **Post–H-01 pin only:** new windows may be blocked if `paused`; claims on published windows stay live | On a post–H-01 pin, do **not** refuse published claims solely because `paused == true`. On the current live pin `3128b644…` (pre–H-01), `claim_listen_payout` reverts while paused — treat `paused == true` as a claim freeze and refuse hard bind |
 | Prefund | Listen vault ATA balance ≥ remaining unclaimed class | Soft / partial FCFS |
 | Cap | Window total ≤ per-window cap at publish | On-chain enforced |
 | Proof | Valid listen-payout node convention; `MAX_PROOF_LEN` | Fail closed |
@@ -75,7 +75,7 @@ Before treating a listen leaf as **hard** funded entitlement:
 | Program | Live evidence level | Trust-rail field |
 |---------|---------------------|------------------|
 | wzrd-markets | Byte-reproduced from source | `evidence_level = "rebuild"` |
-| wzrd-rails | Artifact-hash-verified only | `evidence_level = "artifact_hash"` |
+| wzrd-rails | Artifact-hash-verified only; live pin `3128b644…` is **pre–H-01** | `evidence_level = "artifact_hash"` |
 | AO v2 | Unreproduced / immutable | `evidence_level = "unreproduced"` → **no hard bind** |
 
 **Priority mapping (locked):** `rebuild` > `artifact_hash` > `unreproduced`.
@@ -95,12 +95,14 @@ After **any** upgrade of rails or markets:
 
 | Role | Trust class | Can affect agent evidence |
 |------|-------------|---------------------------|
-| Upgrade authority `2pHjZL…` | FULLY_TRUSTED (product) | Total rewrite both programs |
+| Upgrade authority `8di6hHF8…` (rotated 2026-08-24) | FULLY_TRUSTED (product) | Total rewrite both programs |
 | Markets admin / resolver | FULLY_TRUSTED intent | Finality DoS, INVALID, override brick |
-| Rails Config.admin | FULLY_TRUSTED | Rate, compensate root; **unpause-only** on listen pause (H-01) |
+| Rails Config.admin | FULLY_TRUSTED | Rate, compensate root; **unpause-only** on listen pause (H-01). Still `2pHjZL…` on-chain — **not** rotated with the 2026-08-24 BPF authority rotation; the unpause escape depends on this key's liveness (operator decision pending, see seam §3.1) |
 | Payout admin | **SEMI_TRUSTED** | Publish pause, allowlist, cap; 2-step rotation (H-01) |
 | Listen / attention publisher | **SEMI_TRUSTED** | Root content within caps |
 | Unprivileged user | Permissionless | First LP ratio, dust stake grief windows |
+
+H-01 behaviors above (2-step rotation, unpause-only Config.admin escape) describe post–H-01 source; they are live on-chain only after the H-01 deploy (§7 gap 3).
 
 ---
 
@@ -108,7 +110,7 @@ After **any** upgrade of rails or markets:
 
 | Desired bind strength | Requirements |
 |----------------------|--------------|
-| **Hard** | Pin OK for program’s evidence floor · fact-type checks pass · fee net adjusted · not refuse-class finality brick · published listen claims OK even if publish-paused (H-01) |
+| **Hard** | Pin OK for program’s evidence floor · fact-type checks pass · fee net adjusted · not refuse-class finality brick · published listen claims OK even if publish-paused (H-01, **post–H-01 pin only** — on `3128b644…` paused ⇒ refuse) |
 | **Soft** | Fact exists but underfund, unlock open, dispute active, or fee uncertain |
 | **Refuse** | Hash mismatch, wrong domain, AO-only evidence, admin==resolver when override required, INVALID asymmetric without rebalance plan |
 
@@ -118,7 +120,7 @@ After **any** upgrade of rails or markets:
 
 1. Shared single upgrade key — Squads later; pin hashes now.  
 2. Rails not source-reproduced — label `artifact_hash`.  
-3. ~~Payout pause freezes claims~~ **Fixed H-01** — publish-only pause.  
+3. Payout pause freezes claims — **fixed in source (H-01 #129) but NOT yet deployed**; live binary `3128b644…` still freezes claims under pause. Cleared only by the H-01 deploy + pin refresh (`docs/playbooks/wzrd-rails-h01-deploy-runbook.md`).  
 4. Outbound gross attestation under live 50 bps TransferFee.  
 5. Unbounded override × extend finality delay (markets).  
 6. INVALID asymmetric + grace full sweep.  
