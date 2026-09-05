@@ -2,7 +2,11 @@
 
 **Locked**: 2026-08-11  
 **Repo tip**: post-#129 H-01 on `main` (PoCs #127 + governance fix)  
-**Status**: Active — seam draft in `docs/trust-rail-aop-seam.md`
+**Status**: Active — seam draft in `docs/trust-rail-aop-seam.md`  
+**Repositioning (2026-09-05, proposal)**: `docs/aop-trust-rail-repositioning.md` — move AOP's
+role from streaming attention (listen payouts, attention-metric markets — inert on mainnet) to
+backing the trust gate, buyer corpus, and facilitator rail. Not yet decided; item 6 below is
+the surface it would change.
 
 ## One-liner
 

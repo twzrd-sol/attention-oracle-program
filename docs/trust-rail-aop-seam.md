@@ -11,6 +11,13 @@ verification strength.
 It does **not** change frozen trust-rail HTTP/MCP endpoints. It defines how
 consumers may *attach* AOP evidence to those decisions.
 
+> **Repositioning proposal (2026-09-05).** `docs/aop-trust-rail-repositioning.md`
+> proposes retiring the listen-payout bind target (§3.1) in favour of fact types
+> that back the trust gate, buyer corpus, and facilitator rail directly
+> (`settlement_tx`, `gate_transcript`, `receipt_root`, `merchant_attach`). Until
+> that proposal is decided, this contract stands as written; §3.1's bootstrap
+> gate already yields `refuse` for every listen fact.
+
 ---
 
 ## 1. Evidence levels (locked — do not flatten)
