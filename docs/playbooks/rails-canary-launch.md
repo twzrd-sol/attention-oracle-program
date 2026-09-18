@@ -20,7 +20,9 @@ allowlist.
 
 ## Live Rails Facts
 
-Read-only discovery on 2026-05-05 found:
+Read-only discovery on 2026-05-05, re-confirmed against mainnet on 2026-09-03.
+The `Upgrade authority` row reflects the 2026-08-24 BPF rotation, not the
+original 2026-05-05 read:
 
 | Surface | Value |
 | --- | --- |
@@ -45,10 +47,17 @@ Read-only discovery on 2026-05-05 found:
 > `docs/playbooks/wzrd-rails-config-admin-rotation.md`; once that lands, both
 > rows move together.
 
-Pool 0 currently has `total_staked=0`, `reward_rate_per_slot=1000`, and an
-empty reward vault. The swarm preflight correctly refuses to stake into that
-state because active emissions before a seed cohort would make the first staker
-capture the initial reward window.
+At the 2026-05-05 discovery, Pool 0 had `total_staked=0`,
+`reward_rate_per_slot=1000`, and an empty reward vault. The swarm preflight
+correctly refused to stake into that state because active emissions before a
+seed cohort would make the first staker capture the initial reward window.
+
+That is no longer live state. On 2026-09-03 mainnet reads, Pool 0 is already
+migrated to the 77-byte layout and holds `3,116,139.77 CCM` staked at
+`reward_rate_per_slot=1000`, with about `99.5 CCM` in the reward vault against
+roughly `17.75 CCM` accrued — seeded, funded, and solvent. Steps 1-4 below were
+written against the empty-pool state and are kept as the original derivation;
+re-run step 0 and re-derive them before executing anything.
 
 ## Required Sequence
 
@@ -192,8 +201,12 @@ action.
 
 ## Launch Blockers
 
-- `2pHj...` is both Config admin and upgrade authority. That is acceptable for a
-  canary only if acknowledged; governance rotation remains a separate task.
+- Config admin and upgrade authority are no longer the same key. The BPF upgrade
+  authority rotated to `8di6hHF8...` on 2026-08-24; Config admin is still
+  `2pHj...`. The admin-gated steps here (`set_reward_rate` in steps 1 and 4)
+  are checked against Config admin, so the `8di6hHF8...` signer does not unblock
+  them. Rotating Config admin remains a separate task, specified in
+  `docs/playbooks/wzrd-rails-config-admin-rotation.md`.
 - The helper scripts require actual signer key custody. This document and PR do
   not grant that custody.
 - The AO deployed-binary truth audit found documentation drift outside this
