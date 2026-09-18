@@ -11,12 +11,13 @@ verification strength.
 It does **not** change frozen trust-rail HTTP/MCP endpoints. It defines how
 consumers may *attach* AOP evidence to those decisions.
 
-> **Repositioning proposal (2026-09-05).** `docs/aop-trust-rail-repositioning.md`
-> proposes retiring the listen-payout bind target (§3.1) in favour of fact types
-> that back the trust gate, buyer corpus, and facilitator rail directly
-> (`settlement_tx`, `gate_transcript`, `receipt_root`, `merchant_attach`). Until
-> that proposal is decided, this contract stands as written; §3.1's bootstrap
-> gate already yields `refuse` for every listen fact.
+> **Repositioning (decided 2026-09-06).** `docs/aop-trust-rail-repositioning.md`
+> retires the listen-payout bind target (§3.1) in favour of fact types that back
+> the trust gate, buyer corpus, and facilitator rail (`settlement_tx`,
+> `gate_transcript`, `receipt_root`, `merchant_attach`). Step 1 (`settlement_tx`)
+> is adapter-side in wzrd-final #2831. Step 2 design:
+> `docs/aop-step2-attestation-corpus.md`. §3.1's bootstrap gate still yields
+> `refuse` for every listen fact until Config.admin rotation + init.
 
 ---
 
