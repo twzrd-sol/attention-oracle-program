@@ -48,8 +48,8 @@ both.
 | Preflight, receipts, wash | `wzrd-final` | Decision and evidence production. Not the chain. |
 | Listen settlement, `SETTLEMENT_JOBS_ENABLED`, AO oracle key | neither | Do not flip that fleet to feed this ledger. |
 
-Until the cut, the wzrd-final tree is the source that was deployed to devnet.
-Do not keep two edited copies.
+The devnet binary was built from the wzrd-final tree. This repo is the source
+of truth for the program now. Do not keep two edited copies.
 
 ## Instructions that exist
 
@@ -70,13 +70,13 @@ signed evidence, not raw transaction counts.
 
 ## Cut
 
-Done 2026-09-21 as a working-tree copy. Not committed.
+Done 2026-09-21. Program source is in-tree at `programs/evidence-ledger` (commit `43ff827`).
 
 1. Source is in `programs/evidence-ledger`. No `target/`, no keypair.
 2. Excluded from the workspace. Not wired to `GnGz…` or `BdSv…`.
 3. `cargo test --release` from that crate is the check that the copy builds.
 4. The wzrd-final publisher stays on devnet program id `BzBAYJxUtJp6mUkJPjEYjd8vdb2FUGnAfB5X9LqrQ72W`.
-5. Commit only when asked. No mainnet deploy in the cut.
+5. Further commits only when asked. No mainnet deploy in the cut.
 
 `security.txt` inside the program still names the wzrd-final source URL. That
 string is a fixed 367-byte section. Changing it changes the binary, so it stays

@@ -4,7 +4,8 @@ Append-only on-chain registry of merkle roots over TWZRD's signed evidence
 leaves. A published entry means one thing: *TWZRD's log key signed this head,
 and it was anchored before slot S.* It is not a vouch, an eligibility flag, or
 an unlock. The program has no claim, mint, transfer, or scoring instruction and
-no per-seller account, by construction (#2195 locks; docs/strategy/onchain_receipt_program_REVIEW.md).
+no per-seller account, by construction. See `LEDGER.md` in this repo for lineage
+and cut boundaries.
 
 Program id: `BzBAYJxUtJp6mUkJPjEYjd8vdb2FUGnAfB5X9LqrQ72W` (keypair in `target/deploy`, not committed).
 
@@ -15,9 +16,10 @@ Program id: `BzBAYJxUtJp6mUkJPjEYjd8vdb2FUGnAfB5X9LqrQ72W` (keypair in `target/d
 | `Ledger` | `["ledger", keccak256(log_id)]` | 128 | one per log / leaf domain; `scheme`, `authority`, immutable `trusted_signer`, strictly-increasing cursor |
 | `RootEntry` | `["root", ledger, seq_le]` | 152 | one per anchored head; never rewritten (a correction is a later seq) |
 
-Schemes: `1` = sorted-pair keccak batch root (`crates/merkle`), `2` = RFC 9162 keccak log
-(`twzrd_agent_intel.log_rfc6962`). Layouts and discriminators (`sha256("account:<Name>")[..8]`)
-are in `src/state.rs`.
+Schemes: `1` = sorted-pair keccak batch root, `2` = RFC 9162 keccak log.
+The off-chain merkle helpers and RFC 9162 log live in the sibling `wzrd-final`
+tree (ingestion), not in this repo. Layouts and discriminators
+(`sha256("account:<Name>")[..8]`) are in `src/state.rs`.
 
 ## Instructions (`sha256("global:<name>")[..8]` discriminators)
 
@@ -49,10 +51,10 @@ full/none reputation-block vectors, and the three decision-outcome attestation v
 
 ## Off-chain half
 
-`packages/twzrd-agent-intel/src/twzrd_agent_intel/log_anchor_publisher.py` builds the
-`[ed25519, anchor_head]` transaction from a stored `log_sth` row and shapes the
-`log_anchors` insert (migration 0212). Deploying to mainnet is an operator decision and is
-audit-gated per the review above.
+Ingestion and publishing stay in the sibling `wzrd-final` tree: the HTTP signed
+tree head, the Anchor publisher that builds `[ed25519, anchor_head]` transactions,
+and the hourly anchor timer. This repo holds the on-chain program only. See
+`LEDGER.md` for the boundary. Mainnet deploy is an operator decision.
 
 ## Deployments
 
@@ -71,10 +73,10 @@ Independently re-read through the public devnet RPC: the transaction invoked `Ed
 
 ## Running the Commit level
 
-`python -m twzrd_agent_intel.anchor_log_head --cluster devnet --rpc URL --keypair-file PATH --head-url https://intel.twzrd.xyz/v1/log/sth --dsn DSN`
-reads the current head (verified under the pinned key), reads the on-chain ledger, anchors only when
-`tree_size` grew, and records the `log_anchors` row with its `cluster`. `ops/systemd/twzrd-log-anchor-battleship.{service,timer}`
-is the hourly unit (not installed by default; DB guard floor is migration 0215, key is a 0600 file).
+The anchor CLI and systemd timer live in `wzrd-final`, not here. From that tree,
+`python -m twzrd_agent_intel.anchor_log_head` reads the current signed tree head,
+reads the on-chain ledger, anchors only when `tree_size` grew, and records the
+`log_anchors` row. The hourly Battleship unit is optional and operator-owned.
 
 Cost on mainnet at rent-exempt minimums: 0.001773 SOL per anchored head (permanent, 152-byte account),
 0.001621 SOL once per ledger, 0.288 SOL once for the program. Because a run is idempotent, spend tracks
