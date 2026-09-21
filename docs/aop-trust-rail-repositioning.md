@@ -6,6 +6,10 @@ Nothing here is deployed. Admin rotation and any on-chain send still need explic
 **Does not change**: the evidence-level hierarchy, the H-01 deployment gate, the Config-admin
 split note, or any on-chain state.
 
+**Step 1 landed** (wzrd-final #2831, 2026-09-18): adapter-side `settlement_tx`. Re-verify live
+`GET https://intel.twzrd.xyz/health` before citing a SHA.
+**Step 2 design**: `docs/aop-step2-attestation-corpus.md`. Design only; no IXs, no deploy.
+
 ## 1. The decision being proposed
 
 Reposition the Attention Oracle Program surface (wzrd-rails, wzrd-markets, AO v2) **away from
@@ -70,7 +74,8 @@ Ordered so each step is independently shippable and the biggest hole closes firs
    adapter and populate `readiness_card.proof` / `offline_receipt_verification` with the result.
    Closes "nothing reads Solana state" with zero AOP work and zero AOP risk. Also gives
    `delivery-capture.js` the server-side settlement check it documents as pending.
-2. **rails v-next: attestation + corpus roots.** One upgrade, one verifiable build, signed by
+2. **rails v-next: attestation + corpus roots.** Design frozen in
+   `docs/aop-step2-attestation-corpus.md`. One upgrade, one verifiable build, signed by
    `8di6…`:
    - `register_attestation(claim_id:16, kind:u8, hashes:[[u8;32];4], subject:Pubkey)` gated on a
      new `AttestationAuthorityConfig` PDA (allow-list, mirrors `PayoutAuthorityConfig` minus pause),
@@ -80,7 +85,8 @@ Ordered so each step is independently shippable and the biggest hole closes firs
    - no CCM movement, no vault, no claim path — attestation only, so the H-01-class pause/claim
      coupling cannot recur.
    Deploy via `solana-verify build` so rails moves to `rebuild` and the seam's two-tier
-   hard-bind asymmetry disappears. Pin refresh per seam §5.1.
+   hard-bind asymmetry disappears. Pin refresh per seam §5.1. Init of the authority PDA
+   is signed by the live V6 issuer, not by `Config.admin`.
 3. **Config admin rotation** (`docs/playbooks/wzrd-rails-config-admin-rotation.md`) — still
    required, but demoted from "prerequisite for the trust rail" to "hygiene": it unblocks
    `set_reward_rate`, `initialize_pool`, `compensate_external_stakers`, `realloc_stake_pool`,
@@ -115,12 +121,17 @@ Nothing in this section is a deploy, a `CONFIRM_BROADCAST`, or an H-01 ship.
    `4LkEFjJd…` is gas, never an attestation key. Retired `2pHjZL…` is never on the
    list. Do not freeze the rest of the allow-list, and do not implement the PDA,
    until the step-2 upgrade is designed.
+   **2026-09-18:** design is `docs/aop-step2-attestation-corpus.md`. First attester
+   is a program constant; additional members stay unfrozen. Re-verify
+   `/health.receipt_signing.trusted_pubkey` before implementing.
 
 4. **No `register_verified_moment` proof-of-concept before step 2.** That IX is
    `Config.admin`-gated, so a "cheap demo" *is* the admin rotation. Overloading
    commemorative fields (`asset_id`, `og_gng_program`) is not a gate transcript.
    Skip. Next implementation is sequencing step 1 (adapter-side `settlement_tx`
    in wzrd-final), not this IX and not a rotation.
+   **2026-09-18:** step 1 landed (wzrd-final #2831). Next code is the step-2 IXs
+   against the design doc, still no rotation and still no `register_verified_moment`.
 
 ## 6. What this retires, keeps, and explicitly does not claim
 
