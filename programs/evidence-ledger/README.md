@@ -54,14 +54,14 @@ full/none reputation-block vectors, and the three decision-outcome attestation v
 Ingestion and publishing stay in the sibling `wzrd-final` tree: the HTTP signed
 tree head, the Anchor publisher that builds `[ed25519, anchor_head]` transactions,
 and the hourly anchor timer. This repo holds the on-chain program only. See
-`LEDGER.md` for the boundary. Mainnet deploy is an operator decision.
+`LEDGER.md` for the boundary. Mainnet is already deployed; a further upgrade is an operator decision.
 
 ## Deployments
 
 | Cluster | Program | Deploy tx | Notes |
 |---|---|---|---|
 | devnet | `BzBAYJxUtJp6mUkJPjEYjd8vdb2FUGnAfB5X9LqrQ72W` | `3b3NkCMp995aeui59ocQFMJ9GjAeS9ZZAfxGukeKXeYRcYgBb2yVu9dcMwY8sTFKyAWEaD1JfXmqXpM1zFc5PTX4` | 2026-09-04; upgrade authority is a throwaway devnet key |
-| mainnet | — | — | operator decision, audit-gated |
+| mainnet | `BzBAYJxUtJp6mUkJPjEYjd8vdb2FUGnAfB5X9LqrQ72W` | `2H3Jnx1uTKTNatYpJnUb2p9WGqLrPxGEi8DsZ8c2BpBtssc8kKvPzhrPCcroVH63ZRTsGwNyee7JdLeWHUP6EKfL` | 2026-09-07 02:56 UTC, slot `444956973`. Upgrade authority `4HxZL3SAjBcXXk4VJMRs6JSP3T1cW95TkvJY1Ra5GD1B`. Programdata `9e2Q1rDEmvqAFQ9Quh8tvzDAjW8xRxnYTspXvZCdD6CQ`. ELF sha256 `8d690a9ffa7aef50091789cc10c7b425b4375633cc5ed7031dcdd04515375f68` matches `cargo build-sbf` of commit `43ff827` (2026-09-21). |
 
 First anchored head on devnet (the live `GET /v1/log/sth` head, signed by `Ak5SQwHpuQAqU7ty7ZWX7qgF39A9yi72c22KNn8sHzvS`):
 

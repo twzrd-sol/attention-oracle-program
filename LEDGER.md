@@ -28,18 +28,17 @@ The leaf names what was paid for.
 | Attention Oracle (`token_2022`) | `GnGzNdsQMxMpJfMeqnkGPsvHm8kwaDidiKjNU2dCVZop` | Immutable on mainnet. Do not redeploy. |
 | `wzrd-rails` | `BdSv824hvYeGAWQZUcypRzAor8yJit2qeqCHty3CSZy9` | Upgradeable. Listen payout era. Not this ledger. |
 | `wzrd-markets` | (see repo docs) | Attention markets. Not this ledger. |
-| `evidence-ledger` | `BzBAYJxUtJp6mUkJPjEYjd8vdb2FUGnAfB5X9LqrQ72W` | Devnet only. This continuation. |
+| `evidence-ledger` | `BzBAYJxUtJp6mUkJPjEYjd8vdb2FUGnAfB5X9LqrQ72W` | Mainnet. This continuation. |
 
-Devnet deploy tx: `3b3NkCMp995aeui59ocQFMJ9GjAeS9ZZAfxGukeKXeYRcYgBb2yVu9dcMwY8sTFKyAWEaD1JfXmqXpM1zFc5PTX4` (2026-09-04). Mainnet is an operator decision.
+Mainnet: slot `444956973` (2026-09-07 02:56 UTC), deploy tx `2H3Jnx1uTKTNatYpJnUb2p9WGqLrPxGEi8DsZ8c2BpBtssc8kKvPzhrPCcroVH63ZRTsGwNyee7JdLeWHUP6EKfL`, upgrade authority `4HxZL3SAjBcXXk4VJMRs6JSP3T1cW95TkvJY1Ra5GD1B`, programdata `9e2Q1rDEmvqAFQ9Quh8tvzDAjW8xRxnYTspXvZCdD6CQ`. ELF sha256 `8d690a9ffa7aef50091789cc10c7b425b4375633cc5ed7031dcdd04515375f68` matches `cargo build-sbf` of commit `43ff827` (checked 2026-09-21). Devnet deploy tx `3b3NkCMp995aeui59ocQFMJ9GjAeS9ZZAfxGukeKXeYRcYgBb2yVu9dcMwY8sTFKyAWEaD1JfXmqXpM1zFc5PTX4` (2026-09-04) is the same program id, earlier.
 
 ## Where the pieces live
 
 Program source now lives at `programs/evidence-ledger` in this repo (copied
 2026-09-21: `src/`, `tests/`, `Cargo.toml`, `Cargo.lock`, `README.md`). No
 `target/`, no keypair. It is excluded from this workspace so its own release
-profile (`opt-level` 3) stays the one that builds. The wzrd-final tree is the
-pre-cut original and the tree the devnet binary was built from. Do not edit
-both.
+profile (`opt-level` 3) stays the one that builds. The mainnet ELF matches
+commit `43ff827`. Do not edit the wzrd-final copy in parallel.
 
 | Piece | Home | Why |
 |---|---|---|
@@ -48,8 +47,8 @@ both.
 | Preflight, receipts, wash | `wzrd-final` | Decision and evidence production. Not the chain. |
 | Listen settlement, `SETTLEMENT_JOBS_ENABLED`, AO oracle key | neither | Do not flip that fleet to feed this ledger. |
 
-The devnet binary was built from the wzrd-final tree. This repo is the source
-of truth for the program now. Do not keep two edited copies.
+This repo is the source of truth for the program. The mainnet binary matches
+`43ff827`. Do not keep a second edited copy in wzrd-final.
 
 ## Instructions that exist
 
@@ -75,8 +74,8 @@ Done 2026-09-21. Program source is in-tree at `programs/evidence-ledger` (commit
 1. Source is in `programs/evidence-ledger`. No `target/`, no keypair.
 2. Excluded from the workspace. Not wired to `GnGz…` or `BdSv…`.
 3. `cargo test --release` from that crate is the check that the copy builds.
-4. The wzrd-final publisher stays on devnet program id `BzBAYJxUtJp6mUkJPjEYjd8vdb2FUGnAfB5X9LqrQ72W`.
-5. Further commits only when asked. No mainnet deploy in the cut.
+4. The same program id is live on mainnet. The wzrd-final publisher was documented against devnet; this note does not retarget it.
+5. Further commits only when asked. The 2026-09-21 cut did not deploy. Mainnet was already live.
 
 `security.txt` inside the program still names the wzrd-final source URL. That
 string is a fixed 367-byte section. Changing it changes the binary, so it stays
