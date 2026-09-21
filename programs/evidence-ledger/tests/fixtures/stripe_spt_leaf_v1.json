@@ -1,0 +1,12 @@
+{
+  "log_id": "stripe.agentic.spt.v1",
+  "domain": "TWZRD:STRIPE_SPT_LEAF_V1",
+  "payment_intent_id": "pi_3SpikeTest000000000000000",
+  "customer_ref": "cus_agent_spike_001",
+  "resource_id": "mcp://twzrd.intel/readiness_card",
+  "amount_cents": 25,
+  "currency": "usd",
+  "created_unix": 1758480000,
+  "leaf_keccak256_hex": "9f63b5eb2a19c623f2647cce74fe3eee74ac42a2df3087359f319d679b0e6904",
+  "notes": "Checked-in fixture for no-permission Stripe SPT leaf spike. Not a live Stripe object."
+}

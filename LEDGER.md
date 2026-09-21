@@ -67,6 +67,32 @@ the goal.
 Settlement is USDC. A token, if one is ever added, is capacity only. Leaves are
 signed evidence, not raw transaction counts.
 
+## Stripe / SPT leaf domain (no-permission spike)
+
+Separate leaf domain on the same program. Proof construction is local and
+fail-open. It does not call Stripe, Link, Muse, Shared Payment Tokens, trust
+refuse, or any RPC. Spend and settlement stay out of this path.
+
+| Field | Binding |
+|---|---|
+| `log_id` | `stripe.agentic.spt.v1` |
+| Domain tag | `TWZRD:STRIPE_SPT_LEAF_V1` |
+| Payer | `keccak256("stripe:customer:" \|\| customer_ref_utf8)` |
+| Resource hash | `keccak256("stripe:pi:" \|\| payment_intent_id \|\| 0x00 \|\| resource_id_utf8)` |
+| Amount | `u64` little-endian, USD cents (currency fixed by the domain tag) |
+| Slot | `u64` little-endian stand-in: Stripe `created` unix seconds until an on-chain slot is available |
+
+Leaf digest:
+
+`leaf = keccak256(domain \|\| payer \|\| resource_hash \|\| amount_le \|\| slot_le)`
+
+Same on-chain shape as the USDC leaf: four fields, one 32-byte digest, inclusion
+against a published root. Fixture and LiteSVM coverage live under
+`programs/evidence-ledger`. The dry-run publisher is on wzrd-final worktree
+branch `grok/stripe-spt-leaf-dry-run`
+(`packages/twzrd-agent-intel/src/twzrd_agent_intel/stripe_spt_leaf_dry_run.py`).
+It never waits on an external refuse.
+
 ## Cut
 
 Done 2026-09-21. Program source is in-tree at `programs/evidence-ledger` (commit `43ff827`).

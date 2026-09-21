@@ -308,3 +308,99 @@ fn signed_log_head_anchors_only_under_the_trusted_key() {
     let vix = Ix { program_id: pid(), accounts: vec![AM::new_readonly(l, false), AM::new_readonly(root_pda(&l, size), false)], data };
     send(&mut svm, vix, &[&auth]).unwrap();
 }
+
+
+#[test]
+fn stripe_fixture_leaves_publish_and_verify() {
+    // No Stripe, no trust refuse, no RPC: encode the checked-in SPT fixture,
+    // publish a scheme-1 root, verify inclusion on LiteSVM.
+    use evidence_ledger::leaf_stripe::{stripe_spt_leaf, STRIPE_SPT_LOG_ID};
+
+    let mut svm = LiteSVM::new();
+    load(&mut svm);
+    let auth = Keypair::new();
+    fund(&mut svm, &auth);
+
+    // init ledger for the Stripe leaf domain
+    let mut data = disc("init_ledger").to_vec();
+    data.extend_from_slice(pk(&auth).as_ref());
+    data.extend_from_slice(&[0u8; 32]);
+    data.push(1); // SCHEME_SORTED_PAIR
+    data.push(STRIPE_SPT_LOG_ID.len() as u8);
+    data.extend_from_slice(STRIPE_SPT_LOG_ID);
+    let ledger = ledger_pda_for(STRIPE_SPT_LOG_ID);
+    let init = Ix {
+        program_id: pid(),
+        accounts: vec![
+            AM::new(pk(&auth), true),
+            AM::new(ledger, false),
+            AM::new_readonly(sys::id(), false),
+        ],
+        data,
+    };
+    send(&mut svm, init, &[&auth]).unwrap();
+
+    let leaf = stripe_spt_leaf(
+        b"cus_agent_spike_001",
+        b"pi_3SpikeTest000000000000000",
+        b"mcp://twzrd.intel/readiness_card",
+        25,
+        1_758_480_000,
+    );
+    // companion filler leaf so the tree is non-trivial
+    let filler = k(&[b"stripe-spike-filler"]);
+    let leaves = vec![leaf, filler];
+    let (layers, root) = tree(&leaves);
+
+    // publish_root for this ledger (reuse helper shape with custom ledger PDA)
+    let seq: u64 = 0;
+    let mut pdata = disc("publish_root").to_vec();
+    pdata.extend_from_slice(&seq.to_le_bytes());
+    pdata.extend_from_slice(&root);
+    pdata.extend_from_slice(&k(&[b"manifest", &seq.to_le_bytes()]));
+    pdata.extend_from_slice(&(leaves.len() as u64).to_le_bytes());
+    let publish = Ix {
+        program_id: pid(),
+        accounts: vec![
+            AM::new_readonly(pk(&auth), true),
+            AM::new(pk(&auth), true),
+            AM::new(ledger, false),
+            AM::new(root_pda(&ledger, seq), false),
+            AM::new_readonly(sys::id(), false),
+        ],
+        data: pdata,
+    };
+    send(&mut svm, publish, &[&auth]).unwrap();
+
+    let mut vdata = disc("verify_inclusion").to_vec();
+    vdata.extend_from_slice(&seq.to_le_bytes());
+    vdata.extend_from_slice(&leaf);
+    vdata.extend_from_slice(&proof(&layers, 0));
+    let verify = Ix {
+        program_id: pid(),
+        accounts: vec![
+            AM::new_readonly(ledger, false),
+            AM::new_readonly(root_pda(&ledger, seq), false),
+        ],
+        data: vdata,
+    };
+    send(&mut svm, verify, &[&auth]).unwrap();
+
+    // flipped leaf must refuse
+    let mut bad = leaf;
+    bad[0] ^= 1;
+    let mut bdata = disc("verify_inclusion").to_vec();
+    bdata.extend_from_slice(&seq.to_le_bytes());
+    bdata.extend_from_slice(&bad);
+    bdata.extend_from_slice(&proof(&layers, 0));
+    let bad_ix = Ix {
+        program_id: pid(),
+        accounts: vec![
+            AM::new_readonly(ledger, false),
+            AM::new_readonly(root_pda(&ledger, seq), false),
+        ],
+        data: bdata,
+    };
+    let e = send(&mut svm, bad_ix, &[&auth]).unwrap_err();
+    assert!(e.contains("Custom(6003)"), "{e}");
+}
