@@ -4,6 +4,9 @@ members = [
   "programs/wzrd-rails",
   "programs/wzrd-markets",
 ]
+# Standalone so its opt-level 3 release profile is the one that builds.
+# The workspace profile is opt-level z and would change the program binary.
+exclude = ["programs/evidence-ledger"]
 resolver = "2"
 
 # Pin to avoid edition2024 breakage on SBF toolchain (Cargo 1.84)
