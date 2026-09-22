@@ -1,11 +1,9 @@
 #![cfg(feature = "localtest")]
-//! reader.fetch.v1 encoder. Not an instruction.
+//! reader.fetch.v1 encoder against the checked-in fixture.
 //!
 //! Run: cargo test --release --features localtest --test reader_fetch_leaf
 
-use evidence_ledger::leaf_fetch::{
-    reader_fetch_leaf, CLOCK_BLOCK_NUMBER, CLOCK_SLOT, READER_FETCH_LOG_ID,
-};
+use evidence_ledger::leaf_fetch::{payer_from_base_address, reader_fetch_leaf, READER_FETCH_LOG_ID};
 use sha2::{Digest, Sha256};
 
 fn markdown_hash(markdown: &[u8]) -> [u8; 32] {
@@ -24,39 +22,28 @@ fn hex_leaf(s: &str) -> [u8; 32] {
 }
 
 #[test]
-fn fixture_leaf_is_stable() {
+fn fixture_cases_match_the_shipped_encoder() {
     let raw = include_str!("fixtures/reader_fetch_v1.json");
-    let markdown = b"# example\n\npaid fetch body\n";
-    assert!(raw.contains("# example\\n\\npaid fetch body\\n"));
-    let resource = markdown_hash(markdown);
-    let mut payer = [0u8; 32];
-    payer[31] = 7;
-    let leaf = reader_fetch_leaf(payer, resource, 5000, CLOCK_SLOT, 446_606_971);
-    let expected = hex_leaf("b6e48bf0b8fda803cb60e262cc491ac5b3cb6edd97c806f236a32bcd56d60041");
-    assert_eq!(leaf, expected);
-    assert!(raw.contains("b6e48bf0b8fda803cb60e262cc491ac5b3cb6edd97c806f236a32bcd56d60041"));
-    assert!(raw.contains("\"time_field\": \"slot\""));
-    assert_eq!(READER_FETCH_LOG_ID, b"reader.fetch.v1");
-}
-
-#[test]
-fn base_block_number_is_not_a_solana_slot() {
-    let resource = markdown_hash(b"same body");
-    let mut solana_payer = [0u8; 32];
-    solana_payer[0] = 9;
-    let base_payer = {
-        let mut p = [0u8; 32];
-        p[12..].copy_from_slice(&[
-            0x14, 0xdf, 0x77, 0x2b, 0xd4, 0x96, 0xbb, 0xb7, 0xf4, 0x9b, 0xc3, 0xe9, 0x92, 0xce,
-            0x13, 0xb2, 0xc4, 0x41, 0x17, 0x7f,
-        ]);
-        p
-    };
-    let slot_leaf = reader_fetch_leaf(solana_payer, resource, 5000, CLOCK_SLOT, 100);
-    let block_leaf = reader_fetch_leaf(base_payer, resource, 5000, CLOCK_BLOCK_NUMBER, 100);
-    assert_ne!(slot_leaf, block_leaf);
-    assert_ne!(
-        reader_fetch_leaf(base_payer, resource, 50_000, CLOCK_BLOCK_NUMBER, 100),
-        block_leaf
+    assert!(raw.contains("\"log_id\": \"reader.fetch.v1\""));
+    assert!(raw.contains("# fetched\\n"));
+    let resource = markdown_hash(b"# fetched\n");
+    let solana = [0x11u8; 32];
+    let base = payer_from_base_address(&[
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+        0xff, 0x00, 0x11, 0x22, 0x33,
+    ]);
+    let scrape = reader_fetch_leaf(&solana, &resource, 5000, 444_956_973);
+    let browse = reader_fetch_leaf(&base, &resource, 50_000, 21_000_000);
+    assert_eq!(
+        scrape,
+        hex_leaf("7d65918d4d4f4174964914ad9eb4922818131e0613340b9e07adb32956dddd92")
     );
+    assert_eq!(
+        browse,
+        hex_leaf("ce5109c69259d21e950896ffd6e6ed2e2ed036649c156bc5bd18e60de5c00655")
+    );
+    assert!(raw.contains("7d65918d4d4f4174964914ad9eb4922818131e0613340b9e07adb32956dddd92"));
+    assert!(raw.contains("ce5109c69259d21e950896ffd6e6ed2e2ed036649c156bc5bd18e60de5c00655"));
+    assert_ne!(scrape, browse);
+    assert_eq!(READER_FETCH_LOG_ID, b"reader.fetch.v1");
 }
