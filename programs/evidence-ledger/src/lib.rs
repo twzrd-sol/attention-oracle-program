@@ -28,6 +28,8 @@ pub mod merkle;
 // Host/test only. A release SBF build must stay byte-identical to mainnet
 // commit 43ff827; this encoder is not an instruction.
 #[cfg(any(test, feature = "localtest"))]
+pub mod leaf_fetch;
+#[cfg(any(test, feature = "localtest"))]
 pub mod leaf_stripe;
 pub mod state;
 
