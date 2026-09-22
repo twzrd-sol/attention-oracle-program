@@ -93,6 +93,26 @@ branch `grok/stripe-spt-leaf-dry-run`
 (`packages/twzrd-agent-intel/src/twzrd_agent_intel/stripe_spt_leaf_dry_run.py`).
 It never waits on an external refuse.
 
+## Reader paid-fetch leaf (`reader.fetch.v1`)
+
+Not an SPT. Not `intel.twzrd.xyz/v6`. Not initialized. The encoder is
+host/test only (`leaf_fetch.rs`, `cfg` test/localtest) so the mainnet binary
+stays the deployed ELF.
+
+| Field | Binding |
+|---|---|
+| `log_id` | `reader.fetch.v1` |
+| Domain tag | `TWZRD:READER_FETCH_LEAF_V1` |
+| Payer | 32-byte Solana pubkey, or 12 zero bytes plus a 20-byte Base address |
+| Resource hash | `sha256` of the delivered markdown. `sha256` of the URL is the unpaid request id only. |
+| Amount | `u64` little-endian USDC base units. Live prices are 5000 and 50000. |
+| Time | one `u8` clock plus one `u64`. Clock `1` is `slot` (Solana settlement slot). Clock `2` is `block_number` (Base `eth_getTransactionReceipt.blockNumber`). A Base payment has no Solana slot. |
+
+`leaf = keccak256(domain || payer || resource_hash || amount_le || clock || time_le)`
+
+Golden fixture: `programs/evidence-ledger/tests/fixtures/reader_fetch_v1.json`.
+No `init_ledger`. The hourly publisher stays on `intel.twzrd.xyz/v6`.
+
 ## Cut
 
 Done 2026-09-21. Program source is in-tree at `programs/evidence-ledger` (commit `43ff827`).

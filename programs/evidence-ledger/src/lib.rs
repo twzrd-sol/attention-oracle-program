@@ -29,6 +29,8 @@ pub mod merkle;
 // commit 43ff827; this encoder is not an instruction.
 #[cfg(any(test, feature = "localtest"))]
 pub mod leaf_stripe;
+#[cfg(any(test, feature = "localtest"))]
+pub mod leaf_fetch;
 pub mod state;
 
 #[cfg_attr(target_os = "solana", link_section = ".security.txt")]

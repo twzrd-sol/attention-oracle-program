@@ -1,0 +1,14 @@
+{
+  "log_id": "reader.fetch.v1",
+  "domain": "TWZRD:READER_FETCH_LEAF_V1",
+  "markdown": "# example\n\npaid fetch body\n",
+  "payer_hex": "0000000000000000000000000000000000000000000000000000000000000007",
+  "resource_hash": "sha256(markdown)",
+  "amount_base_units": 5000,
+  "clock": "slot",
+  "clock_byte": 1,
+  "time": 446606971,
+  "time_field": "slot",
+  "leaf": "b6e48bf0b8fda803cb60e262cc491ac5b3cb6edd97c806f236a32bcd56d60041",
+  "note": "Base uses clock_byte 2 and time_field block_number. A Base payer is 12 zero bytes plus the 20-byte address. No init_ledger."
+}
