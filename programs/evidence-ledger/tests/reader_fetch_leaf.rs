@@ -34,14 +34,12 @@ fn fixture_cases_match_the_shipped_encoder() {
     ]);
     let scrape = reader_fetch_leaf(&solana, &resource, 5000, 444_956_973);
     let browse = reader_fetch_leaf(&base, &resource, 50_000, 21_000_000);
-    assert_eq!(
-        scrape,
-        hex_leaf("7d65918d4d4f4174964914ad9eb4922818131e0613340b9e07adb32956dddd92")
-    );
-    assert_eq!(
-        browse,
-        hex_leaf("ce5109c69259d21e950896ffd6e6ed2e2ed036649c156bc5bd18e60de5c00655")
-    );
+    let scrape_hex = "7d65918d4d4f4174964914ad9eb4922818131e0613340b9e07adb32956dddd92";
+    let browse_hex = "ce5109c69259d21e950896ffd6e6ed2e2ed036649c156bc5bd18e60de5c00655";
+    assert_eq!(scrape, hex_leaf(scrape_hex));
+    assert_eq!(browse, hex_leaf(browse_hex));
+    println!("reader.fetch.v1 solana_scrape {scrape_hex}");
+    println!("reader.fetch.v1 base_browse {browse_hex}");
     assert!(raw.contains("7d65918d4d4f4174964914ad9eb4922818131e0613340b9e07adb32956dddd92"));
     assert!(raw.contains("ce5109c69259d21e950896ffd6e6ed2e2ed036649c156bc5bd18e60de5c00655"));
     assert_ne!(scrape, browse);
