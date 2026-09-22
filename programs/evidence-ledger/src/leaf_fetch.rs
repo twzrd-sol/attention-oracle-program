@@ -38,6 +38,14 @@ mod tests {
         Sha256::digest(markdown.as_bytes()).into()
     }
 
+    fn decode_hex(s: &str) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for i in 0..32 {
+            out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        out
+    }
+
     const SOLANA_PAYER: [u8; 32] = [0x11; 32];
     const BASE_ADDR: [u8; 20] = [
         0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
@@ -52,10 +60,7 @@ mod tests {
             5000,
             444_956_973,
         );
-        assert_eq!(
-            hex::encode(leaf),
-            "7d65918d4d4f4174964914ad9eb4922818131e0613340b9e07adb32956dddd92"
-        );
+        assert_eq!(leaf, decode_hex("7d65918d4d4f4174964914ad9eb4922818131e0613340b9e07adb32956dddd92"));
     }
 
     #[test]
@@ -66,10 +71,7 @@ mod tests {
             50_000,
             21_000_000,
         );
-        assert_eq!(
-            hex::encode(leaf),
-            "ce5109c69259d21e950896ffd6e6ed2e2ed036649c156bc5bd18e60de5c00655"
-        );
+        assert_eq!(leaf, decode_hex("ce5109c69259d21e950896ffd6e6ed2e2ed036649c156bc5bd18e60de5c00655"));
     }
 
     #[test]

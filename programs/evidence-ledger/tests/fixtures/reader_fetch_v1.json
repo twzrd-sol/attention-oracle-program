@@ -1,14 +1,21 @@
 {
   "log_id": "reader.fetch.v1",
   "domain": "TWZRD:READER_FETCH_LEAF_V1",
-  "markdown": "# example\n\npaid fetch body\n",
-  "payer_hex": "0000000000000000000000000000000000000000000000000000000000000007",
-  "resource_hash": "sha256(markdown)",
-  "amount_base_units": 5000,
-  "clock": "slot",
-  "clock_byte": 1,
-  "time": 446606971,
-  "time_field": "slot",
-  "leaf": "b6e48bf0b8fda803cb60e262cc491ac5b3cb6edd97c806f236a32bcd56d60041",
-  "note": "Base uses clock_byte 2 and time_field block_number. A Base payer is 12 zero bytes plus the 20-byte address. No init_ledger."
+  "markdown": "# fetched\n",
+  "cases": [
+    {
+      "rail": "solana",
+      "payer": "1111111111111111111111111111111111111111111111111111111111111111",
+      "amount_usdc": 5000,
+      "settlement_height": 444956973,
+      "digest_hex": "7d65918d4d4f4174964914ad9eb4922818131e0613340b9e07adb32956dddd92"
+    },
+    {
+      "rail": "base",
+      "payer": "0x00112233445566778899aabbccddeeff00112233",
+      "amount_usdc": 50000,
+      "settlement_height": 21000000,
+      "digest_hex": "ce5109c69259d21e950896ffd6e6ed2e2ed036649c156bc5bd18e60de5c00655"
+    }
+  ]
 }

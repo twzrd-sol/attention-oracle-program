@@ -67,6 +67,28 @@ the goal.
 Settlement is USDC. A token, if one is ever added, is capacity only. Leaves are
 signed evidence, not raw transaction counts.
 
+## reader.fetch.v1
+
+Paid-page receipt. Not a reputation receipt and not `stripe.agentic.spt.v1`.
+The fourth field is `settlement_height`: the Solana slot when the payment
+settled on Solana, or the Base `blockNumber` when it settled on Base. A Base
+payer is 12 zero bytes followed by the 20-byte address. The program does not
+read that layout. It only stores the 32-byte digest.
+
+| Field | Binding |
+|---|---|
+| `log_id` | `reader.fetch.v1` |
+| Domain tag | `TWZRD:READER_FETCH_LEAF_V1` |
+| Payer | 32-byte Solana pubkey, or 12 zero bytes plus a 20-byte Base address |
+| Resource hash | `sha256` of the delivered markdown |
+| Amount | `u64` little-endian USDC base units: `5000` scrape, `50000` browse |
+| `settlement_height` | `u64` little-endian Solana slot or Base `blockNumber` |
+
+`leaf = keccak256(domain \|\| payer \|\| resource_hash \|\| amount_le \|\| settlement_height_le)`
+
+No `init_ledger` for this log. The hourly publisher still anchors
+`intel.twzrd.xyz/v6` on devnet.
+
 ## Stripe / SPT leaf domain (no-permission spike)
 
 Separate leaf domain on the same program. Proof construction is local and
